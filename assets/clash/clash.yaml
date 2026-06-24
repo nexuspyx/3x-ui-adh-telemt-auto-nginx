@@ -58,8 +58,6 @@ dns:
   nameserver:
     - https://cloudflare-dns.com/dns-query#PROXY
 
-proxies:
-
 proxy-providers:
   sub:
     type: http
