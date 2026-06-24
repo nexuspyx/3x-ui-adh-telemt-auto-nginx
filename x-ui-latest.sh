@@ -1,0 +1,872 @@
+#!/bin/bash
+#################### x-ui-pro-refactor @ github.com/mozaroc #############################
+[[ $EUID -ne 0 ]] && echo "not root!" && sudo su -
+
+# ─── Output helpers ──────────────────────────────────────────────────────────
+msg_ok()  { echo -e "\e[1;42m $1 \e[0m"; }
+msg_err() { echo -e "\e[1;41m $1 \e[0m"; }
+msg_inf() { echo -e "\e[1;34m$1\e[0m"; }
+
+echo; msg_inf '           ___    _   _   _  '
+msg_inf      ' \/ __ | |  | __ |_) |_) / \ '
+msg_inf      ' /\    |_| _|_   |   | \ \_/ '; echo
+
+# ─── Constants ───────────────────────────────────────────────────────────────
+XUIDB="/etc/x-ui/x-ui.db"
+GITHUB_RAW="https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main"
+FAKE_SITE_COUNT=50
+
+# ─── Default argument values ─────────────────────────────────────────────────
+domain=""
+reality_domain=""
+UNINSTALL="x"
+INSTALL="n"
+AUTODOMAIN="n"
+CFALLOW="n"
+
+# ─── Stop & clean previous install ───────────────────────────────────────────
+systemctl stop x-ui 2>/dev/null || true
+rm -rf /etc/systemd/system/x-ui.service
+rm -rf /usr/local/x-ui
+rm -rf /etc/x-ui
+rm -rf /etc/nginx/sites-enabled/*
+rm -rf /etc/nginx/sites-available/*
+rm -rf /etc/nginx/stream-enabled/*
+
+# ─── Port / path generators ──────────────────────────────────────────────────
+get_port() {
+    echo $(( ((RANDOM<<15)|RANDOM) % 49152 + 10000 ))
+}
+
+gen_random_string() {
+    local length="$1"
+    head -c 4096 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c "$length"
+    echo
+}
+
+check_free() {
+    nc -z 127.0.0.1 "$1" &>/dev/null
+    return $?
+}
+
+make_port() {
+    while true; do
+        local PORT
+        PORT=$(get_port)
+        if ! check_free "$PORT"; then
+            echo "$PORT"
+            break
+        fi
+    done
+}
+
+# ─── Generate ports & paths (done once at startup) ───────────────────────────
+sub_port=$(make_port)
+panel_port=$(make_port)
+ws_port=$(make_port)
+trojan_port=$(make_port)
+
+sub_path=$(gen_random_string 10)
+json_path=$(gen_random_string 10)
+panel_path=$(gen_random_string 10)
+ws_path=$(gen_random_string 10)
+trojan_path=$(gen_random_string 10)
+xhttp_path=$(gen_random_string 10)
+config_username=$(gen_random_string 10)
+config_password=$(gen_random_string 10)
+
+# ─── Argument parsing ────────────────────────────────────────────────────────
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -auto_domain)      AUTODOMAIN="$2";       shift 2 ;;
+        -install)          INSTALL="$2";           shift 2 ;;
+        -subdomain)        domain="$2";            shift 2 ;;
+        -reality_domain)   reality_domain="$2";    shift 2 ;;
+        -ONLY_CF_IP_ALLOW) CFALLOW="$2";           shift 2 ;;
+        -uninstall)        UNINSTALL="$2";         shift 2 ;;
+        *)                 shift 1 ;;
+    esac
+done
+
+# ─── Detect package manager ───────────────────────────────────────────────────
+Pak=$(type apt &>/dev/null && echo "apt" || echo "yum")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UNINSTALL
+# ─────────────────────────────────────────────────────────────────────────────
+uninstall_xui() {
+    printf 'y\n' | x-ui uninstall 2>/dev/null || true
+    rm -rf /etc/x-ui/ /usr/local/x-ui/ /usr/bin/x-ui/
+    $Pak -y remove nginx nginx-common nginx-core nginx-full python3-certbot-nginx
+    $Pak -y purge  nginx nginx-common nginx-core nginx-full python3-certbot-nginx
+    $Pak -y autoremove
+    $Pak -y autoclean
+    rm -rf /var/www/html/ /etc/nginx/ /usr/share/nginx/
+}
+
+if [[ ${UNINSTALL} == *"y"* ]]; then
+    uninstall_xui
+    clear && msg_ok "Completely Uninstalled!" && exit 0
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET SERVER IP
+# ─────────────────────────────────────────────────────────────────────────────
+IP4_REGEX="^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$"
+IP6_REGEX="([a-f0-9:]+:+)+[a-f0-9]+"
+
+get_server_ip() {
+    IP4=$(ip route get 8.8.8.8 2>&1 | grep -Po -- 'src \K\S*')
+    IP6=$(ip route get 2620:fe::fe 2>&1 | grep -Po -- 'src \K\S*')
+    [[ $IP4 =~ $IP4_REGEX ]] || IP4=$(curl -s ipv4.icanhazip.com | tr -d '[:space:]')
+    [[ $IP6 =~ $IP6_REGEX ]] || IP6=$(curl -s ipv6.icanhazip.com | tr -d '[:space:]')
+}
+
+# Early IP fetch for auto-domain
+IP4=$(ip route get 8.8.8.8 2>&1 | grep -Po -- 'src \K\S*')
+[[ $IP4 =~ $IP4_REGEX ]] || IP4=$(curl -s ipv4.icanhazip.com | tr -d '[:space:]')
+
+if [[ ${AUTODOMAIN} == *"y"* ]]; then
+    domain="${IP4}.cdn-one.org"
+    reality_domain="${IP4//./-}.cdn-one.org"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DOMAIN VALIDATION
+# ─────────────────────────────────────────────────────────────────────────────
+validate_domains() {
+    while true; do
+        [[ -n "$domain" ]] && break
+        echo -en "Enter available subdomain (sub.domain.tld): " && read -r domain
+    done
+    domain=$(echo "$domain" | tr -d '[:space:]')
+    SubDomain=$(echo "$domain"   | sed 's/^[^ ]* \|\..*//g')
+    MainDomain=$(echo "$domain"  | sed 's/.*\.\([^.]*\..*\)$/\1/')
+    [[ "${SubDomain}.${MainDomain}" != "${domain}" ]] && MainDomain=${domain}
+
+    while true; do
+        [[ -n "$reality_domain" ]] && break
+        echo -en "Enter available subdomain for REALITY (sub.domain.tld): " && read -r reality_domain
+    done
+    reality_domain=$(echo "$reality_domain" | tr -d '[:space:]')
+    RealitySubDomain=$(echo "$reality_domain" | sed 's/^[^ ]* \|\..*//g')
+    RealityMainDomain=$(echo "$reality_domain" | sed 's/.*\.\([^.]*\..*\)$/\1/')
+    [[ "${RealitySubDomain}.${RealityMainDomain}" != "${reality_domain}" ]] && RealityMainDomain=${reality_domain}
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INSTALL PACKAGES
+# ─────────────────────────────────────────────────────────────────────────────
+install_packages() {
+    ufw disable 2>/dev/null || true
+
+    if [[ ${INSTALL} == *"y"* ]]; then
+        local version
+        version=$(grep -oP '(?<=VERSION_ID=")[0-9]+' /etc/os-release)
+        [[ "$version" == "20" || "$version" == "22" ]] && echo "System: Ubuntu $version"
+
+        $Pak -y update
+        $Pak -y install curl wget jq bash sudo nginx-full certbot python3-certbot-nginx sqlite3 ufw netcat-openbsd
+        systemctl daemon-reload && systemctl enable --now nginx
+    fi
+
+    apt-get install -yqq --no-install-recommends ca-certificates
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SSL CERTIFICATES
+# ─────────────────────────────────────────────────────────────────────────────
+get_ssl_certs() {
+    systemctl stop nginx 2>/dev/null || true
+    fuser -k 80/tcp 80/udp 443/tcp 443/udp 2>/dev/null || true
+
+    if [[ ${AUTODOMAIN} == *"y"* ]]; then
+        local resolve_ok=true
+        for d in "$domain" "$reality_domain"; do
+            local a
+            a=$(getent ahostsv4 "$d" 2>/dev/null | awk 'NR==1{print $1}')
+            if [[ "$a" != "$IP4" ]]; then
+                msg_err "Auto-domain $d does not resolve to $IP4. Fix DNS and retry."
+                resolve_ok=false
+            fi
+        done
+        [[ $resolve_ok == false ]] && exit 1
+    fi
+
+    certbot certonly --standalone --non-interactive --agree-tos \
+        --register-unsafely-without-email -d "$domain"
+    if [[ ! -d "/etc/letsencrypt/live/${domain}/" ]]; then
+        systemctl start nginx >/dev/null 2>&1
+        msg_err "$domain SSL could not be generated! Check Domain/IP." && exit 1
+    fi
+
+    certbot certonly --standalone --non-interactive --agree-tos \
+        --register-unsafely-without-email -d "$reality_domain"
+    if [[ ! -d "/etc/letsencrypt/live/${reality_domain}/" ]]; then
+        systemctl start nginx >/dev/null 2>&1
+        msg_err "$reality_domain SSL could not be generated! Check Domain/IP." && exit 1
+    fi
+
+    mkdir -p /root/cert/${domain}
+    chmod 755 /root/cert/*
+    ln -sf /etc/letsencrypt/live/${domain}/fullchain.pem /root/cert/${domain}/fullchain.pem
+    ln -sf /etc/letsencrypt/live/${domain}/privkey.pem   /root/cert/${domain}/privkey.pem
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIGURE NGINX
+# ─────────────────────────────────────────────────────────────────────────────
+configure_nginx() {
+    mkdir -p /etc/nginx/stream-enabled /etc/nginx/snippets
+
+    # SNI-based stream: reality → 8443, domain → 7443
+    cat > /etc/nginx/stream-enabled/stream.conf <<EOF
+map \$ssl_preread_server_name \$sni_name {
+    hostnames;
+    ${reality_domain}    xray;
+    ${domain}            www;
+    default              xray;
+}
+
+upstream xray { server 127.0.0.1:8443; }
+upstream www  { server 127.0.0.1:7443; }
+
+server {
+    proxy_protocol on;
+    set_real_ip_from unix:;
+    listen     443;
+    listen     [::]:443;
+    proxy_pass \$sni_name;
+    ssl_preread on;
+}
+EOF
+
+    grep -xqFR "stream { include /etc/nginx/stream-enabled/*.conf; }" /etc/nginx/* \
+        || echo "stream { include /etc/nginx/stream-enabled/*.conf; }" >> /etc/nginx/nginx.conf
+    grep -xqFR "load_module modules/ngx_stream_module.so;" /etc/nginx/* \
+        || sed -i '1s/^/load_module \/usr\/lib\/nginx\/modules\/ngx_stream_module.so; /' /etc/nginx/nginx.conf
+    grep -xqFR "load_module modules/ngx_stream_geoip2_module.so;" /etc/nginx* \
+        || sed -i '2s/^/load_module \/usr\/lib\/nginx\/modules\/ngx_stream_geoip2_module.so; /' /etc/nginx/nginx.conf
+    grep -xqFR "worker_rlimit_nofile 16384;" /etc/nginx/* \
+        || echo "worker_rlimit_nofile 16384;" >> /etc/nginx/nginx.conf
+    sed -i "/worker_connections/c\worker_connections 4096;" /etc/nginx/nginx.conf
+
+    # HTTP → HTTPS redirect
+    cat > /etc/nginx/sites-available/80.conf <<EOF
+server {
+    listen 80;
+    server_name ${domain} ${reality_domain};
+    return 301 https://\$host\$request_uri;
+}
+EOF
+
+    # Shared proxy locations for xray inbounds (included by both vhosts)
+    cat > /etc/nginx/snippets/includes.conf <<EOF
+    #Subscription (plain/encode)
+    location /${sub_path} {
+        if (\$hack = 1) { return 404; }
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass https://127.0.0.1:${sub_port};
+    }
+    location /${sub_path}/ {
+        if (\$hack = 1) { return 404; }
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass https://127.0.0.1:${sub_port};
+    }
+    location /assets  { proxy_pass https://127.0.0.1:${sub_port}; }
+    location /assets/ { proxy_pass https://127.0.0.1:${sub_port}; }
+
+    #Subscription (json)
+    location /${json_path} {
+        if (\$hack = 1) { return 404; }
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass https://127.0.0.1:${sub_port};
+    }
+    location /${json_path}/ {
+        if (\$hack = 1) { return 404; }
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass https://127.0.0.1:${sub_port};
+    }
+
+    #XHTTP
+    location /${xhttp_path} {
+        grpc_pass grpc://unix:/dev/shm/uds2023.sock;
+        grpc_buffer_size      16k;
+        grpc_socket_keepalive on;
+        grpc_read_timeout     1h;
+        grpc_send_timeout     1h;
+        grpc_set_header Connection        "";
+        grpc_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        grpc_set_header X-Forwarded-Proto \$scheme;
+        grpc_set_header X-Forwarded-Port  \$server_port;
+        grpc_set_header Host              \$host;
+        grpc_set_header X-Forwarded-Host  \$host;
+    }
+
+    #Xray generic proxy (WS / gRPC by port+path)
+    location ~ ^/(?<fwdport>\d+)/(?<fwdpath>.*)\$ {
+        if (\$hack = 1) { return 404; }
+        client_max_body_size 0;
+        client_body_timeout 1d;
+        grpc_read_timeout 1d;
+        grpc_socket_keepalive on;
+        proxy_read_timeout 1d;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_socket_keepalive on;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        if (\$content_type ~* "GRPC") {
+            grpc_pass grpc://127.0.0.1:\$fwdport\$is_args\$args;
+            break;
+        }
+        if (\$http_upgrade ~* "(WEBSOCKET|WS)") {
+            proxy_pass http://127.0.0.1:\$fwdport\$is_args\$args;
+            break;
+        }
+        if (\$request_method ~* ^(PUT|POST|GET)\$) {
+            proxy_pass http://127.0.0.1:\$fwdport\$is_args\$args;
+            break;
+        }
+    }
+
+    location / { try_files \$uri \$uri/ =404; }
+EOF
+
+    # Main domain vhost (TLS termination at 7443, proxy_protocol)
+    cat > "/etc/nginx/sites-available/${domain}" <<EOF
+server {
+    server_tokens off;
+    server_name ${domain};
+    listen 7443 ssl http2 proxy_protocol;
+    listen [::]:7443 ssl http2 proxy_protocol;
+    index index.html index.htm index.php;
+    root /var/www/html/;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!eNULL:!MD5:!DES:!RC4:!ADH:!SSLv3:!EXP:!PSK:!DSS;
+    ssl_certificate     /etc/letsencrypt/live/${domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
+    if (\$host !~* ^(.+\.)?${domain}\$)            { return 444; }
+    if (\$scheme ~* https)                          { set \$safe 1; }
+    if (\$ssl_server_name !~* ^(.+\.)?${domain}\$) { set \$safe "\${safe}0"; }
+    if (\$safe = 10)                                { return 444; }
+    if (\$request_uri ~ "(\"|'|\`|~|,|:|;|%|\\$|&&|\?\?|0x00|0X00|\||\\|\{|\}|\[|\]|<|>|\.\.\.|\.\.\/|\/\/\/)") { set \$hack 1; }
+    error_page 400 401 402 403 500 501 502 503 504 =404 /404;
+    proxy_intercept_errors on;
+
+    location /${panel_path}/ {
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_pass https://127.0.0.1:${panel_port};
+    }
+    location /${panel_path} {
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_pass https://127.0.0.1:${panel_port};
+    }
+
+    include /etc/nginx/snippets/includes.conf;
+}
+EOF
+
+    # Reality domain vhost (plain TLS at 9443, no proxy_protocol)
+    cat > "/etc/nginx/sites-available/${reality_domain}" <<EOF
+server {
+    server_tokens off;
+    server_name ${reality_domain};
+    listen 9443 ssl http2;
+    listen [::]:9443 ssl http2;
+    index index.html index.htm index.php;
+    root /var/www/html/;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!eNULL:!MD5:!DES:!RC4:!ADH:!SSLv3:!EXP:!PSK:!DSS;
+    ssl_certificate     /etc/letsencrypt/live/${reality_domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${reality_domain}/privkey.pem;
+    if (\$host !~* ^(.+\.)?${reality_domain}\$)            { return 444; }
+    if (\$scheme ~* https)                                  { set \$safe 1; }
+    if (\$ssl_server_name !~* ^(.+\.)?${reality_domain}\$) { set \$safe "\${safe}0"; }
+    if (\$safe = 10)                                        { return 444; }
+    if (\$request_uri ~ "(\"|'|\`|~|,|:|;|%|\\$|&&|\?\?|0x00|0X00|\||\\|\{|\}|\[|\]|<|>|\.\.\.|\.\.\/|\/\/\/)") { set \$hack 1; }
+    error_page 400 401 402 403 500 501 502 503 504 =404 /404;
+    proxy_intercept_errors on;
+
+    location /${panel_path}/ {
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass http://127.0.0.1:${panel_port};
+    }
+    location /${panel_path} {
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass http://127.0.0.1:${panel_port};
+    }
+
+    include /etc/nginx/snippets/includes.conf;
+}
+EOF
+
+    # Activate configs
+    if [[ -f "/etc/nginx/sites-available/${domain}" ]]; then
+        rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default
+        ln -sf "/etc/nginx/sites-available/${domain}"          /etc/nginx/sites-enabled/
+        ln -sf "/etc/nginx/sites-available/${reality_domain}"  /etc/nginx/sites-enabled/
+        ln -sf "/etc/nginx/sites-available/80.conf"            /etc/nginx/sites-enabled/
+    else
+        msg_err "${domain} nginx config not found!" && exit 1
+    fi
+
+    if [[ $(nginx -t 2>&1 | grep -o 'successful') != "successful" ]]; then
+        msg_err "nginx config check failed!" && exit 1
+    fi
+
+    systemctl start nginx
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INSTALL PANEL (3x-ui)
+# ─────────────────────────────────────────────────────────────────────────────
+_arch() {
+    case "$(uname -m)" in
+        x86_64|x64|amd64)          echo 'amd64'  ;;
+        i*86|x86)                  echo '386'    ;;
+        armv8*|armv8|arm64|aarch64) echo 'arm64' ;;
+        armv7*|armv7|arm)          echo 'armv7'  ;;
+        armv6*|armv6)              echo 'armv6'  ;;
+        armv5*|armv5)              echo 'armv5'  ;;
+        s390x)                     echo 's390x'  ;;
+        *) echo "Unsupported CPU architecture!" && exit 1 ;;
+    esac
+}
+
+_panel_initial_config() {
+    /usr/local/x-ui/x-ui setting -username "asdfasdf" -password "asdfasdf" -port "2096" -webBasePath "asdfasdf"
+    /usr/local/x-ui/x-ui migrate
+}
+
+install_panel() {
+    local tag_version
+    apt-get update && apt-get install -y -q wget curl tar tzdata
+
+    cd /usr/local/
+
+    tag_version=$(curl -Ls "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" \
+        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    if [[ -z "$tag_version" ]]; then
+        tag_version=$(curl -4 -Ls "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" \
+            | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    fi
+    if [[ -z "$tag_version" ]]; then
+        echo "Failed to fetch 3x-ui version." && exit 1
+    fi
+
+    echo "Installing 3x-ui ${tag_version} ..."
+    wget -N -O /usr/local/x-ui-linux-$(_arch).tar.gz \
+        "https://github.com/MHSanaei/3x-ui/releases/download/${tag_version}/x-ui-linux-$(_arch).tar.gz"
+    [[ $? -ne 0 ]] && echo "Download failed." && exit 1
+
+    wget -O /usr/bin/x-ui-temp https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh
+    [[ $? -ne 0 ]] && echo "Failed to download x-ui.sh" && exit 1
+
+    [[ -d /usr/local/x-ui/ ]] && systemctl stop x-ui 2>/dev/null; rm -rf /usr/local/x-ui/
+
+    tar zxvf x-ui-linux-$(_arch).tar.gz
+    rm -f x-ui-linux-$(_arch).tar.gz
+
+    cd x-ui
+    chmod +x x-ui x-ui.sh
+
+    if [[ $(_arch) == "armv5" || $(_arch) == "armv6" || $(_arch) == "armv7" ]]; then
+        mv bin/xray-linux-$(_arch) bin/xray-linux-arm
+        chmod +x bin/xray-linux-arm
+    fi
+    chmod +x bin/xray-linux-$(_arch)
+
+    mv -f /usr/bin/x-ui-temp /usr/bin/x-ui
+    chmod +x /usr/bin/x-ui
+
+    _panel_initial_config
+
+    cp -f x-ui.service.debian /etc/systemd/system/x-ui.service
+    systemctl daemon-reload
+    systemctl enable x-ui
+    systemctl start x-ui
+
+    msg_ok "3x-ui ${tag_version} installed."
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIGURE X-UI DATABASE
+# ─────────────────────────────────────────────────────────────────────────────
+configure_xui_db() {
+    if [[ ! -f $XUIDB ]]; then
+        msg_err "x-ui.db not found — panel may not be installed." && exit 1
+    fi
+
+    x-ui stop 2>/dev/null || true
+
+    local output private_key public_key trojan_pass emoji_flag
+    output=$(/usr/local/x-ui/bin/xray-linux-amd64 x25519)
+    private_key=$(echo "$output" | grep "^PrivateKey:" | awk '{print $2}')
+    public_key=$(echo "$output"  | grep "^Password"   | awk '{print $3}')
+    trojan_pass=$(gen_random_string 10)
+    emoji_flag=$(LC_ALL=en_US.UTF-8 curl -s https://ipwho.is/ | jq -r '.flag.emoji')
+
+    local sub_uri="https://${domain}/${sub_path}/"
+    local json_uri="https://${domain}/${json_path}?name="
+
+    # Prepare short IDs for REALITY
+    local shor
+    shor=($(openssl rand -hex 8) $(openssl rand -hex 8) $(openssl rand -hex 8) $(openssl rand -hex 8) \
+           $(openssl rand -hex 8) $(openssl rand -hex 8) $(openssl rand -hex 8) $(openssl rand -hex 8))
+
+    sqlite3 $XUIDB <<EOF
+DELETE FROM "settings" WHERE "key" IN ("webCertFile","webKeyFile");
+
+INSERT INTO "settings" ("key","value") VALUES ("subPort",             '${sub_port}');
+INSERT INTO "settings" ("key","value") VALUES ("subPath",             '/${sub_path}/');
+INSERT INTO "settings" ("key","value") VALUES ("subURI",              '${sub_uri}');
+INSERT INTO "settings" ("key","value") VALUES ("subJsonPath",         '/${json_path}');
+INSERT INTO "settings" ("key","value") VALUES ("subJsonURI",          '${json_uri}');
+INSERT INTO "settings" ("key","value") VALUES ("subClashEnable",      'false');
+INSERT INTO "settings" ("key","value") VALUES ("subEnableRouting",    'false');
+INSERT INTO "settings" ("key","value") VALUES ("subEnable",           'true');
+INSERT INTO "settings" ("key","value") VALUES ("webListen",           '');
+INSERT INTO "settings" ("key","value") VALUES ("webDomain",           '');
+INSERT INTO "settings" ("key","value") VALUES ("webCertFile",         '');
+INSERT INTO "settings" ("key","value") VALUES ("webKeyFile",          '');
+INSERT INTO "settings" ("key","value") VALUES ("sessionMaxAge",       '60');
+INSERT INTO "settings" ("key","value") VALUES ("pageSize",            '50');
+INSERT INTO "settings" ("key","value") VALUES ("expireDiff",          '0');
+INSERT INTO "settings" ("key","value") VALUES ("trafficDiff",         '0');
+INSERT INTO "settings" ("key","value") VALUES ("remarkModel",         '-ieo');
+INSERT INTO "settings" ("key","value") VALUES ("tgBotEnable",         'false');
+INSERT INTO "settings" ("key","value") VALUES ("tgBotToken",          '');
+INSERT INTO "settings" ("key","value") VALUES ("tgBotProxy",          '');
+INSERT INTO "settings" ("key","value") VALUES ("tgBotAPIServer",      '');
+INSERT INTO "settings" ("key","value") VALUES ("tgBotChatId",         '');
+INSERT INTO "settings" ("key","value") VALUES ("tgRunTime",           '@daily');
+INSERT INTO "settings" ("key","value") VALUES ("tgBotBackup",         'false');
+INSERT INTO "settings" ("key","value") VALUES ("tgBotLoginNotify",    'true');
+INSERT INTO "settings" ("key","value") VALUES ("tgCpu",               '80');
+INSERT INTO "settings" ("key","value") VALUES ("tgLang",              'en-US');
+INSERT INTO "settings" ("key","value") VALUES ("timeLocation",        'Europe/Moscow');
+INSERT INTO "settings" ("key","value") VALUES ("secretEnable",        'false');
+INSERT INTO "settings" ("key","value") VALUES ("subDomain",           '');
+INSERT INTO "settings" ("key","value") VALUES ("subCertFile",         '');
+INSERT INTO "settings" ("key","value") VALUES ("subKeyFile",          '');
+INSERT INTO "settings" ("key","value") VALUES ("subUpdates",          '12');
+INSERT INTO "settings" ("key","value") VALUES ("subEncrypt",          'true');
+INSERT INTO "settings" ("key","value") VALUES ("subShowInfo",         'true');
+INSERT INTO "settings" ("key","value") VALUES ("subJsonFragment",     '');
+INSERT INTO "settings" ("key","value") VALUES ("subJsonNoises",       '');
+INSERT INTO "settings" ("key","value") VALUES ("subJsonMux",          '');
+INSERT INTO "settings" ("key","value") VALUES ("subJsonRules",        '');
+INSERT INTO "settings" ("key","value") VALUES ("datepicker",          'gregorian');
+
+INSERT INTO "inbounds"
+    ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
+VALUES (
+    '1','0','0','0','${emoji_flag} reality','1','0','','8443','vless',
+    '{
+  "clients": [],
+  "decryption": "none",
+  "fallbacks": []
+}',
+    '{
+  "network": "tcp",
+  "security": "reality",
+  "externalProxy": [
+    {"forceTls":"same","dest":"${domain}","port":443,"remark":""}
+  ],
+  "realitySettings": {
+    "show": false,
+    "xver": 0,
+    "target": "127.0.0.1:9443",
+    "serverNames": ["${reality_domain}"],
+    "privateKey": "${private_key}",
+    "minClient": "",
+    "maxClient": "",
+    "maxTimediff": 0,
+    "shortIds": [
+      "${shor[0]}","${shor[1]}","${shor[2]}","${shor[3]}",
+      "${shor[4]}","${shor[5]}","${shor[6]}","${shor[7]}"
+    ],
+    "settings": {
+      "publicKey": "${public_key}",
+      "fingerprint": "chrome",
+      "serverName": "",
+      "spiderX": "/"
+    }
+  },
+  "tcpSettings": {
+    "acceptProxyProtocol": true,
+    "header": {"type":"none"}
+  }
+}',
+    'inbound-8443',
+    '{"enabled":false,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
+);
+
+INSERT INTO "inbounds"
+    ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
+VALUES (
+    '1','0','0','0','${emoji_flag} ws','1','0','','${ws_port}','vless',
+    '{
+  "clients": [],
+  "decryption": "none",
+  "fallbacks": []
+}',
+    '{
+  "network": "ws",
+  "security": "none",
+  "externalProxy": [
+    {"forceTls":"tls","dest":"${domain}","port":443,"remark":""}
+  ],
+  "wsSettings": {
+    "acceptProxyProtocol": false,
+    "path": "/${ws_port}/${ws_path}",
+    "host": "${domain}",
+    "headers": {}
+  }
+}',
+    'inbound-${ws_port}',
+    '{"enabled":false,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
+);
+
+INSERT INTO "inbounds"
+    ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
+VALUES (
+    '1','0','0','0','${emoji_flag} xhttp','0','0','/dev/shm/uds2023.sock,0666','0','vless',
+    '{
+  "clients": [],
+  "decryption": "none",
+  "fallbacks": []
+}',
+    '{
+  "network": "xhttp",
+  "security": "none",
+  "externalProxy": [
+    {"forceTls":"tls","dest":"${domain}","port":443,"remark":""}
+  ],
+  "xhttpSettings": {
+    "path": "/${xhttp_path}",
+    "host": "${domain}",
+    "headers": {},
+    "scMaxBufferedPosts": 30,
+    "scMaxEachPostBytes": "1000000",
+    "noSSEHeader": false,
+    "xPaddingBytes": "100-1000",
+    "mode": "packet-up"
+  },
+  "sockopt": {
+    "acceptProxyProtocol": false,
+    "tcpFastOpen": true,
+    "mark": 0,
+    "tproxy": "off",
+    "tcpMptcp": true,
+    "tcpNoDelay": true,
+    "domainStrategy": "UseIP",
+    "tcpMaxSeg": 1440,
+    "dialerProxy": "",
+    "tcpKeepAliveInterval": 0,
+    "tcpKeepAliveIdle": 300,
+    "tcpUserTimeout": 10000,
+    "tcpcongestion": "bbr",
+    "V6Only": false,
+    "tcpWindowClamp": 600,
+    "interface": ""
+  }
+}',
+    'inbound-/dev/shm/uds2023.sock,0666:0|',
+    '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
+);
+
+INSERT INTO "inbounds"
+    ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
+VALUES (
+    '1','0','0','0','${emoji_flag} trojan-grpc','1','0','','${trojan_port}','trojan',
+    '{
+  "clients": [],
+  "fallbacks": []
+}',
+    '{
+  "network": "grpc",
+  "security": "none",
+  "externalProxy": [
+    {"forceTls":"tls","dest":"${domain}","port":443,"remark":""}
+  ],
+  "grpcSettings": {
+    "serviceName": "/${trojan_port}/${trojan_path}",
+    "authority": "${domain}",
+    "multiMode": false
+  }
+}',
+    'inbound-${trojan_port}',
+    '{"enabled":false,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
+);
+EOF
+
+    /usr/local/x-ui/x-ui setting \
+        -username  "${config_username}" \
+        -password  "${config_password}" \
+        -port      "${panel_port}"      \
+        -webBasePath "${panel_path}"
+
+    /usr/local/x-ui/x-ui cert \
+        -webCert    "/root/cert/${domain}/fullchain.pem" \
+        -webCertKey "/root/cert/${domain}/privkey.pem"
+
+    x-ui start
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INSTALL FAKE SITE
+# ─────────────────────────────────────────────────────────────────────────────
+install_fake_site() {
+    local idx=$(( (RANDOM % FAKE_SITE_COUNT) + 1 ))
+    local site_id
+    site_id=$(printf "site-%02d" "$idx")
+    local url="${GITHUB_RAW}/assets/fake-sites/${site_id}/index.html"
+
+    mkdir -p /var/www/html
+    if curl -fsSL "$url" -o /var/www/html/index.html; then
+        chown -R www-data:www-data /var/www/html 2>/dev/null || true
+        chmod 644 /var/www/html/index.html
+        msg_ok "Fake cover site '${site_id}' installed."
+    else
+        msg_err "Failed to download fake site ${site_id} from GitHub."
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SYSTEM TUNING (BBR + kernel params)
+# ─────────────────────────────────────────────────────────────────────────────
+tune_system() {
+    local params=(
+        "net.core.default_qdisc=fq"
+        "net.ipv4.tcp_congestion_control=bbr"
+        "fs.file-max=2097152"
+        "net.ipv4.tcp_timestamps=1"
+        "net.ipv4.tcp_sack=1"
+        "net.ipv4.tcp_window_scaling=1"
+        "net.core.rmem_max=16777216"
+        "net.core.wmem_max=16777216"
+        "net.ipv4.tcp_rmem=4096 87380 16777216"
+        "net.ipv4.tcp_wmem=4096 65536 16777216"
+    )
+    for p in "${params[@]}"; do
+        grep -qxF "$p" /etc/sysctl.conf || echo "$p" >> /etc/sysctl.conf
+    done
+    sysctl -p
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CRON JOBS
+# ─────────────────────────────────────────────────────────────────────────────
+setup_cron() {
+    crontab -l 2>/dev/null | grep -v "certbot\|x-ui\|cloudflareips" | crontab -
+    (crontab -l 2>/dev/null; echo '@daily   x-ui restart > /dev/null 2>&1 && nginx -s reload')    | crontab -
+    (crontab -l 2>/dev/null; echo '@monthly certbot renew --nginx --non-interactive --post-hook "nginx -s reload" > /dev/null 2>&1') | crontab -
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FIREWALL
+# ─────────────────────────────────────────────────────────────────────────────
+setup_firewall() {
+    ufw disable
+    ufw allow 22/tcp
+    ufw allow 80/tcp
+    ufw allow 443/tcp
+    ufw allow 443/udp
+    ufw --force enable
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SHOW RESULTS
+# ─────────────────────────────────────────────────────────────────────────────
+show_results() {
+    clear
+    if systemctl is-active --quiet x-ui; then
+        printf '0\n' | x-ui | grep --color=never -i ':'
+        msg_inf "────────────────────────────────────────────────────────────────────────────────"
+        nginx -T | grep -i 'ssl_certificate\|ssl_certificate_key'
+        msg_inf "────────────────────────────────────────────────────────────────────────────────"
+        certbot certificates | grep -i 'Path:\|Domains:\|Expiry Date:'
+        msg_inf "────────────────────────────────────────────────────────────────────────────────"
+        msg_inf "X-UI Secure Panel: https://${domain}/${panel_path}/\n"
+        echo -e "Username:  ${config_username}\n"
+        echo -e "Password:  ${config_password}\n"
+        msg_inf "────────────────────────────────────────────────────────────────────────────────"
+        msg_inf "Please save this screen!"
+    else
+        nginx -t
+        printf '0\n' | x-ui | grep --color=never -i ':'
+        msg_err "x-ui or nginx check failed. Try on a clean Linux install."
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────────────────────
+main() {
+    validate_domains
+    install_packages
+    get_server_ip
+    get_ssl_certs
+
+    if systemctl is-active --quiet x-ui; then
+        x-ui restart
+    else
+        install_panel
+    fi
+
+    configure_nginx
+    configure_xui_db
+    install_fake_site
+    tune_system
+    setup_cron
+    setup_firewall
+
+    if ! systemctl is-enabled --quiet x-ui; then
+        systemctl daemon-reload && systemctl enable x-ui.service
+    fi
+    x-ui restart
+
+    show_results
+}
+
+main
