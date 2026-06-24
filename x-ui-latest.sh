@@ -479,9 +479,9 @@ server {
         proxy_http_version      1.1;
         proxy_set_header        X-Real-IP       \$remote_addr;
         proxy_request_buffering off;
-        client_max_body_size    128m;
-        proxy_read_timeout      120s;
-        proxy_send_timeout      120s;
+        client_max_body_size    600m;
+        proxy_read_timeout      300s;
+        proxy_send_timeout      300s;
         add_header              Cache-Control "no-store" always;
     }
 

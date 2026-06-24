@@ -192,7 +192,7 @@ class Handler(BaseHTTPRequestHandler):
         # Reads the entire body before responding so the client timer is accurate
         if parsed.path == "/api/upload" or parsed.path.endswith("/api/upload"):
             content_length = int(self.headers.get("Content-Length", "0"))
-            to_read = min(content_length, 128 * 1024 * 1024)  # cap at 128 MB
+            to_read = min(content_length, 600 * 1024 * 1024)  # cap at 600 MB
             received = 0
             buf = 65536
             while received < to_read:
