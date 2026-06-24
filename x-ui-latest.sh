@@ -11,6 +11,44 @@ echo; msg_inf '           ___    _   _   _  '
 msg_inf      ' \/ __ | |  | __ |_) |_) / \ '
 msg_inf      ' /\    |_| _|_   |   | \ \_/ '; echo
 
+# ─── Pre-flight checks ───────────────────────────────────────────────────────
+check_os() {
+    local os_id os_version
+    os_id=$(grep -oP '(?<=^ID=).+' /etc/os-release 2>/dev/null | tr -d '"')
+    os_version=$(grep -oP '(?<=^VERSION_ID=").+(?=")' /etc/os-release 2>/dev/null)
+
+    case "${os_id}" in
+        ubuntu)
+            [[ "$os_version" == "24.04" || "$os_version" == "26.04" ]] && return 0
+            ;;
+        debian)
+            [[ "$os_version" == "12" || "$os_version" == "13" ]] && return 0
+            ;;
+    esac
+
+    msg_err "Unsupported OS: ${os_id} ${os_version}"
+    echo -e "\nThis script supports:\n  Ubuntu 24.04 / 26.04\n  Debian 12 / 13"
+    echo -e "\nPlease reinstall your server with one of the supported OS versions and try again."
+    exit 1
+}
+
+check_cpu() {
+    local cpu_model
+    cpu_model=$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2-)
+
+    if echo "$cpu_model" | grep -qi 'QEMU'; then
+        msg_err "QEMU virtual CPU detected!"
+        echo -e "\nYour VPS is running with an emulated QEMU processor."
+        echo -e "Please contact your hosting provider and ask them to switch the CPU type"
+        echo -e "to \e[1;33mhost-passthrough\e[0m (expose real CPU model to the VM)."
+        echo -e "\nThis is required for correct operation of the Xray core."
+        exit 1
+    fi
+}
+
+check_os
+check_cpu
+
 # ─── Constants ───────────────────────────────────────────────────────────────
 XUIDB="/etc/x-ui/x-ui.db"
 GITHUB_RAW="https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main"
