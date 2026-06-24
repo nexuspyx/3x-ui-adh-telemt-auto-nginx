@@ -74,6 +74,8 @@ trojan_path=$(gen_random_string 10)
 xhttp_path=$(gen_random_string 10)
 config_username=$(gen_random_string 10)
 config_password=$(gen_random_string 10)
+diag_path="/net-$(gen_random_string 12)/"
+mtr_backend_port=$(make_port)
 
 # ─── Argument parsing ────────────────────────────────────────────────────────
 while [ "$#" -gt 0 ]; do
@@ -101,7 +103,12 @@ uninstall_xui() {
     $Pak -y purge  nginx nginx-common nginx-core nginx-full python3-certbot-nginx
     $Pak -y autoremove
     $Pak -y autoclean
-    rm -rf /var/www/html/ /etc/nginx/ /usr/share/nginx/
+    rm -rf /var/www/html/ /var/www/diagnostics/ /var/www/openspeedtest/ /etc/nginx/ /usr/share/nginx/
+    systemctl stop mtr-backend 2>/dev/null || true
+    systemctl disable mtr-backend 2>/dev/null || true
+    rm -f /etc/systemd/system/mtr-backend.service
+    rm -rf /usr/local/lib/3x-ui-pro/
+    systemctl daemon-reload 2>/dev/null || true
 }
 
 if [[ ${UNINSTALL} == *"y"* ]]; then
@@ -166,7 +173,7 @@ install_packages() {
         [[ "$version" == "20" || "$version" == "22" ]] && echo "System: Ubuntu $version"
 
         $Pak -y update
-        $Pak -y install curl wget jq bash sudo nginx-full certbot python3-certbot-nginx sqlite3 ufw netcat-openbsd
+        $Pak -y install curl wget jq bash sudo nginx-full certbot python3-certbot-nginx sqlite3 ufw netcat-openbsd mtr python3 libcap2-bin
         systemctl daemon-reload && systemctl enable --now nginx
     fi
 
@@ -351,6 +358,11 @@ EOF
 
     # Main domain vhost (TLS termination at 7443, proxy_protocol)
     cat > "/etc/nginx/sites-available/${domain}" <<EOF
+# Rate limiting zones (http context)
+limit_req_zone  \$binary_remote_addr zone=diag_api:10m  rate=6r/m;
+limit_req_zone  \$binary_remote_addr zone=diag_page:10m rate=30r/m;
+limit_conn_zone \$binary_remote_addr zone=per_ip:10m;
+
 server {
     server_tokens off;
     server_name ${domain};
@@ -358,6 +370,8 @@ server {
     listen [::]:7443 ssl http2 proxy_protocol;
     index index.html index.htm index.php;
     root /var/www/html/;
+    real_ip_header proxy_protocol;
+    set_real_ip_from 127.0.0.1;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!eNULL:!MD5:!DES:!RC4:!ADH:!SSLv3:!EXP:!PSK:!DSS;
     ssl_certificate     /etc/letsencrypt/live/${domain}/fullchain.pem;
@@ -393,6 +407,48 @@ server {
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
         proxy_pass https://127.0.0.1:${panel_port};
+    }
+
+    # ── Network diagnostics page ─────────────────────────────────────────────
+    location ^~ ${diag_path} {
+        limit_req  zone=diag_page burst=10 nodelay;
+        limit_conn per_ip 5;
+        alias /var/www/diagnostics/;
+        index index.html;
+        try_files \$uri \$uri/ /index.html;
+        add_header Cache-Control "no-store" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+    }
+
+    # ── Diagnostics MTR API ──────────────────────────────────────────────────
+    location ^~ ${diag_path}api/mtr {
+        limit_req  zone=diag_api burst=2 nodelay;
+        limit_conn per_ip 2;
+        proxy_pass         http://127.0.0.1:${mtr_backend_port};
+        proxy_http_version 1.1;
+        proxy_set_header   X-Real-IP       \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+
+    # ── OpenSpeedTest (served locally, no external connections) ─────────────
+    location ^~ ${diag_path}speedtest/ {
+        limit_req zone=diag_page burst=30 nodelay;
+        alias     /var/www/openspeedtest/;
+        index     index.html;
+        try_files \$uri \$uri/ =404;
+        client_max_body_size 35m;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        access_log off;
+    }
+
+    # ── Download test files ──────────────────────────────────────────────────
+    location ^~ ${diag_path}testfiles/ {
+        alias      /var/www/diagnostics/testfiles/;
+        access_log off;
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header Content-Disposition "attachment" always;
     }
 
     include /etc/nginx/snippets/includes.conf;
@@ -773,6 +829,99 @@ install_fake_site() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# INSTALL NETWORK DIAGNOSTICS PAGE
+# ─────────────────────────────────────────────────────────────────────────────
+install_diagnostics() {
+    local diag_webroot="/var/www/diagnostics"
+    local backend_script="/usr/local/lib/3x-ui-pro/mtr-backend.py"
+    local openspeedtest_webroot="/var/www/openspeedtest"
+
+    # OpenSpeedTest static files
+    if [[ ! -f "${openspeedtest_webroot}/index.html" ]]; then
+        mkdir -p "${openspeedtest_webroot}"
+        curl -fsSL --retry 3 \
+            "https://github.com/openspeedtest/Speed-Test/archive/refs/heads/main.tar.gz" \
+            -o /tmp/openspeedtest.tar.gz
+        tar -xzf /tmp/openspeedtest.tar.gz -C "${openspeedtest_webroot}" --strip-components=1
+        rm -f /tmp/openspeedtest.tar.gz
+        chown -R www-data:www-data "${openspeedtest_webroot}" 2>/dev/null || true
+    fi
+
+    # Diagnostics HTML page
+    mkdir -p "${diag_webroot}"
+    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/index.html" -o "${diag_webroot}/index.html"
+    sed -i \
+        -e "s|__DIAG_PATH__|${diag_path}|g" \
+        -e "s|__SERVER_DOMAIN__|${domain}|g" \
+        -e "s|__SERVER_IP__|${IP4}|g" \
+        "${diag_webroot}/index.html"
+
+    # Test download files
+    local testfiles="${diag_webroot}/testfiles"
+    mkdir -p "${testfiles}"
+    [[ -f "${testfiles}/test-15k.bin"  ]] || dd if=/dev/zero bs=1024    count=15   of="${testfiles}/test-15k.bin"  status=none
+    [[ -f "${testfiles}/test-17k.bin"  ]] || dd if=/dev/zero bs=1024    count=17   of="${testfiles}/test-17k.bin"  status=none
+    [[ -f "${testfiles}/test-100m.bin" ]] || dd if=/dev/zero bs=1048576 count=100  of="${testfiles}/test-100m.bin" status=none
+    [[ -f "${testfiles}/test-1g.bin"   ]] || dd if=/dev/zero bs=1048576 count=1024 of="${testfiles}/test-1g.bin"   status=none
+    chown -R www-data:www-data "${diag_webroot}" 2>/dev/null || true
+
+    # MTR backend Python script
+    mkdir -p "$(dirname "${backend_script}")"
+    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/mtr-backend.py" -o "${backend_script}"
+    chmod 755 "${backend_script}"
+
+    # Grant mtr raw socket capability (runs as restricted user, no root needed)
+    command -v setcap &>/dev/null && setcap cap_net_raw+ep "$(command -v mtr)" 2>/dev/null || true
+
+    # Dedicated system user for mtr-backend
+    id mtr-backend &>/dev/null || \
+        useradd --system --no-create-home --shell /usr/sbin/nologin mtr-backend
+
+    # Systemd service for mtr-backend
+    cat > /etc/systemd/system/mtr-backend.service <<EOF
+[Unit]
+Description=3x-ui-pro MTR diagnostics backend
+After=network.target
+
+[Service]
+Type=simple
+User=mtr-backend
+Group=mtr-backend
+ExecStart=/usr/bin/python3 ${backend_script} --port ${mtr_backend_port}
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+AmbientCapabilities=
+CapabilityBoundingSet=
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mtr-backend
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable mtr-backend
+    systemctl restart mtr-backend
+
+    msg_ok "Network diagnostics installed at https://${domain}${diag_path}"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SYSTEM TUNING (BBR + kernel params)
 # ─────────────────────────────────────────────────────────────────────────────
 tune_system() {
@@ -831,6 +980,8 @@ show_results() {
         echo -e "Username:  ${config_username}\n"
         echo -e "Password:  ${config_password}\n"
         msg_inf "────────────────────────────────────────────────────────────────────────────────"
+        msg_inf "Network Diagnostics: https://${domain}${diag_path}\n"
+        msg_inf "────────────────────────────────────────────────────────────────────────────────"
         msg_inf "Please save this screen!"
     else
         nginx -t
@@ -857,6 +1008,7 @@ main() {
     configure_nginx
     configure_xui_db
     install_fake_site
+    install_diagnostics
     tune_system
     setup_cron
     setup_firewall
