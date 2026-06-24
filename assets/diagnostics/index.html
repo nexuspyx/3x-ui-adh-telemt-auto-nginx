@@ -207,20 +207,20 @@
     <div class="section-title">Speed Test</div>
     <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:20px;">
       Runs directly between your browser and this server — no external connections.
-      Download: 100 MB test file. Upload: 25 MB payload.
+      Download: 512 MB test file. Upload: 512 MB payload.
     </p>
     <div class="speed-grid">
       <div class="speed-card">
         <div class="speed-card-label">↓ Download</div>
         <div class="speed-card-value" id="dl-speed">—</div>
         <div class="speed-card-unit">Mbps</div>
-        <div class="speed-card-note" id="dl-note"></div>
+        <div class="speed-card-note" id="dl-note">512 MB file</div>
       </div>
       <div class="speed-card">
         <div class="speed-card-label">↑ Upload</div>
         <div class="speed-card-value" id="ul-speed">—</div>
         <div class="speed-card-unit">Mbps</div>
-        <div class="speed-card-note" id="ul-note"></div>
+        <div class="speed-card-note" id="ul-note">512 MB payload</div>
       </div>
     </div>
     <button class="btn" id="speed-btn" onclick="runSpeedTest()">Start Speed Test</button>
@@ -395,7 +395,7 @@ async function runSpeedTest() {
     status.innerHTML = '<span class="status-tag tag-info">Testing download…</span>';
     const mbps = await measureDownload();
     document.getElementById('dl-speed').textContent = mbps.toFixed(1);
-    document.getElementById('dl-note').textContent  = '100 MB file';
+    document.getElementById('dl-note').textContent  = '512 MB file';
   } catch(e) {
     document.getElementById('dl-speed').textContent = 'ERR';
   }
@@ -405,7 +405,7 @@ async function runSpeedTest() {
     status.innerHTML = '<span class="status-tag tag-info">Testing upload…</span>';
     const mbps = await measureUpload();
     document.getElementById('ul-speed').textContent = mbps.toFixed(1);
-    document.getElementById('ul-note').textContent  = '25 MB payload';
+    document.getElementById('ul-note').textContent  = '512 MB payload';
   } catch(e) {
     document.getElementById('ul-speed').textContent = 'ERR';
   }
@@ -415,7 +415,7 @@ async function runSpeedTest() {
 }
 
 async function measureDownload() {
-  const url   = '__DIAG_PATH__testfiles/test-100m.bin?t=' + Date.now();
+  const url   = '__DIAG_PATH__testfiles/test-512m.bin?t=' + Date.now();
   const start = performance.now();
   const resp  = await fetch(url, { cache: 'no-store' });
   const reader = resp.body.getReader();
@@ -432,7 +432,7 @@ async function measureDownload() {
 }
 
 async function measureUpload() {
-  const size  = 25 * 1024 * 1024;
+  const size  = 512 * 1024 * 1024;
   const data  = new Uint8Array(size);
   const start = performance.now();
   const resp  = await fetch('__DIAG_PATH__api/upload', {

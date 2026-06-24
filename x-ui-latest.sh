@@ -892,6 +892,7 @@ install_diagnostics() {
     [[ -f "${testfiles}/test-15k.bin"  ]] || dd if=/dev/zero bs=1024    count=15   of="${testfiles}/test-15k.bin"  status=none
     [[ -f "${testfiles}/test-17k.bin"  ]] || dd if=/dev/zero bs=1024    count=17   of="${testfiles}/test-17k.bin"  status=none
     [[ -f "${testfiles}/test-100m.bin" ]] || dd if=/dev/zero bs=1048576 count=100  of="${testfiles}/test-100m.bin" status=none
+    [[ -f "${testfiles}/test-512m.bin" ]] || dd if=/dev/zero bs=1048576 count=512  of="${testfiles}/test-512m.bin" status=none
     [[ -f "${testfiles}/test-1g.bin"   ]] || dd if=/dev/zero bs=1048576 count=1024 of="${testfiles}/test-1g.bin"   status=none
     chown -R www-data:www-data "${diag_webroot}" 2>/dev/null || true
 
