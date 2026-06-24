@@ -307,18 +307,26 @@ EOF
 
     # Shared proxy locations for xray inbounds (included by both vhosts)
     cat > /etc/nginx/snippets/includes.conf <<EOF
-    #Subscription (plain/encode) — Clash/Mihomo clients get per-client dynamic clash.yaml
-    # rewrite...last is safe inside if; proxy_pass with URI is in a separate internal location
-    location = /${sub_path} {
+    #Subscription — prefix location covers all sub-paths (assets, JS, etc.)
+    location /${sub_path}/ {
         if (\$hack = 1) { return 404; }
-        if (\$is_clash_client = 1) { rewrite ^ /__clash_api last; }
         proxy_redirect off;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_pass https://127.0.0.1:${sub_port};
     }
-    location ~ ^/${sub_path}/(?<clash_sub_id>[^/]*)$ {
+    location = /${sub_path} {
+        if (\$hack = 1) { return 404; }
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass https://127.0.0.1:${sub_port};
+    }
+    # Regex takes priority over prefix: catches subscription IDs (one-level deep)
+    # and routes Clash/Mihomo clients to dynamic clash.yaml generator
+    location ~ ^/${sub_path}/(?<clash_sub_id>[^/]+)$ {
         if (\$hack = 1) { return 404; }
         if (\$is_clash_client = 1) { rewrite ^ /__clash_api?sub_id=\$clash_sub_id last; }
         proxy_redirect off;
