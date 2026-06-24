@@ -8,17 +8,9 @@ enable-process: true
 find-process-mode: always
 global-client-fingerprint: chrome
 
-# enable model auto update, the default is false
-lgbm-auto-update: true
-# model auto update interval, the default is 72 (hours)
-lgbm-update-interval: 72
-# model update url
-lgbm-url: "https://github.com/vernesong/mihomo/releases/download/LightGBM-Model/Model-middle.bin"
-
 profile:
   store-selected: true
   store-fake-ip: true
-  smart-collector-size: 100
 
 sniffer:
   enable: true
@@ -81,7 +73,6 @@ proxy-groups:
     type: select
     proxies:
       - ⚡️ Fastest
-      - 📊 Smart
       # LEAVE THIS LINE!
     include-all: true
   - name: ▶️ YouTube
@@ -119,15 +110,6 @@ proxy-groups:
     include-all: true
     proxies:
       - 🌍 VPN
-  - name: 📊 Smart
-    icon: https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Magic.png
-    type: smart
-    hidden: true
-    uselightgbm: true
-    collectdata: false
-    strategy: sticky-sessions
-    sample-rate: 1
-    include-all: true
   - name: PROXY
     remnawave:
       include-proxies: false
