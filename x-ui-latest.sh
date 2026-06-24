@@ -417,9 +417,9 @@ map \$http_user_agent \$is_clash_ua {
     ~*(clash|clashx|clashn|mihomo|stash|surfboard)  1;
     default                                          0;
 }
-# Serve clash.yaml only when: Clash UA AND no X-Proxy-Provider header
-# (proxy-provider refresh requests carry X-Proxy-Provider: true and must get the real sub)
-map "\$is_clash_ua:\$http_x_proxy_provider" \$serve_clash_yaml {
+# Serve clash.yaml only when: Clash UA AND no ?provider=1 query param
+# (proxy-provider refresh requests add ?provider=1 and must get the real sub)
+map "\$is_clash_ua:\$arg_provider" \$serve_clash_yaml {
     "1:"    1;
     default 0;
 }

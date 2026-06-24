@@ -53,12 +53,9 @@ dns:
 proxy-providers:
   sub:
     type: http
-    url: https://${DOMAIN}/${SUB_PATH}/${SUB_ID}
+    url: https://${DOMAIN}/${SUB_PATH}/${SUB_ID}?provider=1
     path: ./proxy_providers/base64.yml
     interval: 3600
-    header:
-      X-Proxy-Provider:
-        - "true"
     health-check:
       enable: true
       url: https://www.gstatic.com/generate_204
