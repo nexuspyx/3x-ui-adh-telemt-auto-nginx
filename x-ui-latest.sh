@@ -141,7 +141,7 @@ uninstall_xui() {
     $Pak -y purge  nginx nginx-common nginx-core nginx-full python3-certbot-nginx
     $Pak -y autoremove
     $Pak -y autoclean
-    rm -rf /var/www/html/ /var/www/diagnostics/ /var/www/openspeedtest/ /etc/nginx/ /usr/share/nginx/
+    rm -rf /var/www/html/ /var/www/diagnostics/ /etc/nginx/ /usr/share/nginx/
     systemctl stop mtr-backend 2>/dev/null || true
     systemctl disable mtr-backend 2>/dev/null || true
     rm -f /etc/systemd/system/mtr-backend.service
@@ -470,15 +470,19 @@ server {
         proxy_send_timeout 120s;
     }
 
-    # ── OpenSpeedTest (served locally, no external connections) ─────────────
-    location ^~ ${diag_path}speedtest/ {
-        limit_req zone=diag_page burst=30 nodelay;
-        alias     /var/www/openspeedtest/;
-        index     index.html;
-        try_files \$uri \$uri/ =404;
-        client_max_body_size 35m;
-        add_header X-Frame-Options "SAMEORIGIN" always;
-        access_log off;
+    # ── Speed test upload receiver ───────────────────────────────────────────
+    # proxy_request_buffering off = nginx streams body to backend in real time;
+    # backend responds only after reading all bytes → accurate timing on client
+    location ^~ ${diag_path}api/upload {
+        limit_req               zone=diag_page burst=5 nodelay;
+        proxy_pass              http://127.0.0.1:${mtr_backend_port}/api/upload;
+        proxy_http_version      1.1;
+        proxy_set_header        X-Real-IP       \$remote_addr;
+        proxy_request_buffering off;
+        client_max_body_size    128m;
+        proxy_read_timeout      120s;
+        proxy_send_timeout      120s;
+        add_header              Cache-Control "no-store" always;
     }
 
     # ── Download test files ──────────────────────────────────────────────────
@@ -872,18 +876,6 @@ install_fake_site() {
 install_diagnostics() {
     local diag_webroot="/var/www/diagnostics"
     local backend_script="/usr/local/lib/3x-ui-pro/mtr-backend.py"
-    local openspeedtest_webroot="/var/www/openspeedtest"
-
-    # OpenSpeedTest static files
-    if [[ ! -f "${openspeedtest_webroot}/index.html" ]]; then
-        mkdir -p "${openspeedtest_webroot}"
-        curl -fsSL --retry 3 \
-            "https://github.com/openspeedtest/Speed-Test/archive/refs/heads/main.tar.gz" \
-            -o /tmp/openspeedtest.tar.gz
-        tar -xzf /tmp/openspeedtest.tar.gz -C "${openspeedtest_webroot}" --strip-components=1
-        rm -f /tmp/openspeedtest.tar.gz
-        chown -R www-data:www-data "${openspeedtest_webroot}" 2>/dev/null || true
-    fi
 
     # Diagnostics HTML page
     mkdir -p "${diag_webroot}"

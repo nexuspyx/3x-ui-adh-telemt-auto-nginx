@@ -187,6 +187,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+
+        # ── Upload speed test receiver ─────────────────────────────────────
+        # Reads the entire body before responding so the client timer is accurate
+        if parsed.path == "/api/upload" or parsed.path.endswith("/api/upload"):
+            content_length = int(self.headers.get("Content-Length", "0"))
+            to_read = min(content_length, 128 * 1024 * 1024)  # cap at 128 MB
+            received = 0
+            buf = 65536
+            while received < to_read:
+                chunk = self.rfile.read(min(buf, to_read - received))
+                if not chunk:
+                    break
+                received += len(chunk)
+            self._send_json(200, {"received": received, "ok": True})
+            return
+
         if not (parsed.path in ("/mtr", "/api/mtr") or parsed.path.endswith("/api/mtr")):
             self._send_json(404, {"error": "not found"})
             return
