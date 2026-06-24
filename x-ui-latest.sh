@@ -141,7 +141,7 @@ uninstall_xui() {
     $Pak -y purge  nginx nginx-common nginx-core nginx-full python3-certbot-nginx
     $Pak -y autoremove
     $Pak -y autoclean
-    rm -rf /var/www/html/ /var/www/diagnostics/ /etc/nginx/ /usr/share/nginx/
+    rm -rf /var/www/html/ /var/www/diagnostics/ /var/www/subpage/ /etc/nginx/ /usr/share/nginx/
     systemctl stop mtr-backend 2>/dev/null || true
     systemctl disable mtr-backend 2>/dev/null || true
     rm -f /etc/systemd/system/mtr-backend.service
@@ -307,9 +307,10 @@ EOF
 
     # Shared proxy locations for xray inbounds (included by both vhosts)
     cat > /etc/nginx/snippets/includes.conf <<EOF
-    #Subscription (plain/encode)
+    #Subscription (plain/encode) — Clash/Mihomo clients get static clash.yaml by UA
     location /${sub_path} {
         if (\$hack = 1) { return 404; }
+        if (\$is_clash_client = 1) { rewrite ^ /__clash_sub last; }
         proxy_redirect off;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -318,6 +319,7 @@ EOF
     }
     location /${sub_path}/ {
         if (\$hack = 1) { return 404; }
+        if (\$is_clash_client = 1) { rewrite ^ /__clash_sub last; }
         proxy_redirect off;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -400,6 +402,12 @@ EOF
 limit_req_zone  \$binary_remote_addr zone=diag_api:10m  rate=6r/m;
 limit_req_zone  \$binary_remote_addr zone=diag_page:10m rate=30r/m;
 limit_conn_zone \$binary_remote_addr zone=per_ip:10m;
+
+# Detect Clash/Mihomo subscription clients by User-Agent
+map \$http_user_agent \$is_clash_client {
+    ~*(clash|clashx|clashn|mihomo|stash|surfboard)  1;
+    default                                          0;
+}
 
 server {
     server_tokens off;
@@ -491,6 +499,16 @@ server {
         access_log off;
         add_header Cache-Control "no-store, no-cache, must-revalidate" always;
         add_header Content-Disposition "attachment" always;
+    }
+
+    # ── Clash subscription — internal static file served by UA routing ──────────
+    location = /__clash_sub {
+        internal;
+        default_type text/plain;
+        alias        /var/www/subpage/clash.yaml;
+        add_header   Content-Type        "text/yaml; charset=utf-8" always;
+        add_header   Content-Disposition "attachment; filename=clash.yaml" always;
+        add_header   Cache-Control       "no-store" always;
     }
 
     include /etc/nginx/snippets/includes.conf;
@@ -854,6 +872,20 @@ EOF
 # ─────────────────────────────────────────────────────────────────────────────
 # INSTALL FAKE SITE
 # ─────────────────────────────────────────────────────────────────────────────
+install_clash_sub() {
+    local clash_dir="/var/www/subpage"
+    mkdir -p "${clash_dir}"
+    if curl -fsSL "${GITHUB_RAW}/assets/clash/clash.yaml" -o "${clash_dir}/clash.yaml"; then
+        sed -i "s|\${DOMAIN}|${domain}|g"   "${clash_dir}/clash.yaml"
+        sed -i "s|\${SUB_PATH}|${sub_path}|g" "${clash_dir}/clash.yaml"
+        chown -R www-data:www-data "${clash_dir}" 2>/dev/null || true
+        chmod 644 "${clash_dir}/clash.yaml"
+        msg_ok "Clash subscription config installed."
+    else
+        msg_err "Failed to download clash.yaml from GitHub."
+    fi
+}
+
 install_fake_site() {
     local idx=$(( (RANDOM % FAKE_SITE_COUNT) + 1 ))
     local site_id
@@ -1011,6 +1043,8 @@ show_results() {
         echo -e "Username:  ${config_username}\n"
         echo -e "Password:  ${config_password}\n"
         msg_inf "────────────────────────────────────────────────────────────────────────────────"
+        msg_inf "Clash Sub (auto by UA): https://${domain}/${sub_path}/\n"
+        msg_inf "────────────────────────────────────────────────────────────────────────────────"
         msg_inf "Network Diagnostics: https://${domain}${diag_path}\n"
         msg_inf "────────────────────────────────────────────────────────────────────────────────"
         msg_inf "Please save this screen!"
@@ -1038,6 +1072,7 @@ main() {
 
     configure_nginx
     configure_xui_db
+    install_clash_sub
     install_fake_site
     install_diagnostics
     tune_system
