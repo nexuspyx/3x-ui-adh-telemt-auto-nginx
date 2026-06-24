@@ -28,6 +28,7 @@ proxy-providers:
       interval: 300
       timeout: 5000
       lazy: true
+      expected-status: 204
 
 
 
@@ -281,6 +282,3 @@ rules:
   - RULE-SET,python,🔓 NO VPN
   - RULE-SET,geoip-ru,🔓 NO VPN
   - MATCH,🌍 VPN
-
-      expected-status: 204
-
