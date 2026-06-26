@@ -1,0 +1,556 @@
+#!/usr/bin/env bash
+# x-ui-patch.sh — apply current features to an existing 3x-ui installation
+#
+# What it does (non-destructively, no DB changes):
+#   1. Reads ports/paths from /etc/x-ui/x-ui.db
+#   2. Detects domains from existing nginx configs
+#   3. Regenerates all nginx configs
+#   4. Installs network diagnostics (MTR + speed test)
+#   5. Installs Clash subscription template (UA-based routing)
+#   6. Replaces fake cover site with a current one
+#
+# Usage:
+#   wget -qO x-ui-patch.sh https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main/x-ui-patch.sh
+#   bash x-ui-patch.sh
+set -Eeuo pipefail
+
+XUIDB="/etc/x-ui/x-ui.db"
+GITHUB_RAW="https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main"
+FAKE_SITE_COUNT=50
+LIB_DIR="/usr/local/lib/3x-ui-pro"
+DIAG_ROOT="/var/www/diagnostics"
+
+# ── colour helpers ────────────────────────────────────────────────────────────
+red()   { printf '\033[31m%s\033[0m\n' "$*"; }
+green() { printf '\033[32m%s\033[0m\n' "$*"; }
+blue()  { printf '\033[34m[*] %s\033[0m\n' "$*"; }
+die()   { red "ERROR: $*" >&2; exit 1; }
+
+[[ $EUID -eq 0 ]] || die "Run as root: sudo bash $0"
+[[ -f "$XUIDB" ]]  || die "x-ui.db not found at $XUIDB — is 3x-ui installed?"
+
+# ── ensure sqlite3 available ──────────────────────────────────────────────────
+command -v sqlite3 &>/dev/null || apt-get install -y -q sqlite3
+
+# ── read settings from DB ─────────────────────────────────────────────────────
+blue "Reading settings from x-ui.db..."
+db() { sqlite3 "$XUIDB" "$1"; }
+
+sub_port=$(   db "SELECT value FROM settings WHERE key='subPort';")
+sub_path=$(   db "SELECT value FROM settings WHERE key='subPath';"     | sed 's|^/||;s|/$||')
+json_path=$(  db "SELECT value FROM settings WHERE key='subJsonPath';" | sed 's|^/||;s|/$||')
+panel_port=$( db "SELECT value FROM settings WHERE key='webPort';")
+panel_path=$( db "SELECT value FROM settings WHERE key='webBasePath';" | sed 's|^/||;s|/$||')
+
+[[ -n "$sub_port"   ]] || die "subPort not found in DB — re-run the main installer"
+[[ -n "$sub_path"   ]] || die "subPath not found in DB"
+[[ -n "$panel_port" ]] || die "webPort not found in DB"
+[[ -n "$panel_path" ]] || die "webBasePath not found in DB"
+
+printf "    sub_port   = %-6s  sub_path   = %s\n" "$sub_port"  "$sub_path"
+printf "    panel_port = %-6s  panel_path = %s\n" "$panel_port" "$panel_path"
+printf "    json_path  = %s\n" "$json_path"
+
+# ── detect domains from existing nginx ───────────────────────────────────────
+blue "Detecting domains from nginx configs..."
+domain=""
+reality_domain=""
+
+for f in /etc/nginx/sites-available/*; do
+    [[ -f "$f" ]] || continue
+    [[ "$(basename "$f")" == "80.conf" ]] && continue
+    if grep -q 'listen 7443' "$f" 2>/dev/null; then
+        domain=$(awk '/server_name/{print $2; exit}' "$f" | tr -d ';')
+    elif grep -q 'listen 9443' "$f" 2>/dev/null; then
+        reality_domain=$(awk '/server_name/{print $2; exit}' "$f" | tr -d ';')
+    fi
+done
+
+[[ -n "$domain" ]]         || die "Could not find panel domain (nginx config with 'listen 7443')"
+[[ -n "$reality_domain" ]] || die "Could not find reality domain (nginx config with 'listen 9443')"
+printf "    domain         = %s\n" "$domain"
+printf "    reality_domain = %s\n" "$reality_domain"
+
+# ── detect xhttp_path ─────────────────────────────────────────────────────────
+xhttp_path=""
+# 1. from existing includes.conf
+if [[ -f /etc/nginx/snippets/includes.conf ]]; then
+    xhttp_path=$(grep -A1 '#XHTTP' /etc/nginx/snippets/includes.conf \
+        | grep 'location' | grep -oP 'location /\K[^ {]+' | head -1 || true)
+fi
+# 2. from DB (xhttp inbound stream_settings)
+if [[ -z "$xhttp_path" ]]; then
+    xhttp_path=$(db "SELECT json_extract(stream_settings,'$.xhttpSettings.path')
+                     FROM inbounds
+                     WHERE json_extract(stream_settings,'$.network')='xhttp'
+                     LIMIT 1;" 2>/dev/null | sed 's|^/||;s|/$||' || true)
+fi
+# 3. generate new
+if [[ -z "$xhttp_path" ]]; then
+    xhttp_path=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 10)
+    blue "xhttp_path generated: $xhttp_path"
+else
+    blue "xhttp_path detected: $xhttp_path"
+fi
+
+# ── detect or generate diag_path ─────────────────────────────────────────────
+diag_path=""
+for f in /etc/nginx/sites-available/*; do
+    [[ -f "$f" ]] || continue
+    p=$(grep -oP 'location \^\~ \K/net-[^ {/]+/' "$f" 2>/dev/null | head -1 || true)
+    [[ -n "$p" ]] && { diag_path="$p"; break; }
+done
+if [[ -n "$diag_path" ]]; then
+    blue "diag_path reused: $diag_path"
+else
+    diag_path="/net-$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 12)/"
+    blue "diag_path generated: $diag_path"
+fi
+
+# ── detect or generate mtr_backend_port ──────────────────────────────────────
+mtr_backend_port=""
+if [[ -f /etc/systemd/system/mtr-backend.service ]]; then
+    mtr_backend_port=$(grep -oP '(?<=--port )\d+' /etc/systemd/system/mtr-backend.service \
+        | head -1 || true)
+fi
+if [[ -z "$mtr_backend_port" ]]; then
+    while true; do
+        p=$(( ((RANDOM<<15)|RANDOM) % 49152 + 10000 ))
+        nc -z 127.0.0.1 "$p" &>/dev/null || { mtr_backend_port=$p; break; }
+    done
+    blue "mtr_backend_port generated: $mtr_backend_port"
+else
+    blue "mtr_backend_port reused: $mtr_backend_port"
+fi
+
+# ── install required packages ─────────────────────────────────────────────────
+blue "Installing packages..."
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y -q mtr-tiny python3 curl wget sqlite3
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NGINX CONFIGS
+# ─────────────────────────────────────────────────────────────────────────────
+blue "Regenerating nginx configs..."
+
+mkdir -p /etc/nginx/stream-enabled /etc/nginx/snippets \
+         /etc/nginx/sites-available /etc/nginx/sites-enabled
+
+# ── SNI stream ────────────────────────────────────────────────────────────────
+cat > /etc/nginx/stream-enabled/stream.conf <<EOF
+map \$ssl_preread_server_name \$sni_name {
+    hostnames;
+    ${reality_domain}    xray;
+    ${domain}            www;
+    default              xray;
+}
+
+upstream xray { server 127.0.0.1:8443; }
+upstream www  { server 127.0.0.1:7443; }
+
+server {
+    proxy_protocol on;
+    set_real_ip_from unix:;
+    listen     443;
+    listen     [::]:443;
+    proxy_pass \$sni_name;
+    ssl_preread on;
+}
+EOF
+
+grep -xqFR "stream { include /etc/nginx/stream-enabled/*.conf; }" /etc/nginx/* \
+    || echo "stream { include /etc/nginx/stream-enabled/*.conf; }" >> /etc/nginx/nginx.conf
+grep -xqFR "load_module modules/ngx_stream_module.so;" /etc/nginx/* \
+    || sed -i '1s/^/load_module \/usr\/lib\/nginx\/modules\/ngx_stream_module.so; /' /etc/nginx/nginx.conf
+grep -xqFR "load_module modules/ngx_stream_geoip2_module.so;" /etc/nginx/* \
+    || sed -i '2s/^/load_module \/usr\/lib\/nginx\/modules\/ngx_stream_geoip2_module.so; /' /etc/nginx/nginx.conf
+grep -xqFR "worker_rlimit_nofile 16384;" /etc/nginx/* \
+    || echo "worker_rlimit_nofile 16384;" >> /etc/nginx/nginx.conf
+sed -i "/worker_connections/c\worker_connections 4096;" /etc/nginx/nginx.conf
+
+# ── HTTP → HTTPS redirect ─────────────────────────────────────────────────────
+cat > /etc/nginx/sites-available/80.conf <<EOF
+server {
+    listen 80;
+    server_name ${domain} ${reality_domain};
+    return 301 https://\$host\$request_uri;
+}
+EOF
+
+# ── Shared proxy locations snippet ────────────────────────────────────────────
+cat > /etc/nginx/snippets/includes.conf <<EOF
+    #Subscription — prefix location covers all sub-paths (assets, JS, etc.)
+    location /${sub_path}/ {
+        if (\$hack = 1) { return 404; }
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass https://127.0.0.1:${sub_port};
+    }
+    location = /${sub_path} {
+        if (\$hack = 1) { return 404; }
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass https://127.0.0.1:${sub_port};
+    }
+    location ~ ^/${sub_path}/(?<clash_sub_id>[^/]+)\$ {
+        if (\$hack = 1) { return 404; }
+        if (\$serve_clash_yaml = 1) { rewrite ^ /__clash_api?sub_id=\$clash_sub_id last; }
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass https://127.0.0.1:${sub_port};
+    }
+    location /assets  { proxy_pass https://127.0.0.1:${sub_port}; }
+    location /assets/ { proxy_pass https://127.0.0.1:${sub_port}; }
+
+    #Subscription (json)
+    location /${json_path} {
+        if (\$hack = 1) { return 404; }
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass https://127.0.0.1:${sub_port};
+    }
+    location /${json_path}/ {
+        if (\$hack = 1) { return 404; }
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass https://127.0.0.1:${sub_port};
+    }
+
+    #XHTTP
+    location /${xhttp_path} {
+        grpc_pass grpc://unix:/dev/shm/uds2023.sock;
+        grpc_buffer_size      16k;
+        grpc_socket_keepalive on;
+        grpc_read_timeout     1h;
+        grpc_send_timeout     1h;
+        grpc_set_header Connection        "";
+        grpc_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        grpc_set_header X-Forwarded-Proto \$scheme;
+        grpc_set_header X-Forwarded-Port  \$server_port;
+        grpc_set_header Host              \$host;
+        grpc_set_header X-Forwarded-Host  \$host;
+    }
+
+    #Xray generic proxy (WS / gRPC by port+path)
+    location ~ ^/(?<fwdport>\d+)/(?<fwdpath>.*)\$ {
+        if (\$hack = 1) { return 404; }
+        client_max_body_size 0;
+        client_body_timeout 1d;
+        grpc_read_timeout 1d;
+        grpc_socket_keepalive on;
+        proxy_read_timeout 1d;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_socket_keepalive on;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        if (\$content_type ~* "GRPC") {
+            grpc_pass grpc://127.0.0.1:\$fwdport\$is_args\$args;
+            break;
+        }
+        if (\$http_upgrade ~* "(WEBSOCKET|WS)") {
+            proxy_pass http://127.0.0.1:\$fwdport\$is_args\$args;
+            break;
+        }
+        if (\$request_method ~* ^(PUT|POST|GET)\$) {
+            proxy_pass http://127.0.0.1:\$fwdport\$is_args\$args;
+            break;
+        }
+    }
+
+    location / { try_files \$uri \$uri/ =404; }
+EOF
+
+# ── Panel domain vhost ────────────────────────────────────────────────────────
+cat > "/etc/nginx/sites-available/${domain}" <<EOF
+limit_req_zone  \$binary_remote_addr zone=diag_api:10m  rate=6r/m;
+limit_req_zone  \$binary_remote_addr zone=diag_page:10m rate=30r/m;
+limit_conn_zone \$binary_remote_addr zone=per_ip:10m;
+
+map \$http_user_agent \$is_clash_ua {
+    ~*(clash|clashx|clashn|mihomo|stash|surfboard)  1;
+    default                                          0;
+}
+map "\$is_clash_ua:\$arg_provider" \$serve_clash_yaml {
+    "1:"    1;
+    default 0;
+}
+
+server {
+    server_tokens off;
+    server_name ${domain};
+    listen 7443 ssl http2 proxy_protocol;
+    listen [::]:7443 ssl http2 proxy_protocol;
+    index index.html index.htm index.php;
+    root /var/www/html/;
+    real_ip_header proxy_protocol;
+    set_real_ip_from 127.0.0.1;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!eNULL:!MD5:!DES:!RC4:!ADH:!SSLv3:!EXP:!PSK:!DSS;
+    ssl_certificate     /etc/letsencrypt/live/${domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
+    if (\$host !~* ^(.+\.)?${domain}\$)            { return 444; }
+    if (\$scheme ~* https)                          { set \$safe 1; }
+    if (\$ssl_server_name !~* ^(.+\.)?${domain}\$) { set \$safe "\${safe}0"; }
+    if (\$safe = 10)                                { return 444; }
+    if (\$request_uri ~ "(\"|'|\`|~|,|:|;|%|\\$|&&|\?\?|0x00|0X00|\||\\|\{|\}|\[|\]|<|>|\.\.\.|\.\.\/|\/\/\/)") { set \$hack 1; }
+    error_page 400 401 402 403 500 501 502 503 504 =404 /404;
+    proxy_intercept_errors on;
+
+    location /${panel_path}/ {
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_pass https://127.0.0.1:${panel_port};
+    }
+    location /${panel_path} {
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_pass https://127.0.0.1:${panel_port};
+    }
+
+    location ^~ ${diag_path} {
+        limit_req  zone=diag_page burst=10 nodelay;
+        limit_conn per_ip 5;
+        alias /var/www/diagnostics/;
+        index index.html;
+        try_files \$uri \$uri/ /index.html;
+        add_header Cache-Control "no-store" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+    }
+    location ^~ ${diag_path}api/mtr {
+        limit_req  zone=diag_api burst=2 nodelay;
+        limit_conn per_ip 2;
+        proxy_pass         http://127.0.0.1:${mtr_backend_port}/api/mtr;
+        proxy_http_version 1.1;
+        proxy_set_header   X-Real-IP       \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+    location ^~ ${diag_path}api/upload {
+        limit_req               zone=diag_page burst=5 nodelay;
+        proxy_pass              http://127.0.0.1:${mtr_backend_port}/api/upload;
+        proxy_http_version      1.1;
+        proxy_set_header        X-Real-IP       \$remote_addr;
+        proxy_request_buffering off;
+        client_max_body_size    600m;
+        proxy_read_timeout      300s;
+        proxy_send_timeout      300s;
+        add_header              Cache-Control "no-store" always;
+    }
+    location ^~ ${diag_path}testfiles/ {
+        alias      /var/www/diagnostics/testfiles/;
+        access_log off;
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header Content-Disposition "attachment" always;
+    }
+    location = /__clash_api {
+        internal;
+        proxy_pass          http://127.0.0.1:${mtr_backend_port}/api/clash\$is_args\$args;
+        proxy_http_version  1.1;
+        proxy_set_header    X-Real-IP \$remote_addr;
+        add_header          Content-Type        "text/yaml; charset=utf-8" always;
+        add_header          Content-Disposition "attachment; filename=clash.yaml" always;
+        add_header          Cache-Control       "no-store" always;
+    }
+
+    include /etc/nginx/snippets/includes.conf;
+}
+EOF
+
+# ── Reality domain vhost ──────────────────────────────────────────────────────
+cat > "/etc/nginx/sites-available/${reality_domain}" <<EOF
+server {
+    server_tokens off;
+    server_name ${reality_domain};
+    listen 9443 ssl http2;
+    listen [::]:9443 ssl http2;
+    index index.html index.htm index.php;
+    root /var/www/html/;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!eNULL:!MD5:!DES:!RC4:!ADH:!SSLv3:!EXP:!PSK:!DSS;
+    ssl_certificate     /etc/letsencrypt/live/${reality_domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${reality_domain}/privkey.pem;
+    if (\$host !~* ^(.+\.)?${reality_domain}\$)            { return 444; }
+    if (\$scheme ~* https)                                  { set \$safe 1; }
+    if (\$ssl_server_name !~* ^(.+\.)?${reality_domain}\$) { set \$safe "\${safe}0"; }
+    if (\$safe = 10)                                        { return 444; }
+    if (\$request_uri ~ "(\"|'|\`|~|,|:|;|%|\\$|&&|\?\?|0x00|0X00|\||\\|\{|\}|\[|\]|<|>|\.\.\.|\.\.\/|\/\/\/)") { set \$hack 1; }
+    error_page 400 401 402 403 500 501 502 503 504 =404 /404;
+    proxy_intercept_errors on;
+
+    location /${panel_path}/ {
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass http://127.0.0.1:${panel_port};
+    }
+    location /${panel_path} {
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass http://127.0.0.1:${panel_port};
+    }
+
+    include /etc/nginx/snippets/includes.conf;
+}
+EOF
+
+# ── activate sites ────────────────────────────────────────────────────────────
+rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default
+ln -sf "/etc/nginx/sites-available/${domain}"         /etc/nginx/sites-enabled/
+ln -sf "/etc/nginx/sites-available/${reality_domain}" /etc/nginx/sites-enabled/
+ln -sf "/etc/nginx/sites-available/80.conf"           /etc/nginx/sites-enabled/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MTR-BACKEND
+# ─────────────────────────────────────────────────────────────────────────────
+blue "Installing mtr-backend..."
+
+mkdir -p "$LIB_DIR"
+curl -fsSL "${GITHUB_RAW}/assets/diagnostics/mtr-backend.py" -o "${LIB_DIR}/mtr-backend.py"
+chmod +x "${LIB_DIR}/mtr-backend.py"
+
+id mtr-backend &>/dev/null || \
+    useradd --system --no-create-home --shell /usr/sbin/nologin mtr-backend
+
+if command -v setcap &>/dev/null; then
+    setcap cap_net_raw+ep "$(command -v mtr)" 2>/dev/null || true
+fi
+
+cat > /etc/systemd/system/mtr-backend.service <<EOF
+[Unit]
+Description=MTR diagnostics backend
+After=network.target
+
+[Service]
+Type=simple
+User=mtr-backend
+Group=mtr-backend
+ExecStart=/usr/bin/python3 ${LIB_DIR}/mtr-backend.py --port ${mtr_backend_port}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/tmp
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable mtr-backend
+systemctl restart mtr-backend
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DIAGNOSTICS WEBROOT
+# ─────────────────────────────────────────────────────────────────────────────
+blue "Installing diagnostics page..."
+
+mkdir -p "${DIAG_ROOT}/testfiles"
+curl -fsSL "${GITHUB_RAW}/assets/diagnostics/index.html" \
+    | sed "s|__DIAG_PATH__|${diag_path}|g" \
+    > "${DIAG_ROOT}/index.html"
+
+# Generate speed test files if missing
+[[ -f "${DIAG_ROOT}/testfiles/test-10m.bin"  ]] || \
+    dd if=/dev/zero bs=1048576 count=10  of="${DIAG_ROOT}/testfiles/test-10m.bin"  status=none
+[[ -f "${DIAG_ROOT}/testfiles/test-100m.bin" ]] || \
+    dd if=/dev/zero bs=1048576 count=100 of="${DIAG_ROOT}/testfiles/test-100m.bin" status=none
+[[ -f "${DIAG_ROOT}/testfiles/test-512m.bin" ]] || \
+    dd if=/dev/zero bs=1048576 count=512 of="${DIAG_ROOT}/testfiles/test-512m.bin" status=none
+
+chown -R www-data:www-data "$DIAG_ROOT"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLASH SUBSCRIPTION TEMPLATE
+# ─────────────────────────────────────────────────────────────────────────────
+blue "Installing Clash subscription template..."
+
+clash_dir="/var/www/subpage"
+mkdir -p "$clash_dir"
+if curl -fsSL "${GITHUB_RAW}/assets/clash/clash.yaml" -o "${clash_dir}/clash.yaml.tpl"; then
+    sed -i "s|\${DOMAIN}|${domain}|g"     "${clash_dir}/clash.yaml.tpl"
+    sed -i "s|\${SUB_PATH}|${sub_path}|g" "${clash_dir}/clash.yaml.tpl"
+    chown -R www-data:www-data "$clash_dir"
+    chmod 644 "${clash_dir}/clash.yaml.tpl"
+    green "Clash template installed."
+else
+    red "Failed to download clash.yaml template (non-fatal)."
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FAKE COVER SITE
+# ─────────────────────────────────────────────────────────────────────────────
+blue "Updating fake cover site..."
+
+pick=$(( RANDOM % FAKE_SITE_COUNT + 1 ))
+site_num=$(printf "%02d" "$pick")
+mkdir -p /var/www/html
+
+if curl -fsSL "${GITHUB_RAW}/assets/fake-sites/site-${site_num}/index.html" \
+        -o /var/www/html/index.html; then
+    chown -R www-data:www-data /var/www/html
+    chmod 644 /var/www/html/index.html
+    green "Fake site #${site_num} installed."
+else
+    red "Failed to download fake site (non-fatal)."
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NGINX TEST & RELOAD
+# ─────────────────────────────────────────────────────────────────────────────
+blue "Testing nginx config..."
+if nginx -t 2>&1 | grep -q successful; then
+    systemctl reload nginx
+    green "nginx reloaded OK."
+else
+    red "nginx config test failed — check errors above."
+    nginx -t
+    exit 1
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RESULTS
+# ─────────────────────────────────────────────────────────────────────────────
+echo
+green "══════════════════════════════════════════════"
+green " Patch complete"
+green "══════════════════════════════════════════════"
+printf "\n  Panel:       https://%s/%s/\n"  "$domain" "$panel_path"
+printf "  Sub (plain): https://%s/%s/\n"   "$domain" "$sub_path"
+printf "  Sub (Clash): https://%s/%s/\n"   "$domain" "$sub_path"
+printf "               (Clash/Mihomo clients get clash.yaml automatically)\n"
+printf "  Diagnostics: https://%s%s\n"     "$domain" "$diag_path"
+echo
