@@ -14,6 +14,7 @@ BACKUP_PATHS=(
     /etc/nginx
     /etc/x-ui
     /usr/local/x-ui
+    /usr/bin/x-ui
     /usr/local/lib/3x-ui-pro
     /etc/letsencrypt
     /var/www/html
@@ -141,6 +142,7 @@ cmd_restore() {
     chown -R www-data:www-data /var/www/diagnostics 2>/dev/null || true
     chown -R www-data:www-data /var/www/subpage     2>/dev/null || true
     [[ -f /usr/local/x-ui/x-ui ]] && chmod +x /usr/local/x-ui/x-ui
+    [[ -f /usr/bin/x-ui ]]        && chmod +x /usr/bin/x-ui
     find /usr/local/lib/3x-ui-pro -name "*.py" -exec chmod +x {} \; 2>/dev/null || true
 
     # ── recreate mtr-backend system user if missing ───────────────────────
@@ -232,7 +234,8 @@ Usage: $(basename "$0") {backup|restore <file>|list}
 What is backed up:
   /etc/nginx                      nginx config
   /etc/x-ui                       panel DB + config
-  /usr/local/x-ui                 panel binary
+  /usr/local/x-ui                 panel binary + xray core
+  /usr/bin/x-ui                   x-ui management CLI
   /usr/local/lib/3x-ui-pro        mtr-backend script
   /etc/letsencrypt                SSL certificates
   /var/www/{html,diagnostics,subpage}  web content
