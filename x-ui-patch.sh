@@ -392,8 +392,10 @@ server {
         proxy_intercept_errors off;
     }
 
+    # No diag cookie yet → bounce through the SSO bridge (checks panel session,
+    # mints the cookie) so a bookmarked diag link works once logged into the panel.
     location ^~ ${diag_path} {
-        if (\$diag_auth = 0) { return 404; }
+        if (\$diag_auth = 0) { return 302 /${panel_path}/diag; }
         limit_req  zone=diag_page burst=10 nodelay;
         limit_conn per_ip 5;
         alias /var/www/diagnostics/;

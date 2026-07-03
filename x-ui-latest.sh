@@ -525,10 +525,12 @@ server {
     }
 
     # ── Network diagnostics page ─────────────────────────────────────────────
-    # Requires the diag cookie (issued by the SSO bridge above); re-setting it
-    # here extends the expiry on every visit
+    # No diag cookie yet → bounce through the SSO bridge, which checks the panel
+    # session and mints the cookie, so a bookmarked diag link "just works" once
+    # you're logged into the panel. (Only the HTML page redirects; the API/asset
+    # sub-locations below stay 404 without the cookie.)
     location ^~ ${diag_path} {
-        if (\$diag_auth = 0) { return 404; }
+        if (\$diag_auth = 0) { return 302 /${panel_path}/diag; }
         limit_req  zone=diag_page burst=10 nodelay;
         limit_conn per_ip 5;
         alias /var/www/diagnostics/;
@@ -949,12 +951,12 @@ VALUES (
 -- rendered as the share-link endpoint at subscription time.
 -- REALITY keeps its own TLS params (security=same); the rest front through
 -- nginx at :443 with TLS.
-INSERT INTO "hosts" ("inbound_id","sort_order","remark","address","port","security","fingerprint")
+INSERT INTO "hosts" ("inbound_id","sort_order","remark","address","port","security","fingerprint","alpn")
 VALUES
-    ((SELECT id FROM inbounds WHERE tag='inbound-8443'),           0, 'reality', '${domain}', 443, 'same', ''),
-    ((SELECT id FROM inbounds WHERE tag='inbound-${ws_port}'),     0, 'ws',      '${domain}', 443, 'tls',  'firefox'),
-    ((SELECT id FROM inbounds WHERE tag='inbound-/dev/shm/uds2023.sock,0666:0|'), 0, 'xhttp', '${domain}', 443, 'tls', 'firefox'),
-    ((SELECT id FROM inbounds WHERE tag='inbound-${trojan_port}'), 0, 'trojan',  '${domain}', 443, 'tls',  'firefox');
+    ((SELECT id FROM inbounds WHERE tag='inbound-8443'),           0, 'reality', '${domain}', 443, 'same', '',        '[]'),
+    ((SELECT id FROM inbounds WHERE tag='inbound-${ws_port}'),     0, 'ws',      '${domain}', 443, 'tls',  'firefox', '["h2","http/1.1"]'),
+    ((SELECT id FROM inbounds WHERE tag='inbound-/dev/shm/uds2023.sock,0666:0|'), 0, 'xhttp', '${domain}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
+    ((SELECT id FROM inbounds WHERE tag='inbound-${trojan_port}'), 0, 'trojan',  '${domain}', 443, 'tls',  'firefox', '["h2","http/1.1"]');
 EOF
 
     /usr/local/x-ui/x-ui setting \
