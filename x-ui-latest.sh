@@ -115,6 +115,7 @@ xhttp_path=$(gen_random_string 10)
 config_username=$(gen_random_string 10)
 config_password=$(gen_random_string 10)
 diag_path="/net-$(gen_random_string 12)/"
+diag_token=$(gen_random_string 16)
 mtr_backend_port=$(make_port)
 
 # ─── Argument parsing ────────────────────────────────────────────────────────
@@ -440,6 +441,12 @@ map "\$is_clash_ua:\$arg_provider" \$serve_clash_yaml {
     default 0;
 }
 
+# Diagnostics access: cookie issued by the SSO bridge after panel login
+map \$cookie_diag_key \$diag_auth {
+    "${diag_token}" 1;
+    default          0;
+}
+
 server {
     server_tokens off;
     server_name ${domain};
@@ -490,19 +497,51 @@ server {
         proxy_pass https://127.0.0.1:${panel_port};
     }
 
+    # ── Diagnostics SSO bridge ───────────────────────────────────────────────
+    # Lives under the panel path so the browser attaches the 3x-ui session
+    # cookie (its Path is scoped to the panel base path). Valid panel session
+    # → issue the diag cookie and redirect; otherwise → panel login page.
+    # NOTE: auth_request runs in the access phase; a plain "return" here would
+    # skip it (rewrite phase), hence the try_files → named-location hop.
+    location = /${panel_path}/diag {
+        auth_request /__diag_auth;
+        error_page 401 403 =302 /${panel_path}/;
+        try_files /__nonexistent @diag_sso_ok;
+    }
+    location @diag_sso_ok {
+        add_header Set-Cookie "diag_key=${diag_token}; Path=${diag_path}; Secure; HttpOnly; SameSite=Lax; Max-Age=604800";
+        return 302 ${diag_path};
+    }
+    location = /__diag_auth {
+        internal;
+        proxy_pass https://127.0.0.1:${panel_port}/${panel_path}/panel/;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        # 3x-ui answers AJAX requests with 401 instead of a login redirect
+        proxy_set_header X-Requested-With XMLHttpRequest;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_intercept_errors off;
+    }
+
     # ── Network diagnostics page ─────────────────────────────────────────────
+    # Requires the diag cookie (issued by the SSO bridge above); re-setting it
+    # here extends the expiry on every visit
     location ^~ ${diag_path} {
+        if (\$diag_auth = 0) { return 404; }
         limit_req  zone=diag_page burst=10 nodelay;
         limit_conn per_ip 5;
         alias /var/www/diagnostics/;
         index index.html;
         try_files \$uri \$uri/ /index.html;
+        add_header Set-Cookie "diag_key=${diag_token}; Path=${diag_path}; Secure; HttpOnly; SameSite=Lax; Max-Age=604800" always;
         add_header Cache-Control "no-store" always;
         add_header X-Robots-Tag "noindex, nofollow" always;
     }
 
     # ── Diagnostics MTR API ──────────────────────────────────────────────────
     location ^~ ${diag_path}api/mtr {
+        if (\$diag_auth = 0) { return 404; }
         limit_req  zone=diag_api burst=2 nodelay;
         limit_conn per_ip 2;
         proxy_pass         http://127.0.0.1:${mtr_backend_port}/api/mtr;
@@ -517,6 +556,7 @@ server {
     # No limit_req: librespeed fires many short POSTs (parallel streams).
     # proxy_request_buffering off = client sees true network backpressure.
     location ^~ ${diag_path}api/st/up {
+        if (\$diag_auth = 0) { return 404; }
         access_log              off;
         limit_conn              per_ip 8;
         proxy_pass              http://127.0.0.1:${mtr_backend_port}/api/st/up;
@@ -531,6 +571,7 @@ server {
 
     # ── LibreSpeed ping endpoint (answered by nginx, no backend hop) ─────────
     location = ${diag_path}api/st/ping {
+        if (\$diag_auth = 0) { return 404; }
         access_log off;
         limit_conn per_ip 8;
         add_header Cache-Control "no-store" always;
@@ -540,6 +581,7 @@ server {
 
     # ── LibreSpeed client IP ─────────────────────────────────────────────────
     location = ${diag_path}api/st/getip {
+        if (\$diag_auth = 0) { return 404; }
         proxy_pass          http://127.0.0.1:${mtr_backend_port}/api/st/getip;
         proxy_http_version  1.1;
         proxy_set_header    X-Real-IP \$remote_addr;
@@ -548,6 +590,7 @@ server {
 
     # ── Download test files ──────────────────────────────────────────────────
     location ^~ ${diag_path}testfiles/ {
+        if (\$diag_auth = 0) { return 404; }
         alias      /var/www/diagnostics/testfiles/;
         access_log off;
         add_header Cache-Control "no-store, no-cache, must-revalidate" always;
@@ -1047,7 +1090,7 @@ EOF
     systemctl enable mtr-backend
     systemctl restart mtr-backend
 
-    msg_ok "Network diagnostics installed at https://${domain}${diag_path}"
+    msg_ok "Network diagnostics installed at https://${domain}/${panel_path}/diag (panel login required)"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1107,7 +1150,7 @@ show_results() {
         echo -e "Username:  ${config_username}\n"
         echo -e "Password:  ${config_password}\n"
         msg_inf "────────────────────────────────────────────────────────────────────────────────"
-        msg_inf "Network Diagnostics: https://${domain}${diag_path}\n"
+        msg_inf "Network Diagnostics (panel login required): https://${domain}/${panel_path}/diag\n"
         msg_inf "────────────────────────────────────────────────────────────────────────────────"
         msg_inf "Please save this screen!"
     else
