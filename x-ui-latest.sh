@@ -827,9 +827,6 @@ VALUES (
     '{
   "network": "tcp",
   "security": "reality",
-  "externalProxy": [
-    {"forceTls":"same","dest":"${domain}","port":443,"remark":""}
-  ],
   "realitySettings": {
     "show": false,
     "xver": 0,
@@ -845,7 +842,7 @@ VALUES (
     ],
     "settings": {
       "publicKey": "${public_key}",
-      "fingerprint": "chrome",
+      "fingerprint": "firefox",
       "serverName": "",
       "spiderX": "/"
     }
@@ -871,9 +868,6 @@ VALUES (
     '{
   "network": "ws",
   "security": "none",
-  "externalProxy": [
-    {"forceTls":"tls","dest":"${domain}","port":443,"remark":""}
-  ],
   "wsSettings": {
     "acceptProxyProtocol": false,
     "path": "/${ws_port}/${ws_path}",
@@ -897,9 +891,6 @@ VALUES (
     '{
   "network": "xhttp",
   "security": "none",
-  "externalProxy": [
-    {"forceTls":"tls","dest":"${domain}","port":443,"remark":""}
-  ],
   "xhttpSettings": {
     "path": "/${xhttp_path}",
     "host": "${domain}",
@@ -944,9 +935,6 @@ VALUES (
     '{
   "network": "grpc",
   "security": "none",
-  "externalProxy": [
-    {"forceTls":"tls","dest":"${domain}","port":443,"remark":""}
-  ],
   "grpcSettings": {
     "serviceName": "/${trojan_port}/${trojan_path}",
     "authority": "${domain}",
@@ -956,6 +944,17 @@ VALUES (
     'inbound-${trojan_port}',
     '{"enabled":false,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
 );
+
+-- Hosts supersede the legacy externalProxy arrays: one host per inbound,
+-- rendered as the share-link endpoint at subscription time.
+-- REALITY keeps its own TLS params (security=same); the rest front through
+-- nginx at :443 with TLS.
+INSERT INTO "hosts" ("inbound_id","sort_order","remark","address","port","security","fingerprint")
+VALUES
+    ((SELECT id FROM inbounds WHERE tag='inbound-8443'),           0, 'reality', '${domain}', 443, 'same', ''),
+    ((SELECT id FROM inbounds WHERE tag='inbound-${ws_port}'),     0, 'ws',      '${domain}', 443, 'tls',  'firefox'),
+    ((SELECT id FROM inbounds WHERE tag='inbound-/dev/shm/uds2023.sock,0666:0|'), 0, 'xhttp', '${domain}', 443, 'tls', 'firefox'),
+    ((SELECT id FROM inbounds WHERE tag='inbound-${trojan_port}'), 0, 'trojan',  '${domain}', 443, 'tls',  'firefox');
 EOF
 
     /usr/local/x-ui/x-ui setting \
