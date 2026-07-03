@@ -299,6 +299,9 @@ server {
     root /var/www/html/;
     real_ip_header proxy_protocol;
     set_real_ip_from 127.0.0.1;
+    # Larger h2 preread window improves single-stream upload throughput
+    http2_body_preread_size 128k;
+    client_body_buffer_size 512k;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!eNULL:!MD5:!DES:!RC4:!ADH:!SSLv3:!EXP:!PSK:!DSS;
     ssl_certificate     /etc/letsencrypt/live/${domain}/fullchain.pem;
@@ -355,16 +358,30 @@ server {
         proxy_read_timeout 120s;
         proxy_send_timeout 120s;
     }
-    location ^~ ${diag_path}api/upload {
-        limit_req               zone=diag_page burst=5 nodelay;
-        proxy_pass              http://127.0.0.1:${mtr_backend_port}/api/upload;
+    location ^~ ${diag_path}api/st/up {
+        access_log              off;
+        limit_conn              per_ip 8;
+        proxy_pass              http://127.0.0.1:${mtr_backend_port}/api/st/up;
         proxy_http_version      1.1;
         proxy_set_header        X-Real-IP       \$remote_addr;
         proxy_request_buffering off;
-        client_max_body_size    600m;
-        proxy_read_timeout      300s;
-        proxy_send_timeout      300s;
+        client_max_body_size    64m;
+        proxy_read_timeout      60s;
+        proxy_send_timeout      60s;
         add_header              Cache-Control "no-store" always;
+    }
+    location = ${diag_path}api/st/ping {
+        access_log off;
+        limit_conn per_ip 8;
+        add_header Cache-Control "no-store" always;
+        default_type text/plain;
+        return 200 "";
+    }
+    location = ${diag_path}api/st/getip {
+        proxy_pass          http://127.0.0.1:${mtr_backend_port}/api/st/getip;
+        proxy_http_version  1.1;
+        proxy_set_header    X-Real-IP \$remote_addr;
+        add_header          Cache-Control "no-store" always;
     }
     location ^~ ${diag_path}testfiles/ {
         alias      /var/www/diagnostics/testfiles/;
@@ -479,17 +496,30 @@ systemctl restart mtr-backend
 blue "Installing diagnostics page..."
 
 mkdir -p "${DIAG_ROOT}/testfiles"
+server_ip=$(ip route get 8.8.8.8 2>/dev/null | grep -Po 'src \K\S*' || true)
+[[ -n "$server_ip" ]] || server_ip=$(curl -fsS ipv4.icanhazip.com | tr -d '[:space:]' || true)
 curl -fsSL "${GITHUB_RAW}/assets/diagnostics/index.html" \
-    | sed "s|__DIAG_PATH__|${diag_path}|g" \
+    | sed -e "s|__DIAG_PATH__|${diag_path}|g" \
+          -e "s|__SERVER_DOMAIN__|${domain}|g" \
+          -e "s|__SERVER_IP__|${server_ip}|g" \
     > "${DIAG_ROOT}/index.html"
 
-# Generate speed test files if missing
-[[ -f "${DIAG_ROOT}/testfiles/test-10m.bin"  ]] || \
-    dd if=/dev/zero bs=1048576 count=10  of="${DIAG_ROOT}/testfiles/test-10m.bin"  status=none
+# LibreSpeed engine (speed test frontend, LGPL — github.com/librespeed/speedtest)
+curl -fsSL "${GITHUB_RAW}/assets/diagnostics/librespeed/speedtest.js" \
+    -o "${DIAG_ROOT}/speedtest.js"
+curl -fsSL "${GITHUB_RAW}/assets/diagnostics/librespeed/speedtest_worker.js" \
+    -o "${DIAG_ROOT}/speedtest_worker.js"
+
+# Generate speed test files if missing (same set as the main installer)
+[[ -f "${DIAG_ROOT}/testfiles/test-15k.bin"  ]] || \
+    dd if=/dev/zero bs=1024 count=15 of="${DIAG_ROOT}/testfiles/test-15k.bin" status=none
+[[ -f "${DIAG_ROOT}/testfiles/test-17k.bin"  ]] || \
+    dd if=/dev/zero bs=1024 count=17 of="${DIAG_ROOT}/testfiles/test-17k.bin" status=none
 [[ -f "${DIAG_ROOT}/testfiles/test-100m.bin" ]] || \
     dd if=/dev/zero bs=1048576 count=100 of="${DIAG_ROOT}/testfiles/test-100m.bin" status=none
-[[ -f "${DIAG_ROOT}/testfiles/test-512m.bin" ]] || \
-    dd if=/dev/zero bs=1048576 count=512 of="${DIAG_ROOT}/testfiles/test-512m.bin" status=none
+[[ -f "${DIAG_ROOT}/testfiles/test-1g.bin"   ]] || \
+    dd if=/dev/zero bs=1048576 count=1024 of="${DIAG_ROOT}/testfiles/test-1g.bin"  status=none
+rm -f "${DIAG_ROOT}/testfiles/test-512m.bin"   # only used by the old single-stream speed test
 
 chown -R www-data:www-data "$DIAG_ROOT"
 

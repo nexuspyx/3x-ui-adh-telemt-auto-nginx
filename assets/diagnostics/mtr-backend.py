@@ -15,7 +15,7 @@ import re
 import subprocess
 import sys
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock
 from urllib.parse import parse_qs, urlparse
 
@@ -179,11 +179,38 @@ class Handler(BaseHTTPRequestHandler):
         log.debug("IP from direct connection: %s", ip)
         return ip
 
+    def _send_text(self, code: int, text: str) -> None:
+        payload = text.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _discard_body(self, max_bytes: int) -> int:
+        """Read and discard the request body as fast as possible. Returns bytes read."""
+        content_length = int(self.headers.get("Content-Length", "0"))
+        to_read = min(content_length, max_bytes)
+        received = 0
+        buf = 1024 * 1024
+        while received < to_read:
+            chunk = self.rfile.read(min(buf, to_read - received))
+            if not chunk:
+                break
+            received += len(chunk)
+        return received
+
     def do_GET(self):
         parsed = urlparse(self.path)
 
         if parsed.path == "/health":
             self._send_json(200, {"ok": True})
+            return
+
+        # ── LibreSpeed: client IP ──────────────────────────────────────────────
+        if parsed.path == "/api/st/getip" or parsed.path.endswith("/api/st/getip"):
+            self._send_text(200, self._client_ip())
             return
 
         # ── Clash subscription generator ───────────────────────────────────────
@@ -216,18 +243,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
 
-        # ── Upload speed test receiver ─────────────────────────────────────
-        # Reads the entire body before responding so the client timer is accurate
+        # ── LibreSpeed upload sink: discard body, empty 200 ────────────────
+        # Client measures via XHR upload progress; server just consumes bytes.
+        if parsed.path == "/api/st/up" or parsed.path.endswith("/api/st/up"):
+            self._discard_body(64 * 1024 * 1024)  # librespeed blobs are ~20 MB
+            self._send_text(200, "")
+            return
+
+        # ── Legacy upload speed test receiver ──────────────────────────────
         if parsed.path == "/api/upload" or parsed.path.endswith("/api/upload"):
-            content_length = int(self.headers.get("Content-Length", "0"))
-            to_read = min(content_length, 600 * 1024 * 1024)  # cap at 600 MB
-            received = 0
-            buf = 65536
-            while received < to_read:
-                chunk = self.rfile.read(min(buf, to_read - received))
-                if not chunk:
-                    break
-                received += len(chunk)
+            received = self._discard_body(600 * 1024 * 1024)
             self._send_json(200, {"received": received, "ok": True})
             return
 
@@ -290,7 +315,9 @@ def main():
     if not (1024 <= args.port <= 65535):
         sys.exit("Port must be between 1024 and 65535")
 
-    server = HTTPServer(("127.0.0.1", args.port), Handler)
+    # Threading: librespeed opens parallel download/upload streams
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    server.daemon_threads = True
     log.info("MTR backend listening on 127.0.0.1:%d", args.port)
     try:
         server.serve_forever()

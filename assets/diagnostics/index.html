@@ -57,7 +57,7 @@
   /* Speed test */
   .speed-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 16px;
     margin-bottom: 20px;
   }
@@ -207,23 +207,36 @@
     <div class="section-title">Speed Test</div>
     <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:20px;">
       Runs directly between your browser and this server — no external connections.
-      Download: 512 MB test file. Upload: 512 MB payload.
+      Powered by <a class="link" href="https://github.com/librespeed/speedtest" target="_blank" rel="noopener noreferrer">LibreSpeed</a>:
+      parallel streams, 15 s per direction.
     </p>
     <div class="speed-grid">
       <div class="speed-card">
         <div class="speed-card-label">↓ Download</div>
         <div class="speed-card-value" id="dl-speed">—</div>
         <div class="speed-card-unit">Mbps</div>
-        <div class="speed-card-note" id="dl-note">512 MB file</div>
+        <div class="speed-card-note" id="dl-note"></div>
       </div>
       <div class="speed-card">
         <div class="speed-card-label">↑ Upload</div>
         <div class="speed-card-value" id="ul-speed">—</div>
         <div class="speed-card-unit">Mbps</div>
-        <div class="speed-card-note" id="ul-note">512 MB payload</div>
+        <div class="speed-card-note" id="ul-note"></div>
+      </div>
+      <div class="speed-card">
+        <div class="speed-card-label">Ping</div>
+        <div class="speed-card-value" id="ping-val">—</div>
+        <div class="speed-card-unit">ms</div>
+        <div class="speed-card-note"></div>
+      </div>
+      <div class="speed-card">
+        <div class="speed-card-label">Jitter</div>
+        <div class="speed-card-value" id="jitter-val">—</div>
+        <div class="speed-card-unit">ms</div>
+        <div class="speed-card-note"></div>
       </div>
     </div>
-    <button class="btn" id="speed-btn" onclick="runSpeedTest()">Start Speed Test</button>
+    <button class="btn" id="speed-btn" onclick="toggleSpeedTest()">Start Speed Test</button>
     <div id="speed-status" style="margin-top:14px;font-size:0.85rem;min-height:1.4em;"></div>
   </div>
 
@@ -307,6 +320,7 @@
   </div>
 </div>
 
+<script src="speedtest.js"></script>
 <script>
 // Detect client IP from server response header or API
 (async function detectIP() {
@@ -381,67 +395,66 @@ function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ── Speed Test ──────────────────────────────────────────────────────────────
-async function runSpeedTest() {
-  const btn    = document.getElementById('speed-btn');
-  const status = document.getElementById('speed-status');
-  btn.disabled = true;
+// ── Speed Test (LibreSpeed engine) ──────────────────────────────────────────
+// Upload accuracy over HTTP/2 requires parallel streams + XHR progress events;
+// a single big POST is throttled by the per-stream h2 flow-control window.
+let st = null;
 
-  ['dl-speed','ul-speed'].forEach(id => { document.getElementById(id).textContent = '—'; });
+function speedUI(running) {
+  document.getElementById('speed-btn').textContent =
+    running ? 'Abort Test' : 'Start Speed Test';
+}
+
+function toggleSpeedTest() {
+  const status = document.getElementById('speed-status');
+
+  if (st && st.getState() === 3) {
+    st.abort();
+    st = null;
+    speedUI(false);
+    status.innerHTML = '<span class="status-tag tag-warn">Aborted</span>';
+    return;
+  }
+
+  ['dl-speed','ul-speed','ping-val','jitter-val'].forEach(id => {
+    document.getElementById(id).textContent = '—';
+  });
   ['dl-note','ul-note'].forEach(id => { document.getElementById(id).textContent = ''; });
 
-  // Download
-  try {
-    status.innerHTML = '<span class="status-tag tag-info">Testing download…</span>';
-    const mbps = await measureDownload();
-    document.getElementById('dl-speed').textContent = mbps.toFixed(1);
-    document.getElementById('dl-note').textContent  = '512 MB file';
-  } catch(e) {
-    document.getElementById('dl-speed').textContent = 'ERR';
-  }
+  st = new Speedtest();
+  // All URLs are relative to speedtest_worker.js (served from the diag root)
+  st.setParameter('url_dl',   'testfiles/test-100m.bin');
+  st.setParameter('url_ul',   'api/st/up');
+  st.setParameter('url_ping', 'api/st/ping');
+  st.setParameter('url_getIp','api/st/getip');
+  st.setParameter('getIp_ispInfo', false);
+  st.setParameter('telemetry_level', 0);  // no telemetry, no database
 
-  // Upload
-  try {
-    status.innerHTML = '<span class="status-tag tag-info">Testing upload…</span>';
-    const mbps = await measureUpload();
-    document.getElementById('ul-speed').textContent = mbps.toFixed(1);
-    document.getElementById('ul-note').textContent  = '512 MB payload';
-  } catch(e) {
-    document.getElementById('ul-speed').textContent = 'ERR';
-  }
+  st.onupdate = function (d) {
+    if (d.dlStatus)     document.getElementById('dl-speed').textContent   = d.dlStatus;
+    if (d.ulStatus)     document.getElementById('ul-speed').textContent   = d.ulStatus;
+    if (d.pingStatus)   document.getElementById('ping-val').textContent   = d.pingStatus;
+    if (d.jitterStatus) document.getElementById('jitter-val').textContent = d.jitterStatus;
+    document.getElementById('dl-note').textContent =
+      d.testState === 1 ? Math.round(d.dlProgress * 100) + '%' : '';
+    document.getElementById('ul-note').textContent =
+      d.testState === 3 ? Math.round(d.ulProgress * 100) + '%' : '';
+    const phase = {0:'Starting…',1:'Testing download…',2:'Testing ping…',3:'Testing upload…'}[d.testState];
+    if (phase)
+      status.innerHTML = '<span class="status-tag tag-info">' + phase + '</span>';
+  };
 
-  status.innerHTML = '<span class="status-tag tag-ok">Done</span>';
-  btn.disabled = false;
-}
+  st.onend = function (aborted) {
+    speedUI(false);
+    document.getElementById('dl-note').textContent = '';
+    document.getElementById('ul-note').textContent = '';
+    if (!aborted)
+      status.innerHTML = '<span class="status-tag tag-ok">Done</span>';
+    st = null;
+  };
 
-async function measureDownload() {
-  const url   = '__DIAG_PATH__testfiles/test-512m.bin?t=' + Date.now();
-  const start = performance.now();
-  const resp  = await fetch(url, { cache: 'no-store' });
-  const reader = resp.body.getReader();
-  let bytes = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.length;
-    const secs = (performance.now() - start) / 1000;
-    if (secs > 0.3)
-      document.getElementById('dl-speed').textContent = ((bytes * 8) / secs / 1e6).toFixed(1);
-  }
-  return (bytes * 8) / ((performance.now() - start) / 1000) / 1e6;
-}
-
-async function measureUpload() {
-  const size  = 512 * 1024 * 1024;
-  const data  = new Uint8Array(size);
-  const start = performance.now();
-  const resp  = await fetch('__DIAG_PATH__api/upload', {
-    method: 'POST',
-    body: data,
-    headers: { 'Content-Type': 'application/octet-stream' }
-  });
-  await resp.json();
-  return (size * 8) / ((performance.now() - start) / 1000) / 1e6;
+  speedUI(true);
+  st.start();
 }
 </script>
 </body>
