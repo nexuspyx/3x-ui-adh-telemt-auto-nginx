@@ -575,6 +575,10 @@ server {
         proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_read_timeout 120s;
         proxy_send_timeout 120s;
+        # Let the backend's JSON error bodies through; the server-level
+        # "proxy_intercept_errors on" would otherwise rewrite a 500 into an HTML
+        # 404 and break the frontend's response.json() parse.
+        proxy_intercept_errors off;
     }
 
     # ── LibreSpeed upload sink ───────────────────────────────────────────────
@@ -1068,7 +1072,9 @@ install_diagnostics() {
     chmod 755 "${backend_script}"
 
     # Grant mtr raw socket capability (runs as restricted user, no root needed)
-    command -v setcap &>/dev/null && setcap cap_net_raw+ep "$(command -v mtr)" 2>/dev/null || true
+    # mtr-packet is the helper that actually opens the raw socket
+    command -v setcap &>/dev/null && setcap cap_net_raw+ep "$(command -v mtr)"        2>/dev/null || true
+    command -v setcap &>/dev/null && setcap cap_net_raw+ep "$(command -v mtr-packet)" 2>/dev/null || true
 
     # Dedicated system user for mtr-backend
     id mtr-backend &>/dev/null || \
@@ -1101,8 +1107,12 @@ MemoryDenyWriteExecute=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 RemoveIPC=yes
-AmbientCapabilities=
-CapabilityBoundingSet=
+# mtr-packet opens raw ICMP sockets. NoNewPrivileges=yes strips the file
+# capability off the mtr binary, so grant CAP_NET_RAW the systemd-native way
+# (ambient caps survive NoNewPrivileges). Empty here = mtr fails with
+# "Failure to open IPv4 sockets: Permission denied".
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=mtr-backend
