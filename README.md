@@ -42,16 +42,10 @@ bash x-ui-latest.sh -install y -subdomain panel.example.com -reality_domain r.ex
 ---
 ## Патч
 
-**Шаг 1 — скачать скрипт**
+Применить текущие фиксы к существующей установке (без изменений БД):
 
 ```bash
-wget -qO x-ui-latest.sh https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main/x-ui-patch.sh
-```
-
-**Шаг 2 — запустить**
-
-```bash
-bash x-ui-patch.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main/x-ui-patch.sh)
 ```
 
 ---

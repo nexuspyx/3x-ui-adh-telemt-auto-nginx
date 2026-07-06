@@ -71,6 +71,36 @@ done
 printf "    domain         = %s\n" "$domain"
 printf "    reality_domain = %s\n" "$reality_domain"
 
+# ── ensure the panel is served over HTTPS ─────────────────────────────────────
+# The panel vhost and the diag SSO bridge both proxy_pass https://127.0.0.1:panel_port.
+# If the panel has no TLS cert configured it answers plain HTTP and every one of
+# those proxy_pass calls fails (502 / SSL handshake error, diag never loads).
+# Mirror the main installer: symlink the Let's Encrypt cert into /root/cert and
+# register it with `x-ui cert`.
+web_cert=$(db "SELECT value FROM settings WHERE key='webCertFile';")
+if [[ -z "$web_cert" ]]; then
+    blue "Panel has no TLS cert configured — enabling HTTPS..."
+    if [[ -d "/etc/letsencrypt/live/${domain}" ]]; then
+        mkdir -p "/root/cert/${domain}"
+        chmod 755 /root/cert/* 2>/dev/null || true
+        ln -sf "/etc/letsencrypt/live/${domain}/fullchain.pem" "/root/cert/${domain}/fullchain.pem"
+        ln -sf "/etc/letsencrypt/live/${domain}/privkey.pem"   "/root/cert/${domain}/privkey.pem"
+        if [[ -x /usr/local/x-ui/x-ui ]]; then
+            /usr/local/x-ui/x-ui cert \
+                -webCert    "/root/cert/${domain}/fullchain.pem" \
+                -webCertKey "/root/cert/${domain}/privkey.pem"
+            systemctl restart x-ui 2>/dev/null || x-ui restart 2>/dev/null || true
+            green "Panel HTTPS enabled."
+        else
+            red "x-ui binary not found at /usr/local/x-ui/x-ui — cannot set panel cert."
+        fi
+    else
+        red "No Let's Encrypt cert for ${domain} at /etc/letsencrypt/live/${domain} — cannot enable panel HTTPS."
+    fi
+else
+    blue "Panel TLS cert already configured."
+fi
+
 # ── detect xhttp_path ─────────────────────────────────────────────────────────
 xhttp_path=""
 # 1. from existing includes.conf
@@ -87,7 +117,7 @@ if [[ -z "$xhttp_path" ]]; then
 fi
 # 3. generate new
 if [[ -z "$xhttp_path" ]]; then
-    xhttp_path=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 10)
+    xhttp_path=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 10 || true)
     blue "xhttp_path generated: $xhttp_path"
 else
     blue "xhttp_path detected: $xhttp_path"
@@ -103,7 +133,7 @@ done
 if [[ -n "$diag_path" ]]; then
     blue "diag_path reused: $diag_path"
 else
-    diag_path="/net-$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 12)/"
+    diag_path="/net-$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 12 || true)/"
     blue "diag_path generated: $diag_path"
 fi
 
@@ -117,7 +147,7 @@ done
 if [[ -n "$diag_token" ]]; then
     blue "diag_token reused"
 else
-    diag_token=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)
+    diag_token=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16 || true)
     blue "diag_token generated"
 fi
 
