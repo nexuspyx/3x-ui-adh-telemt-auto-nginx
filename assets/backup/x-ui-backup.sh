@@ -33,6 +33,17 @@ die()   { red "ERROR: $*" >&2; exit 1; }
 
 require_root() { [[ $EUID -eq 0 ]] || die "Run as root (sudo $0 $*)"; }
 
+# free space in KB on the filesystem containing $1
+avail_kb() { df -Pk "$1" | awk 'NR==2 {print $4}'; }
+
+# staging must NOT live in /tmp: on Ubuntu 24.10+ /tmp is a size-limited tmpfs
+# and a full uncompressed copy of the panel + web roots does not fit there
+make_staging() {
+    local prefix="$1"
+    mkdir -p "${BACKUP_STORE}"
+    mktemp -d "${BACKUP_STORE}/.${prefix}-XXXXXX"
+}
+
 # ── backup ────────────────────────────────────────────────────────────────────
 cmd_backup() {
     require_root
@@ -40,10 +51,19 @@ cmd_backup() {
     local ts name staging dest
     ts=$(date +%Y%m%d-%H%M%S)
     name="x-ui-backup-${ts}"
-    staging=$(mktemp -d)
+
+    # estimate size and verify free space before touching anything:
+    # staging holds an uncompressed copy, the archive lands next to it
+    local est_kb need_kb have_kb
+    est_kb=$(du -skc "${BACKUP_PATHS[@]}" 2>/dev/null | awk 'END {print $1}')
+    need_kb=$(( est_kb * 2 + 102400 ))   # copy + archive + 100 MB margin
+    mkdir -p "${BACKUP_STORE}"
+    have_kb=$(avail_kb "${BACKUP_STORE}")
+    (( have_kb >= need_kb )) || die "Not enough free space in ${BACKUP_STORE}: need ~$(( need_kb / 1024 )) MB, have $(( have_kb / 1024 )) MB"
+
+    staging=$(make_staging staging)
     trap 'rm -rf "${staging}"' EXIT
 
-    mkdir -p "${BACKUP_STORE}"
     dest="${BACKUP_STORE}/${name}.tar.gz"
 
     blue "==> Stopping x-ui for consistent DB snapshot..."
@@ -106,8 +126,16 @@ cmd_restore() {
     [[ -n "${backup_file}" ]] || die "Usage: $0 restore <backup.tar.gz>"
     [[ -f "${backup_file}" ]]  || die "File not found: ${backup_file}"
 
+    # verify free space for the extracted copy before unpacking
+    local unpacked_kb have_kb
+    unpacked_kb=$(( $(gzip -l "${backup_file}" | awk 'NR==2 {print $2}') / 1024 ))
+    mkdir -p "${BACKUP_STORE}"
+    have_kb=$(avail_kb "${BACKUP_STORE}")
+    (( have_kb >= unpacked_kb * 2 + 102400 )) || \
+        die "Not enough free space in ${BACKUP_STORE}: need ~$(( (unpacked_kb * 2 + 102400) / 1024 )) MB, have $(( have_kb / 1024 )) MB"
+
     local staging
-    staging=$(mktemp -d)
+    staging=$(make_staging restore)
     trap 'rm -rf "${staging}"' EXIT
 
     blue "==> Extracting backup: ${backup_file}"
