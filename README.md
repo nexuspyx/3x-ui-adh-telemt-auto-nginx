@@ -1,5 +1,7 @@
 # 3x-ui-pro
 
+🇬🇧 [English version](README_EN.md)
+
 Автоматическая установка панели [3x-ui](https://github.com/MHSanaei/3x-ui) с nginx, SSL, Clash-подпиской и диагностикой сети.
 
 - Debian 12 / Ubuntu 24
@@ -34,10 +36,8 @@ wget -qO x-ui-latest.sh https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main
 **Шаг 2 — запустить**
 
 ```bash
-bash x-ui-latest.sh -install y -subdomain panel.example.com -reality_domain r.example.com
+bash x-ui-latest.sh -install y
 ```
-
-Замените `panel.example.com` на домен панели, `r.example.com` — на домен для REALITY.
 
 ---
 ## Патч
