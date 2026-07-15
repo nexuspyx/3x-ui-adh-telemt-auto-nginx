@@ -126,6 +126,7 @@ while [ "$#" -gt 0 ]; do
         -subdomain)        domain="$2";            shift 2 ;;
         -reality_domain)   reality_domain="$2";    shift 2 ;;
         -ONLY_CF_IP_ALLOW) CFALLOW="$2";           shift 2 ;;
+        -version)          PANEL_VERSION="$2";     shift 2 ;;
         -uninstall)        UNINSTALL="$2";         shift 2 ;;
         *)                 shift 1 ;;
     esac
@@ -727,14 +728,22 @@ install_panel() {
 
     cd /usr/local/
 
-    tag_version=$(curl -Ls "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" \
-        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    if [[ -z "$tag_version" ]]; then
-        tag_version=$(curl -4 -Ls "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" \
+    if [[ -n "$PANEL_VERSION" ]]; then
+        tag_version="v${PANEL_VERSION#v}"
+        if ! curl -fsLo /dev/null "https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/${tag_version}" \
+           && ! curl -4 -fsLo /dev/null "https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/${tag_version}"; then
+            echo "3x-ui release ${tag_version} not found." && exit 1
+        fi
+    else
+        tag_version=$(curl -Ls "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" \
             | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    fi
-    if [[ -z "$tag_version" ]]; then
-        echo "Failed to fetch 3x-ui version." && exit 1
+        if [[ -z "$tag_version" ]]; then
+            tag_version=$(curl -4 -Ls "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" \
+                | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        fi
+        if [[ -z "$tag_version" ]]; then
+            echo "Failed to fetch 3x-ui version." && exit 1
+        fi
     fi
 
     echo "Installing 3x-ui ${tag_version} ..."
