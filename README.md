@@ -37,7 +37,7 @@ wget -qO x-ui-latest.sh https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main
 **Шаг 2 — запустить**
 
 ```bash
-bash x-ui-latest.sh -install y
+bash x-ui-latest.sh
 ```
 
 ---
@@ -84,7 +84,7 @@ bash x-ui-latest.sh -uninstall y
 
 | Параметр | Описание |
 |----------|----------|
-| `-install y` | Установить |
+| `-install n` | Пропустить установку системных пакетов (по умолчанию `y`) |
 | `-subdomain <домен>` | Домен панели и подписок |
 | `-reality_domain <домен>` | Домен назначения для REALITY |
 | `-auto_domain y` | Автоопределение домена (без ручного ввода) |

@@ -58,7 +58,7 @@ FAKE_SITE_COUNT=50
 domain=""
 reality_domain=""
 UNINSTALL="x"
-INSTALL="n"
+INSTALL="y"
 AUTODOMAIN="n"
 CFALLOW="n"
 
