@@ -127,7 +127,6 @@ mtr_backend_port=$(make_port)
 # ─── Argument parsing ────────────────────────────────────────────────────────
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        -auto_domain)      AUTODOMAIN="$2";       shift 2 ;;
         -install)          INSTALL="$2";           shift 2 ;;
         -subdomain)        domain="$2";            shift 2 ;;
         -reality_domain)   reality_domain="$2";    shift 2 ;;
@@ -182,10 +181,6 @@ get_server_ip() {
 IP4=$(ip route get 8.8.8.8 2>&1 | grep -Po -- 'src \K\S*')
 [[ $IP4 =~ $IP4_REGEX ]] || IP4=$(curl -s ipv4.icanhazip.com | tr -d '[:space:]')
 
-if [[ ${AUTODOMAIN} == *"y"* ]]; then
-    domain="${IP4}.cdn-one.org"
-    reality_domain="${IP4//./-}.cdn-one.org"
-fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DOMAIN VALIDATION
