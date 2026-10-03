@@ -51,7 +51,7 @@ check_cpu
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 XUIDB="/etc/x-ui/x-ui.db"
-GITHUB_RAW="https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main"
+GITHUB_RAW="https://raw.githubusercontent.com/xPROMSx/3x-ui-pro/personal"
 FAKE_SITE_COUNT=50
 
 # ─── Default argument values ─────────────────────────────────────────────────
