@@ -1151,7 +1151,6 @@ tune_system() {
 # ─────────────────────────────────────────────────────────────────────────────
 setup_cron() {
     crontab -l 2>/dev/null | grep -v "certbot\|x-ui\|cloudflareips" | crontab -
-    (crontab -l 2>/dev/null; echo '@daily   x-ui restart > /dev/null 2>&1 && nginx -s reload')    | crontab -
     # Certs were issued with --standalone: renewal needs port 80 free,
     # so stop nginx for the few seconds certbot runs
     (crontab -l 2>/dev/null; echo '@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1') | crontab -

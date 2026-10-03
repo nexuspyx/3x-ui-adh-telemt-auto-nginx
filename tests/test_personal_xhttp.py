@@ -67,6 +67,40 @@ class PersonalXHTTP(unittest.TestCase):
     def test_shell_syntax(self):
         subprocess.run(["bash", "-n", str(ROOT / "x-ui-latest.sh")], check=True)
 
+    def test_setup_cron_without_scheduled_restart(self):
+        functions = re.findall(r"^setup_cron\(\)\s*\{.*?^\}", SOURCE, re.M | re.S)
+        self.assertEqual(len(functions), 1, "Expected one setup_cron function")
+        monthly = (
+            '@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" '
+            '--post-hook "systemctl start nginx" > /dev/null 2>&1'
+        )
+        preserved = "@hourly /usr/local/bin/backup"
+        legacy = (
+            "@daily x-ui restart > /dev/null 2>&1 && nginx -s reload\n"
+            "0 3 * * * systemctl restart x-ui\n"
+            "@monthly certbot renew --old-option\n"
+            "@daily /opt/cloudflareips\n" + preserved + "\n"
+        )
+        # Mock only crontab; run the isolated function, never the installer/main.
+        mock = '''crontab() {
+    case "$1" in
+        -l) cat "$CRON_TEST_FILE" ;;
+        -) cat > "$CRON_TEST_FILE.new"; mv "$CRON_TEST_FILE.new" "$CRON_TEST_FILE" ;;
+        *) return 2 ;;
+    esac
+}
+'''
+        for initial, expected in (("", [monthly]), (legacy, [preserved, monthly])):
+            with self.subTest(initial=initial), tempfile.TemporaryDirectory() as tmp:
+                cron = Path(tmp) / "crontab"
+                cron.write_text(initial)
+                subprocess.run(
+                    ["bash", "-eu", "-c", mock + functions[0] + "\nsetup_cron\n"],
+                    check=True, env={**os.environ, "CRON_TEST_FILE": str(cron)},
+                )
+                # No replacement restart/reload job may be added, at any schedule.
+                self.assertEqual(cron.read_text().splitlines(), expected)
+
     def test_inbound_and_sniffing(self):
         rows = inbounds()
         self.assertEqual(set(rows), {"reality", "ws", "xhttp", "trojan-grpc"})
