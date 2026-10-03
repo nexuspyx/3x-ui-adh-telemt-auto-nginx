@@ -901,7 +901,7 @@ VALUES (
   }
 }',
     'inbound-8443',
-    '{"enabled":false,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
+    '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
 );
 
 INSERT INTO "inbounds"
@@ -924,7 +924,7 @@ VALUES (
   }
 }',
     'inbound-${ws_port}',
-    '{"enabled":false,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
+    '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
 );
 
 INSERT INTO "inbounds"
@@ -990,7 +990,7 @@ VALUES (
   }
 }',
     'inbound-${trojan_port}',
-    '{"enabled":false,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
+    '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
 );
 
 -- Hosts supersede the legacy externalProxy arrays: one host per inbound,
