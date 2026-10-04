@@ -367,7 +367,9 @@ prepare_mtr_backend() {
     chmod 0755 /usr/local/lib/3x-ui-pro /usr/local/lib/3x-ui-pro/mtr-backend.py
     for binary in mtr mtr-packet; do
         if command -v "$binary" >/dev/null; then
-            setcap cap_net_raw+ep "$(command -v "$binary")" || die "Cannot grant CAP_NET_RAW to $binary."
+            if ! setcap cap_net_raw+ep "$(command -v "$binary")" 2>/dev/null; then
+                warn "Could not set CAP_NET_RAW file capability on $binary; mtr-backend uses systemd AmbientCapabilities."
+            fi
         fi
     done
 }

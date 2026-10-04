@@ -137,7 +137,9 @@ elif name == 'id':
     sys.exit(1 if os.environ.get('MTR_ABSENT') else 0)
 elif name == 'sysctl':
     sys.exit(1 if os.environ.get('FAIL_SYSCTL') else 0)
-# useradd/setcap and non-root chown only record calls; no host mutation.
+elif name == 'setcap':
+    sys.exit(1 if pathlib.Path(args[-1]).name in os.environ.get('FAIL_SETCAP', '').split() else 0)
+# useradd and non-root chown only record calls; no host mutation.
 '''
 
 
@@ -467,6 +469,28 @@ class PersonalBackup(unittest.TestCase):
         self.assertIn('192.0.2.10', self.path('/var/www/diagnostics/index.html').read_text())
         self.assertIn('Cannot detect current IPv4', result.stderr)
         self.assertEqual((self.root / 'crontab').read_text(), CRON + '\n')
+
+    def test_setcap_failure_is_best_effort_but_service_health_is_required(self):
+        archive = self.backup()
+        expected_calls = [['setcap', 'cap_net_raw+ep', str(self.bin / name)] for name in ('mtr', 'mtr-packet')]
+        for binary in ('mtr', 'mtr-packet'):
+            with self.subTest(binary=binary):
+                (self.root / 'commands').write_text('')
+                result = self.run_tool('restore', archive, FAIL_SETCAP=binary)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('Restore completed successfully.', result.stdout)
+                self.assertIn(f'[WARN] Could not set CAP_NET_RAW file capability on {binary};', result.stderr)
+                self.assertIn('systemd AmbientCapabilities', result.stderr)
+                self.assertNotIn('[FAIL]', result.stdout + result.stderr)
+                calls = self.commands()
+                self.assertEqual([c for c in calls if c[0] == 'setcap'], expected_calls)
+                health = calls.index(['systemctl', 'is-active', '--quiet', 'mtr-backend'])
+                self.assertGreater(health, calls.index(['systemctl', 'start', 'mtr-backend']))
+
+        result = self.run_tool('restore', archive, FAIL_SETCAP='mtr mtr-packet', FAIL_HEALTH_SERVICE='mtr-backend')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('[FAIL] mtr-backend is not active', result.stderr)
+        self.assertNotIn('Restore completed successfully.', result.stdout)
 
     def test_mandatory_health_and_sysctl_failures_never_report_success(self):
         archive = self.backup()
