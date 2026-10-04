@@ -214,8 +214,6 @@ validate_domains() {
 # INSTALL PACKAGES
 # ─────────────────────────────────────────────────────────────────────────────
 install_packages() {
-    ufw disable 2>/dev/null || true
-
     if [[ ${INSTALL} == *"y"* ]]; then
         local version
         version=$(grep -oP '(?<=VERSION_ID=")[0-9]+' /etc/os-release)
@@ -748,7 +746,7 @@ install_panel() {
         "https://github.com/MHSanaei/3x-ui/releases/download/${tag_version}/x-ui-linux-$(_arch).tar.gz"
     [[ $? -ne 0 ]] && echo "Download failed." && exit 1
 
-    wget -O /usr/bin/x-ui-temp https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh
+    wget -O /usr/bin/x-ui-temp "https://raw.githubusercontent.com/MHSanaei/3x-ui/${tag_version}/x-ui.sh"
     [[ $? -ne 0 ]] && echo "Failed to download x-ui.sh" && exit 1
 
     [[ -d /usr/local/x-ui/ ]] && systemctl stop x-ui 2>/dev/null; rm -rf /usr/local/x-ui/
@@ -1180,12 +1178,40 @@ setup_cron() {
 # FIREWALL
 # ─────────────────────────────────────────────────────────────────────────────
 setup_firewall() {
-    ufw disable
-    ufw allow 22/tcp
-    ufw allow 80/tcp
-    ufw allow 443/tcp
-    ufw allow 443/udp
-    ufw --force enable
+    local status port client_ip client_port server_ip extra ssh_config
+    local -a ssh_ports=()
+    status=$(LC_ALL=C ufw status) || return 1
+    case "$status" in
+        "Status: active"*|"Status: inactive"*) ;;
+        *) msg_err "Cannot determine UFW status." >&2; return 1 ;;
+    esac
+
+    for port in 80/tcp 443/tcp 443/udp; do
+        ufw allow "$port" || return 1
+    done
+    [[ "$status" == "Status: active"* ]] && return 0
+
+    read -r client_ip client_port server_ip port extra <<< "${SSH_CONNECTION:-}"
+    if [[ -n "$client_ip" && -n "$client_port" && -n "$server_ip" && -z "$extra" && "$port" =~ ^[0-9]{1,5}$ ]] \
+       && (( 10#$port >= 1 && 10#$port <= 65535 )); then
+        ssh_ports=("$port")
+    else
+        ssh_config=$(sshd -T 2>/dev/null) || ssh_config=""
+        mapfile -t ssh_ports < <(awk '$1 == "port" {print $2}' <<< "$ssh_config" | sort -u)
+    fi
+
+    local ssh_allowed=false
+    for port in "${ssh_ports[@]}"; do
+        if [[ "$port" =~ ^[0-9]{1,5}$ ]] && (( 10#$port >= 1 && 10#$port <= 65535 )); then
+            ufw allow "$((10#$port))/tcp" || return 1
+            ssh_allowed=true
+        fi
+    done
+    if [[ "$ssh_allowed" == true ]]; then
+        ufw --force enable || return 1
+    else
+        echo "WARNING: UFW is inactive and the SSH port could not be detected. Application rules were added, but UFW was not enabled automatically." >&2
+    fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1218,6 +1244,7 @@ main() {
     validate_domains
     clean_previous_install
     install_packages
+    setup_firewall || { msg_err "Firewall setup failed."; exit 1; }
     get_server_ip
     get_ssl_certs
 
@@ -1235,7 +1262,6 @@ main() {
     tune_system || exit 1
     install_backup_tool || exit 1
     setup_cron
-    setup_firewall
 
     if ! systemctl is-enabled --quiet x-ui; then
         systemctl daemon-reload && systemctl enable x-ui.service

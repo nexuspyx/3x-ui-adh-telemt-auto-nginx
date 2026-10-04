@@ -63,9 +63,135 @@ SHARED = "cat > /etc/nginx/snippets/includes.conf"
 MAIN = 'cat > "/etc/nginx/sites-available/${domain}"'
 
 
+def function(name):
+    matches = re.findall(r"^" + re.escape(name) + r"\(\)\s*\{.*?^\}", SOURCE, re.M | re.S)
+    if len(matches) != 1:
+        raise AssertionError(f"Expected one {name} function")
+    return matches[0]
+
+
 class PersonalXHTTP(unittest.TestCase):
     def test_shell_syntax(self):
         subprocess.run(["bash", "-n", str(ROOT / "x-ui-latest.sh")], check=True)
+
+    def firewall(self, status, connection="", sshd="", fail="", sshd_exit="0"):
+        # Run only setup_firewall; mock all UFW/sshd operations on private files.
+        mock = '''ufw() {
+    printf '%s\\n' "$*" >> "$FIREWALL_TEST_ROOT/calls"
+    [[ "$*" == "$FAIL_UFW" ]] && return 1
+    case "$*" in
+        status)
+            [[ "$LC_ALL" == C ]] || return 1
+            printf 'Status: %s\\n' "$(cat "$FIREWALL_TEST_ROOT/status")" ;;
+        allow*)
+            grep -qxF "$2" "$FIREWALL_TEST_ROOT/rules" || printf '%s\\n' "$2" >> "$FIREWALL_TEST_ROOT/rules" ;;
+        '--force enable') echo active > "$FIREWALL_TEST_ROOT/status" ;;
+        *) return 2 ;;
+    esac
+}
+sshd() {
+    echo "sshd $*" >> "$FIREWALL_TEST_ROOT/calls"
+    printf '%s\\n' "$SSHD_OUTPUT"
+    return "$SSHD_EXIT"
+}
+msg_err() { echo "$1" >&2; }
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "status").write_text(status)
+            (root / "rules").write_text("2222/tcp\n")
+            result = subprocess.run(
+                ["bash", "-u", "-c", mock + function("setup_firewall") + "\nsetup_firewall\n"],
+                text=True, capture_output=True, env={
+                    **os.environ, "FIREWALL_TEST_ROOT": tmp, "SSH_CONNECTION": connection,
+                    "SSHD_OUTPUT": sshd, "SSHD_EXIT": sshd_exit, "FAIL_UFW": fail,
+                },
+            )
+            return result, (root / "calls").read_text().splitlines(), (root / "rules").read_text().splitlines(), (root / "status").read_text().strip()
+
+    def test_firewall_active_preserves_existing_policy(self):
+        result, calls, rules, status = self.firewall("active", sshd="port 22")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, ["status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp"])
+        self.assertEqual(rules, ["2222/tcp", "80/tcp", "443/tcp", "443/udp"])
+        self.assertEqual(status, "active")
+
+    def test_firewall_inactive_uses_connection_ssh_port(self):
+        for port in ("2222", "22", "00022", "65535"):
+            with self.subTest(port=port):
+                result, calls, _, status = self.firewall("inactive", f"198.51.100.10 54321 203.0.113.5 {port}", "port 9999")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(calls, ["status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp", f"allow {int(port)}/tcp", "--force enable"])
+                self.assertEqual(status, "active")
+
+    def test_firewall_inactive_falls_back_to_effective_sshd_ports(self):
+        for connection in ("", "invalid", "a b c 0", "a b c 65536", "a b c 99999999999999999999", "a b c 22 extra"):
+            with self.subTest(connection=connection):
+                result, calls, rules, status = self.firewall("inactive", connection, "port 2222\nport 2200\nport 2222\nport 0\nport 65536\nport invalid\npermitrootlogin yes")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(calls, ["status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp", "sshd -T", "allow 2200/tcp", "allow 2222/tcp", "--force enable"])
+                self.assertNotIn("22/tcp", rules)
+                self.assertEqual(status, "active")
+
+    def test_firewall_inactive_unknown_ssh_warns_without_enabling(self):
+        for output, code in (("", "0"), ("port 0\nport 65536\nport invalid", "0"), ("port 22", "1")):
+            with self.subTest(output=output, code=code):
+                result, calls, _, status = self.firewall("inactive", "invalid", output, sshd_exit=code)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(calls, ["status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp", "sshd -T"])
+                self.assertEqual(status, "inactive")
+                self.assertIn("WARNING", result.stderr)
+                self.assertIn("SSH port could not be detected", result.stderr)
+                self.assertIn("UFW was not enabled automatically", result.stderr)
+
+    def test_firewall_required_operation_failures_are_fatal(self):
+        commands = ["status", "allow 80/tcp", "allow 443/tcp", "allow 443/udp", "allow 2200/tcp", "--force enable"]
+        for index, command in enumerate(commands):
+            with self.subTest(command=command):
+                result, calls, _, _ = self.firewall("inactive", "a b c 2200", fail=command)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(calls, commands[:index + 1])
+        result, calls, _, _ = self.firewall("unexpected")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, ["status"])
+
+    def test_firewall_never_disables_resets_or_hardcodes_ssh(self):
+        for line in SOURCE.splitlines():
+            if re.search(r"\bufw\b", line):
+                executable = " ".join(shlex.split(line, comments=True))
+                self.assertNotRegex(executable, r"\bufw\s+(?:disable|reset|default|delete|allow\s+22/tcp)\b")
+
+    def test_firewall_precedes_certbot_and_stops_installer_on_failure(self):
+        main = function("main")
+        self.assertEqual(len(re.findall(r"^\s*setup_firewall\b", main, re.M)), 1)
+        self.assertLess(main.index("install_packages"), main.index("setup_firewall"))
+        self.assertLess(main.index("setup_firewall"), main.index("get_ssl_certs"))
+        self.assertRegex(main, r"setup_firewall\s*\|\|[^\n]*exit 1")
+
+    def test_panel_and_cli_download_use_the_same_release_tag(self):
+        panel = function("install_panel")
+        self.assertNotIn("https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh", panel)
+        self.assertIn('https://raw.githubusercontent.com/MHSanaei/3x-ui/${tag_version}/x-ui.sh', panel)
+        downloads = re.search(r"    wget -N .*?(?=\n    \[\[ -d /usr/local/x-ui/)", panel, re.S).group()
+        mock = '''_arch() { echo amd64; }
+wget() {
+    local url="${@: -1}"
+    echo "$url" >> "$DOWNLOAD_TEST_LOG"
+    [[ "$FAIL_CLI" != 1 || "$url" != */x-ui.sh ]]
+}
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "urls"
+            for tag, fail in (("v3.9.0", "0"), ("v9.8.7", "0"), ("v9.8.7", "1")):
+                with self.subTest(tag=tag, fail=fail):
+                    log.write_text("")
+                    result = subprocess.run(["bash", "-u", "-c", mock + downloads + "\ntrue\n"], text=True, capture_output=True,
+                                            env={**os.environ, "tag_version": tag, "FAIL_CLI": fail, "DOWNLOAD_TEST_LOG": str(log)})
+                    self.assertEqual(result.returncode, int(fail), result.stdout + result.stderr)
+                    self.assertEqual(log.read_text().splitlines(), [
+                        f"https://github.com/MHSanaei/3x-ui/releases/download/{tag}/x-ui-linux-amd64.tar.gz",
+                        f"https://raw.githubusercontent.com/MHSanaei/3x-ui/{tag}/x-ui.sh",
+                    ])
 
     def test_setup_cron_without_scheduled_restart(self):
         functions = re.findall(r"^setup_cron\(\)\s*\{.*?^\}", SOURCE, re.M | re.S)
