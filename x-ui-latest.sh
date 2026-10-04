@@ -906,7 +906,7 @@ VALUES (
 INSERT INTO "inbounds"
     ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
 VALUES (
-    '1','0','0','0','${emoji_flag} ws','1','0','','${ws_port}','vless',
+    '1','0','0','0','${emoji_flag} ws','0','0','','${ws_port}','vless',
     '{
   "clients": [],
   "decryption": "none",
@@ -953,7 +953,7 @@ VALUES (
 INSERT INTO "inbounds"
     ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
 VALUES (
-    '1','0','0','0','${emoji_flag} trojan-grpc','1','0','','${trojan_port}','trojan',
+    '1','0','0','0','${emoji_flag} trojan-grpc','0','0','','${trojan_port}','trojan',
     '{
   "clients": [],
   "fallbacks": []

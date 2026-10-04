@@ -104,6 +104,9 @@ class PersonalXHTTP(unittest.TestCase):
     def test_inbound_and_sniffing(self):
         rows = inbounds()
         self.assertEqual(set(rows), {"reality", "ws", "xhttp", "trojan-grpc"})
+        self.assertEqual(rows["reality"]["enable"], "1")
+        self.assertEqual(rows["ws"]["enable"], "0")
+        self.assertEqual(rows["trojan-grpc"]["enable"], "0")
         for row in rows.values():
             json.loads(row["settings"])
             json.loads(row["stream_settings"])
