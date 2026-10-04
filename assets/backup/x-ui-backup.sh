@@ -1,299 +1,517 @@
 #!/usr/bin/env bash
-# x-ui-backup.sh — backup and restore 3x-ui panel + nginx + certs
-# Usage:
-#   x-ui-backup.sh backup           — create timestamped backup
-#   x-ui-backup.sh restore <file>   — restore from backup archive
-#   x-ui-backup.sh list             — list available backups
+# Managed 3x-ui-pro backup: same-host rollback or clean-host recovery, same OS/arch.
+# Usage: x-ui-backup {backup|restore <archive>|list}
 set -Eeuo pipefail
+umask 077
 
-BACKUP_STORE="/var/backups/x-ui"
-PACKAGES="nginx-full certbot python3 sqlite3 curl wget jq ufw mtr-tiny"
+BACKUP_STORE=/var/backups/x-ui
+DB=/etc/x-ui/x-ui.db
+XRAY_DIR=/usr/local/x-ui/bin
+SYSCTL_FILE=/etc/sysctl.d/99-3x-ui-pro.conf
+XHTTP_SOCKET=/dev/shm/uds2023.sock
+MANAGED_CRON='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
+PACKAGES=(nginx-full certbot python3-certbot-nginx sqlite3 curl wget jq ufw
+          netcat-openbsd mtr python3 libcap2-bin ca-certificates cron)
+RUNTIME_PATHS=(/etc/x-ui /usr/local/x-ui /usr/bin/x-ui)
+TREE_PATHS=(/etc/nginx /etc/letsencrypt /root/cert /usr/local/lib/3x-ui-pro
+            /var/www/html /var/www/subpage)
+EXTRA_PATHS=(/etc/systemd/system/x-ui.service /etc/systemd/system/mtr-backend.service
+             /var/www/diagnostics/index.html /var/www/diagnostics/speedtest.js
+             /var/www/diagnostics/speedtest_worker.js "$SYSCTL_FILE")
+REQUIRED_PATHS=("$DB" /usr/local/x-ui/x-ui /usr/bin/x-ui /etc/nginx/nginx.conf
+                /etc/letsencrypt /usr/local/lib/3x-ui-pro/mtr-backend.py
+                /var/www/html /var/www/subpage "${EXTRA_PATHS[@]:0:5}")
+STAGING= OUTPUT= STAGE=preflight
+BACKUP_FINISHED=0 RESUME_XUI=0 APT_UPDATED=0
 
-# ── paths to back up ──────────────────────────────────────────────────────────
-BACKUP_PATHS=(
-    /etc/nginx
-    /etc/x-ui
-    /usr/local/x-ui
-    /usr/bin/x-ui
-    /usr/local/lib/3x-ui-pro
-    /etc/letsencrypt
-    /root/cert
-    /var/www/html
-    /var/www/diagnostics
-    /var/www/subpage
-    /etc/ufw/user.rules
-    /etc/ufw/user6.rules
-)
-SYSTEMD_UNITS=(x-ui.service mtr-backend.service)
+stage() { STAGE=$*; printf '\n==> %s\n' "$*"; }
+ok()    { printf '[OK] %s\n' "$*"; }
+warn()  { printf '[WARN] %s\n' "$*" >&2; }
+die()   { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
+require_root() { [[ $EUID -eq 0 ]] || die 'Run x-ui-backup as root.'; }
 
-# ── colours ───────────────────────────────────────────────────────────────────
-red()   { printf '\033[31m%s\033[0m\n' "$*"; }
-green() { printf '\033[32m%s\033[0m\n' "$*"; }
-blue()  { printf '\033[34m%s\033[0m\n' "$*"; }
-die()   { red "ERROR: $*" >&2; exit 1; }
-
-require_root() { [[ $EUID -eq 0 ]] || die "Run as root (sudo $0 $*)"; }
-
-# free space in KB on the filesystem containing $1
-avail_kb() { df -Pk "$1" | awk 'NR==2 {print $4}'; }
-
-# staging must NOT live in /tmp: on Ubuntu 24.10+ /tmp is a size-limited tmpfs
-# and a full uncompressed copy of the panel + web roots does not fit there
-make_staging() {
-    local prefix="$1"
-    mkdir -p "${BACKUP_STORE}"
-    mktemp -d "${BACKUP_STORE}/.${prefix}-XXXXXX"
-}
-
-# ── backup ────────────────────────────────────────────────────────────────────
-cmd_backup() {
-    require_root
-
-    local ts name staging dest
-    ts=$(date +%Y%m%d-%H%M%S)
-    name="x-ui-backup-${ts}"
-
-    # estimate size and verify free space before touching anything:
-    # staging holds an uncompressed copy, the archive lands next to it
-    local est_kb need_kb have_kb
-    est_kb=$(du -skc "${BACKUP_PATHS[@]}" 2>/dev/null | awk 'END {print $1}')
-    need_kb=$(( est_kb * 2 + 102400 ))   # copy + archive + 100 MB margin
-    mkdir -p "${BACKUP_STORE}"
-    have_kb=$(avail_kb "${BACKUP_STORE}")
-    (( have_kb >= need_kb )) || die "Not enough free space in ${BACKUP_STORE}: need ~$(( need_kb / 1024 )) MB, have $(( have_kb / 1024 )) MB"
-
-    staging=$(make_staging staging)
-    trap 'rm -rf "${staging}"' EXIT
-
-    dest="${BACKUP_STORE}/${name}.tar.gz"
-
-    blue "==> Stopping x-ui for consistent DB snapshot..."
-    systemctl stop x-ui 2>/dev/null || true
-
-    # ── collect filesystem paths ───────────────────────────────────────────
-    blue "==> Collecting files..."
-    local files_root="${staging}/files"
-    for path in "${BACKUP_PATHS[@]}"; do
-        [[ -e "${path}" ]] || continue
-        local dst="${files_root}${path}"
-        mkdir -p "$(dirname "${dst}")"
-        cp -a "${path}" "${dst}"
-    done
-
-    # systemd units
-    mkdir -p "${files_root}/etc/systemd/system"
-    for unit in "${SYSTEMD_UNITS[@]}"; do
-        [[ -f "/etc/systemd/system/${unit}" ]] && \
-            cp "/etc/systemd/system/${unit}" "${files_root}/etc/systemd/system/"
-    done
-
-    # ── crontab ───────────────────────────────────────────────────────────
-    crontab -l 2>/dev/null > "${staging}/root-crontab" || true
-
-    if [[ -d /etc/cron.d ]]; then
-        cp -a /etc/cron.d "${staging}/cron.d"
-    fi
-
-    # ── metadata ──────────────────────────────────────────────────────────
-    local xui_ver
-    xui_ver=$(x-ui version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || echo "unknown")
-    cat > "${staging}/meta.json" <<JSON
-{
-  "created":   "${ts}",
-  "hostname":  "$(hostname -f 2>/dev/null || hostname)",
-  "x-ui":      "${xui_ver}",
-  "kernel":    "$(uname -r)",
-  "packages":  "${PACKAGES}"
-}
-JSON
-
-    blue "==> Restarting x-ui..."
-    systemctl start x-ui 2>/dev/null || true
-
-    # ── compress ──────────────────────────────────────────────────────────
-    blue "==> Compressing..."
-    tar -czf "${dest}" -C "${staging}" .
-
-    local size
-    size=$(du -sh "${dest}" | cut -f1)
-    green "==> Backup saved: ${dest} (${size})"
-}
-
-# ── restore ───────────────────────────────────────────────────────────────────
-cmd_restore() {
-    require_root
-
-    local backup_file="${1:-}"
-    [[ -n "${backup_file}" ]] || die "Usage: $0 restore <backup.tar.gz>"
-    [[ -f "${backup_file}" ]]  || die "File not found: ${backup_file}"
-
-    # verify free space for the extracted copy before unpacking
-    local unpacked_kb have_kb
-    unpacked_kb=$(( $(gzip -l "${backup_file}" | awk 'NR==2 {print $2}') / 1024 ))
-    mkdir -p "${BACKUP_STORE}"
-    have_kb=$(avail_kb "${BACKUP_STORE}")
-    (( have_kb >= unpacked_kb * 2 + 102400 )) || \
-        die "Not enough free space in ${BACKUP_STORE}: need ~$(( (unpacked_kb * 2 + 102400) / 1024 )) MB, have $(( have_kb / 1024 )) MB"
-
-    local staging
-    staging=$(make_staging restore)
-    trap 'rm -rf "${staging}"' EXIT
-
-    blue "==> Extracting backup: ${backup_file}"
-    tar -xzf "${backup_file}" -C "${staging}"
-
-    if [[ -f "${staging}/meta.json" ]]; then
-        blue "==> Backup metadata:"
-        cat "${staging}/meta.json"
-        echo
-    fi
-
-    # ── install packages ──────────────────────────────────────────────────
-    blue "==> Installing packages..."
-    apt-get update -qq
-    # shellcheck disable=SC2086
-    DEBIAN_FRONTEND=noninteractive apt-get install -y ${PACKAGES}
-
-    # ── stop running services ─────────────────────────────────────────────
-    blue "==> Stopping services..."
-    for svc in nginx x-ui mtr-backend; do
-        systemctl stop "${svc}" 2>/dev/null || true
-    done
-
-    # ── restore files ─────────────────────────────────────────────────────
-    blue "==> Restoring files..."
-    if [[ -d "${staging}/files" ]]; then
-        cp -a "${staging}/files/." /
-    fi
-
-    # ── permissions ───────────────────────────────────────────────────────
-    chown -R www-data:www-data /var/www/html        2>/dev/null || true
-    chown -R www-data:www-data /var/www/diagnostics 2>/dev/null || true
-    chown -R www-data:www-data /var/www/subpage     2>/dev/null || true
-    [[ -f /usr/local/x-ui/x-ui ]] && chmod +x /usr/local/x-ui/x-ui
-    [[ -f /usr/bin/x-ui ]]        && chmod +x /usr/bin/x-ui
-    find /usr/local/lib/3x-ui-pro -name "*.py" -exec chmod +x {} \; 2>/dev/null || true
-
-    # ── panel cert symlinks (/root/cert/<domain> → letsencrypt) ──────────
-    # Backups made before /root/cert was in BACKUP_PATHS lack the symlinks
-    # the panel's webCertFile points to — without them x-ui serves plain
-    # HTTP and every nginx proxy_pass https:// (panel + diag bridge) breaks.
-    # Recreate them from the restored DB ("-e" follows symlinks, so a
-    # dangling link reads as missing).
-    local db=/etc/x-ui/x-ui.db web_cert cert_domain
-    if [[ -f "${db}" ]] && command -v sqlite3 &>/dev/null; then
-        web_cert=$(sqlite3 "${db}" "SELECT value FROM settings WHERE key='webCertFile';" 2>/dev/null || true)
-        if [[ "${web_cert}" =~ ^/root/cert/([^/]+)/ ]]; then
-            cert_domain="${BASH_REMATCH[1]}"
-            if [[ ! -e "${web_cert}" && -d "/etc/letsencrypt/live/${cert_domain}" ]]; then
-                blue "==> Recreating panel cert symlinks in /root/cert/${cert_domain}..."
-                mkdir -p "/root/cert/${cert_domain}"
-                chmod 755 /root/cert/* 2>/dev/null || true
-                ln -sf "/etc/letsencrypt/live/${cert_domain}/fullchain.pem" "/root/cert/${cert_domain}/fullchain.pem"
-                ln -sf "/etc/letsencrypt/live/${cert_domain}/privkey.pem"   "/root/cert/${cert_domain}/privkey.pem"
-            fi
+cleanup() {
+    local result=$?
+    trap - EXIT ERR
+    if (( RESUME_XUI )); then
+        if systemctl start x-ui && systemctl is-active --quiet x-ui; then
+            ok 'x-ui returned to its original active state after failure'
+        else
+            printf '[FAIL] Cannot recover x-ui; run systemctl start x-ui.\n' >&2
+            result=1
         fi
     fi
-
-    # ── recreate mtr-backend system user if missing ───────────────────────
-    id mtr-backend &>/dev/null || \
-        useradd --system --no-create-home --shell /usr/sbin/nologin mtr-backend
-
-    # grant mtr net_raw capability
-    if command -v setcap &>/dev/null && command -v mtr &>/dev/null; then
-        setcap cap_net_raw+ep "$(command -v mtr)" 2>/dev/null || true
+    if [[ -n "$OUTPUT" ]] && (( ! BACKUP_FINISHED )); then
+        rm -f -- "$OUTPUT" || { warn 'Cannot remove incomplete archive'; result=1; }
     fi
+    if [[ -n "$STAGING" ]]; then
+        rm -rf -- "$STAGING" || { warn 'Cannot remove private staging directory'; result=1; }
+    fi
+    exit "$result"
+}
 
-    # ── systemd ───────────────────────────────────────────────────────────
-    blue "==> Enabling and starting services..."
-    systemctl daemon-reload
+prepare_store() {
+    [[ ! -L "$BACKUP_STORE" ]] || die 'Backup store must not be a symlink.'
+    mkdir -p "$BACKUP_STORE"
+    chown root:root "$BACKUP_STORE"
+    chmod 0700 "$BACKUP_STORE"
+    STAGING=$(mktemp -d "$BACKUP_STORE/.${1}-XXXXXX")
+}
 
-    for svc in x-ui mtr-backend; do
-        systemctl enable "${svc}" 2>/dev/null || true
-        systemctl start  "${svc}" 2>/dev/null || true
+host_identity() {
+    # os-release is trusted local OS state, never taken from the archive.
+    . /etc/os-release
+    OS_ID=$ID OS_VERSION=$VERSION_ID
+    ARCH=$(dpkg --print-architecture)
+    case "$OS_ID:$OS_VERSION" in
+        ubuntu:24.04|ubuntu:26.04|debian:12|debian:13) ;;
+        *) die 'Supported OS: Ubuntu 24.04/26.04 or Debian 12/13.' ;;
+    esac
+}
+
+install_missing_packages() {
+    local package status missing=()
+    for package in "$@"; do
+        status=$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null) || status=
+        [[ "$status" == 'install ok installed' ]] || missing+=("$package")
     done
+    if (( ${#missing[@]} )); then
+        stage "Installing missing dependencies: ${missing[*]}"
+        if (( ! APT_UPDATED )); then
+            apt-get update -qq || die 'Cannot update package lists; managed files have not been replaced.'
+            APT_UPDATED=1
+        fi
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}" ||
+            die 'Dependency installation failed; managed files have not been replaced.'
+    fi
+}
 
-    # nginx: test config before starting
-    if nginx -t 2>/dev/null; then
-        systemctl enable nginx
-        systemctl restart nginx
-        green "    nginx restarted OK"
+quick_check() {
+    local result
+    [[ -f "$1" && ! -L "$1" ]] || die 'SQLite database is missing or is a symlink.'
+    result=$(sqlite3 "$1" 'PRAGMA quick_check;' 2>/dev/null) || die 'SQLite quick_check failed.'
+    [[ "$result" == ok ]] || die 'SQLite quick_check found database corruption.'
+    ok 'SQLite database is consistent'
+}
+
+# Validate before extraction. Only managed paths and their parent directories are
+# accepted; links cannot redirect extraction or target arbitrary OS/security files.
+validate_archive() {
+    gzip -t -- "$1" || die 'Archive gzip integrity check failed.'
+    python3 - "$1" "$MANAGED_CRON" "$DB" "$XRAY_DIR" "${REQUIRED_PATHS[@]}" -- \
+        "${RUNTIME_PATHS[@]:0:2}" "${TREE_PATHS[@]}" -- \
+        /usr/bin/x-ui "${EXTRA_PATHS[@]}" <<'PY'
+import ipaddress, json, posixpath, sys, tarfile
+from pathlib import PurePosixPath
+archive, cron, db, xray_dir, *paths = sys.argv[1:]
+split = paths.index('--')
+required, paths = paths[:split], paths[split + 1:]
+split = paths.index('--')
+trees = [p.lstrip('/') for p in paths[:split]]
+files = [p.lstrip('/') for p in paths[split + 1:]]
+allowed = trees + files
+required = ['files/' + p.lstrip('/') for p in required]
+def fail(message):
+    raise ValueError(message)
+def clean(name):
+    if name.startswith('./'):
+        name = name[2:]
+    name = name.rstrip('/')
+    if not name or name.startswith('/') or any(ord(c) < 32 for c in name):
+        fail('Unsafe archive member name')
+    if any(p in ('', '.', '..') for p in name.split('/')):
+        fail('Unsafe archive member path')
+    return name
+def managed(path):
+    return path in files or any(path == p or path.startswith(p + '/') for p in trees)
+def permitted(name, directory):
+    if name in ('meta.json', 'managed-root-cron'):
+        return not directory
+    if name == 'files':
+        return directory
+    if not name.startswith('files/'):
+        return False
+    path = name[6:]
+    return managed(path) or (directory and any(p.startswith(path + '/') for p in allowed))
+try:
+    with tarfile.open(archive, 'r:gz') as tar:
+        members = {}
+        for member in tar:
+            name = clean(member.name)
+            if name in members or not permitted(name, member.isdir()):
+                fail('Unexpected or duplicate archive member')
+            if name.startswith('files/') and name[6:] in files and not member.isfile():
+                fail('Managed files must be regular files')
+            if name.startswith('files/') and name[6:] in trees and not member.isdir():
+                fail('Managed trees must be directories')
+            if not (member.isdir() or member.isfile() or member.issym() or member.islnk()):
+                fail('Special files are not allowed in backups')
+            members[name] = member
+        for name, member in members.items():
+            for parent in PurePosixPath(name).parents:
+                other = members.get(str(parent))
+                if other and not other.isdir():
+                    fail('Archive member traverses a non-directory')
+            if member.issym():
+                if not name.startswith('files/') or name[6:] in allowed:
+                    fail('Managed roots must not be symbolic links')
+                if any(ord(c) < 32 for c in member.linkname):
+                    fail('Unsafe symbolic link')
+                target = posixpath.normpath(posixpath.join('/' + posixpath.dirname(name[6:]), member.linkname))
+                if not (managed(target.lstrip('/')) or target.startswith('/usr/share/nginx/modules-available/')
+                        or target.startswith('/usr/lib/nginx/modules/')):
+                    fail('Symbolic link points outside managed state')
+            if member.islnk():
+                target = members.get(clean(member.linkname))
+                if not target or not target.isfile():
+                    fail('Invalid hard link')
+        for name in ['meta.json', 'managed-root-cron', *required]:
+            if name not in members:
+                fail('Archive is missing required managed state')
+            if name in required and not (members[name].isdir() if name[6:] in trees else members[name].isfile()):
+                fail('Required managed state has the wrong file type')
+        for name in ('meta.json', 'managed-root-cron', 'files/' + db.lstrip('/')):
+            if not members[name].isfile():
+                fail('Metadata, cron and DB must be regular files')
+        xray_prefix = 'files/' + xray_dir.lstrip('/') + '/xray-linux-'
+        if not any(name.startswith(xray_prefix) and member.isfile() and member.mode & 0o111
+                   for name, member in members.items()):
+            fail('Archive is missing the Xray executable')
+        if members['meta.json'].size > 16384 or members['managed-root-cron'].size > 4096:
+            fail('Unexpected metadata size')
+        meta = json.load(tar.extractfile(members['meta.json']))
+        if not isinstance(meta, dict):
+            fail('Metadata must be an object')
+        keys = ('created', 'hostname', 'os_id', 'os_version', 'arch', 'x_ui_version', 'xray_version', 'source_ipv4')
+        if type(meta.get('format_version')) is not int or meta['format_version'] != 2:
+            fail('Unsupported backup format; expected format_version=2')
+        if any(not isinstance(meta.get(k), str) for k in keys):
+            fail('Incomplete backup metadata')
+        if meta['source_ipv4']:
+            ipaddress.IPv4Address(meta['source_ipv4'])
+        for line in tar.extractfile(members['managed-root-cron']).read().decode().splitlines():
+            if line != cron:
+                fail('Archive contains unmanaged cron commands')
+except (ValueError, OSError, tarfile.TarError, KeyError, UnicodeError):
+    print('[FAIL] Invalid or unsafe backup archive (format, members, links or metadata).', file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+current_ipv4() {
+    local candidate octet valid=1
+    candidate=$(ip -4 route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="src") {print $(i+1); exit}}') || candidate=
+    if [[ ! "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        candidate=$(curl -4fsS --connect-timeout 5 --max-time 10 https://ipv4.icanhazip.com 2>/dev/null) || candidate=
+    fi
+    [[ "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+    for octet in ${candidate//./ }; do
+        (( 10#$octet <= 255 )) || valid=0
+    done
+    (( valid )) || return 1
+    printf '%s\n' "$candidate"
+}
+
+read_cron() {
+    local error="$STAGING/crontab-error"
+    if crontab -l > "$1" 2> "$error"; then
+        return
+    fi
+    # An absent root crontab is normal on a clean VPS; other failures are fatal.
+    if grep -qi 'no crontab for' "$error"; then
+        : > "$1"
     else
-        red "    nginx config test failed — fix manually:"
-        nginx -t
+        die 'Cannot read root crontab.'
     fi
-
-    # ── crontab ───────────────────────────────────────────────────────────
-    blue "==> Restoring cron..."
-    if [[ -s "${staging}/root-crontab" ]]; then
-        crontab - < "${staging}/root-crontab"
-        green "    Root crontab restored"
-    fi
-
-    if [[ -d "${staging}/cron.d" ]]; then
-        cp -a "${staging}/cron.d/." /etc/cron.d/
-        green "    /etc/cron.d restored"
-    fi
-
-    # ── UFW ───────────────────────────────────────────────────────────────
-    blue "==> Restoring UFW..."
-    # user.rules were already copied by file restore; just (re-)enable
-    ufw --force enable 2>/dev/null || true
-    green "    UFW enabled"
-
-    echo
-    green "==> Restore complete."
-    green "    Check status with:"
-    green "      systemctl status x-ui nginx mtr-backend"
 }
 
-# ── list ──────────────────────────────────────────────────────────────────────
-cmd_list() {
-    if [[ ! -d "${BACKUP_STORE}" ]]; then
-        echo "No backups found (${BACKUP_STORE} does not exist)"
-        return
+collect_path() {
+    local path=$1
+    if [[ -e "$path" || -L "$path" ]]; then
+        mkdir -p "$STAGING/files$(dirname "$path")"
+        cp -a -- "$path" "$STAGING/files$path"
     fi
+}
 
-    local archives
-    mapfile -t archives < <(ls -t "${BACKUP_STORE}"/*.tar.gz 2>/dev/null)
+write_metadata() {
+    local source_ip xui_version xray_version xray
+    source_ip=$(current_ipv4) || { source_ip=; warn 'Cannot detect source IPv4; diagnostics IP migration will be skipped.'; }
+    xui_version=$(/usr/local/x-ui/x-ui -v 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) || xui_version=unknown
+    xray_version=unknown
+    for xray in "$XRAY_DIR"/xray-linux-*; do
+        [[ -x "$xray" ]] || continue
+        xray_version=$("$xray" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) || xray_version=unknown
+        break
+    done
+    python3 - "$STAGING/meta.json" "$OS_ID" "$OS_VERSION" "$ARCH" "$xui_version" "$xray_version" "$source_ip" <<'PY'
+import datetime, json, socket, sys
+path, os_id, os_version, arch, x_ui, xray, ipv4 = sys.argv[1:]
+with open(path, 'w') as out:
+    json.dump(dict(format_version=2, created=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                   hostname=socket.gethostname(), os_id=os_id, os_version=os_version, arch=arch,
+                   x_ui_version=x_ui, xray_version=xray, source_ipv4=ipv4), out, indent=2)
+    out.write('\n')
+PY
+}
 
-    if [[ ${#archives[@]} -eq 0 ]]; then
-        echo "No backups in ${BACKUP_STORE}"
-        return
+cmd_backup() {
+    stage 'Backup preflight'
+    host_identity
+    for path in "${REQUIRED_PATHS[@]}"; do
+        [[ -e "$path" ]] || die "Required managed path is missing: $path"
+    done
+    command -v python3 >/dev/null && command -v sqlite3 >/dev/null || die 'Backup requires python3 and sqlite3.'
+    prepare_store backup
+    local estimate available path initial_state existing=()
+    for path in "${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}"; do
+        [[ ! -e "$path" && ! -L "$path" ]] || existing+=("$path")
+    done
+    estimate=$(du -skc -- "${existing[@]}" | tail -n1 | awk '{print $1}')
+    available=$(df -Pk "$BACKUP_STORE" | awk 'NR==2 {print $4}')
+    (( available >= estimate * 2 + 102400 )) || die 'Insufficient space for private staging and archive.'
+    initial_state=$(systemctl is-active x-ui) || :
+    case "$initial_state" in
+        active)
+            RESUME_XUI=1
+            systemctl stop x-ui || die 'Cannot stop x-ui for a consistent snapshot.'
+            ;;
+        inactive|failed) ;;
+        *) die 'x-ui is in a transitional or unknown state; retry when it is active or inactive.' ;;
+    esac
+    ok "Initial x-ui state: $initial_state"
+    stage 'Collecting consistent runtime snapshot'
+    quick_check "$DB"
+    for path in "${RUNTIME_PATHS[@]}"; do collect_path "$path"; done
+    if (( RESUME_XUI )); then
+        systemctl start x-ui && systemctl is-active --quiet x-ui || die 'Cannot return x-ui to its original active state.'
+        RESUME_XUI=0
+        ok 'x-ui returned to its original active state'
+    else
+        ok 'x-ui remains inactive'
     fi
+    stage 'Collecting managed configuration and web content'
+    for path in "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}"; do collect_path "$path"; done
+    read_cron "$STAGING/current-root-cron"
+    awk -v managed="$MANAGED_CRON" '$0 == managed' "$STAGING/current-root-cron" > "$STAGING/managed-root-cron"
+    write_metadata
+    stage 'Compressing and verifying archive'
+    local name="x-ui-backup-$(date -u +%Y%m%d-%H%M%S)-${STAGING##*-}.tar.gz"
+    OUTPUT="$BACKUP_STORE/.$name.partial"
+    tar -czf "$OUTPUT" -C "$STAGING" meta.json managed-root-cron files
+    chown root:root "$OUTPUT"
+    chmod 0600 "$OUTPUT"
+    validate_archive "$OUTPUT"
+    mv -- "$OUTPUT" "$BACKUP_STORE/$name"
+    OUTPUT="$BACKUP_STORE/$name"
+    BACKUP_FINISHED=1
+    ok 'Archive integrity and required members verified'
+    printf '\nBackup completed successfully.\n  File: %s\n  Size: %s\n' "$OUTPUT" "$(du -h "$OUTPUT" | cut -f1)"
+    warn 'Backup contains secrets and is stored on this VPS. Copy it securely off-host for disaster recovery.'
+}
 
-    blue "Backups in ${BACKUP_STORE}:"
-    for f in "${archives[@]}"; do
-        printf "  %-55s  %s\n" "$(basename "${f}")" "$(du -sh "${f}" | cut -f1)"
+check_compatibility() {
+    python3 - "$STAGING/meta.json" "$OS_ID" "$OS_VERSION" "$ARCH" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    meta = json.load(f)
+if [meta['os_id'], meta['os_version'], meta['arch']] != sys.argv[2:]:
+    print('[FAIL] Restore requires the same OS ID, VERSION_ID and architecture.', file=sys.stderr)
+    sys.exit(1)
+PY
+    ok "Backup format 2; OS $OS_ID $OS_VERSION; architecture $ARCH"
+}
+
+replace_managed_state() {
+    local path source
+    for path in "${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" /var/www/diagnostics; do
+        source="$STAGING/files$path"
+        rm -rf -- "$path"
+        mkdir -p "$(dirname "$path")"
+        if [[ -e "$source" ]]; then cp -a -- "$source" "$path"; fi
+    done
+    for path in "${EXTRA_PATHS[@]:0:2}"; do
+        mkdir -p "$(dirname "$path")"
+        rm -f -- "$path"
+        cp -a -- "$STAGING/files$path" "$path"
+    done
+    if [[ -f "$STAGING/files$SYSCTL_FILE" ]]; then
+        mkdir -p "$(dirname "$SYSCTL_FILE")"
+        install -o root -g root -m 0644 "$STAGING/files$SYSCTL_FILE" "$SYSCTL_FILE"
+        sysctl -p "$SYSCTL_FILE" || die 'Cannot apply managed sysctl file.'
+    fi
+}
+
+repair_panel_certificates() {
+    local certificate domain
+    certificate=$(sqlite3 "$DB" "SELECT value FROM settings WHERE key='webCertFile';")
+    if [[ "$certificate" =~ ^/root/cert/([^/]+)/ ]]; then
+        domain=${BASH_REMATCH[1]}
+        [[ "$domain" != . && "$domain" != .. ]] || die 'Invalid panel certificate domain.'
+        if [[ -d "/etc/letsencrypt/live/$domain" ]]; then
+            mkdir -p "/root/cert/$domain"
+            chmod 0755 /root/cert "/root/cert/$domain"
+            for name in fullchain.pem privkey.pem; do
+                if [[ ! -e "/root/cert/$domain/$name" ]]; then
+                    ln -sfn "/etc/letsencrypt/live/$domain/$name" "/root/cert/$domain/$name"
+                fi
+            done
+        fi
+    fi
+}
+
+prepare_mtr_backend() {
+    local binary
+    if ! id mtr-backend >/dev/null 2>&1; then
+        useradd --system --no-create-home --shell /usr/sbin/nologin mtr-backend
+    fi
+    chmod 0755 /usr/local/lib/3x-ui-pro /usr/local/lib/3x-ui-pro/mtr-backend.py
+    for binary in mtr mtr-packet; do
+        if command -v "$binary" >/dev/null; then
+            if ! setcap cap_net_raw+ep "$(command -v "$binary")" 2>/dev/null; then
+                warn "Could not set CAP_NET_RAW file capability on $binary; mtr-backend uses systemd AmbientCapabilities."
+            fi
+        fi
     done
 }
 
-# ── entry point ───────────────────────────────────────────────────────────────
-case "${1:-}" in
-    backup)  cmd_backup ;;
-    restore) cmd_restore "${2:-}" ;;
-    list)    cmd_list ;;
-    *)
-        cat <<EOF
-Usage: $(basename "$0") {backup|restore <file>|list}
+regenerate_diagnostics() {
+    local directory=/var/www/diagnostics/testfiles current source
+    mkdir -p "$directory"
+    dd if=/dev/zero of="$directory/test-15k.bin" bs=1024 count=15 status=none
+    dd if=/dev/zero of="$directory/test-17k.bin" bs=1024 count=17 status=none
+    dd if=/dev/zero of="$directory/test-100m.bin" bs=1048576 count=100 status=none
+    dd if=/dev/zero of="$directory/test-1g.bin" bs=1048576 count=1024 status=none
+    rm -f "$directory/test-512m.bin"
+    source=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_ipv4"])' "$STAGING/meta.json")
+    if current=$(current_ipv4); then
+        if [[ -n "$source" && "$source" != "$current" ]]; then
+            python3 - /var/www/diagnostics/index.html "$source" "$current" <<'PY'
+import re, sys
+path, old, new = sys.argv[1:]
+with open(path) as f:
+    html = f.read()
+pattern = r'(<(?:span|code)\b[^>]*\bid=[\'"]server-ip(?:-step)?[\'"][^>]*>)([^<]*)(</(?:span|code)>)'
+updated = re.sub(pattern, lambda m: m[1] + (new if m[2] == old else m[2]) + m[3], html)
+if updated == html:
+    print('[WARN] Diagnostics IP display was not recognized; saved display left unchanged.', file=sys.stderr)
+else:
+    with open(path, 'w') as f:
+        f.write(updated)
+PY
+            warn 'Source VPS IP differs from current VPS IP. Point DNS to the new VPS separately.'
+        elif [[ -z "$source" ]]; then
+            warn 'Backup has no source IPv4; saved diagnostics display left unchanged.'
+        fi
+    else
+        warn 'Cannot detect current IPv4; saved diagnostics display left unchanged.'
+    fi
+    chmod 0755 /var/www/diagnostics "$directory"
+    chown -R www-data:www-data /var/www/diagnostics /var/www/html /var/www/subpage
+}
 
-  backup            create timestamped backup in ${BACKUP_STORE}/
-  restore <file>    restore from backup archive (installs packages first)
-  list              list available backups
+restore_cron_and_firewall() {
+    read_cron "$STAGING/current-root-cron"
+    awk -v managed="$MANAGED_CRON" '$0 != managed' "$STAGING/current-root-cron" > "$STAGING/merged-root-cron"
+    cat "$STAGING/managed-root-cron" >> "$STAGING/merged-root-cron"
+    crontab - < "$STAGING/merged-root-cron"
+    for rule in 80/tcp 443/tcp 443/udp; do ufw allow "$rule"; done
+    local status
+    status=$(LC_ALL=C ufw status) || die 'Cannot read UFW status.'
+    if ! grep -q '^Status: active$' <<< "$status"; then
+        warn 'UFW is inactive; application rules added without enabling the firewall.'
+    fi
+}
 
-What is backed up:
-  /etc/nginx                      nginx config
-  /etc/x-ui                       panel DB + config
-  /usr/local/x-ui                 panel binary + xray core
-  /usr/bin/x-ui                   x-ui management CLI
-  /usr/local/lib/3x-ui-pro        mtr-backend script
-  /etc/letsencrypt                SSL certificates
-  /root/cert                      panel cert symlinks
-  /var/www/{html,diagnostics,subpage}  web content
-  /etc/systemd/system/{x-ui,mtr-backend}.service
-  /etc/ufw/user*.rules            firewall rules
-  root crontab + /etc/cron.d/
-EOF
-        exit 1
-        ;;
-esac
+check_health() {
+    local service attempt failed=0
+    stage 'Final checks'
+    quick_check "$DB"
+    if nginx -t > "$STAGING/nginx-test.log" 2>&1; then
+        ok 'nginx configuration'
+    else
+        warn 'nginx configuration check failed; inspect nginx -t.'
+        failed=1
+    fi
+    for service in x-ui nginx mtr-backend; do
+        if systemctl is-active --quiet "$service"; then ok "$service is active";
+        else printf '[FAIL] %s is not active\n' "$service" >&2; failed=1; fi
+    done
+    for attempt in {1..10}; do
+        [[ -S "$XHTTP_SOCKET" ]] && break
+        sleep 0.5
+    done
+    if [[ -S "$XHTTP_SOCKET" ]]; then ok 'XHTTP Unix socket';
+    else printf '[FAIL] XHTTP Unix socket is missing\n' >&2; failed=1; fi
+    (( ! failed )) || die 'Restore failed mandatory health checks; archive is unchanged. Fix the cause and rerun restore.'
+}
+
+cmd_restore() {
+    stage 'Restore preflight'
+    local archive=${1:-} service path
+    [[ -n "$archive" && -f "$archive" ]] || die 'Usage: x-ui-backup restore <existing archive.tar.gz>'
+    archive=$(readlink -f -- "$archive")
+    for path in "${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}" /var/www/diagnostics; do
+        [[ "$archive" != "$path" && "$archive" != "$path/"* ]] ||
+            die 'Move the archive outside managed paths (for example /var/backups/x-ui) before restore.'
+    done
+    host_identity
+    gzip -t -- "$archive" || die 'Archive gzip integrity check failed.'
+    # Minimal Debian images may lack the Python archive/JSON parser. Bootstrap
+    # only that dependency here; no managed state has been touched yet.
+    if ! command -v python3 >/dev/null; then install_missing_packages python3; fi
+    validate_archive "$archive"
+    prepare_store restore
+    tar -xzf "$archive" -C "$STAGING" --same-owner
+    check_compatibility
+    install_missing_packages "${PACKAGES[@]}"
+    quick_check "$STAGING/files$DB"
+    stage 'Stopping services and restoring managed state'
+    for service in nginx x-ui mtr-backend; do
+        if systemctl cat "$service" >/dev/null 2>&1; then
+            systemctl stop "$service" || die "Cannot stop $service."
+        fi
+    done
+    replace_managed_state
+    repair_panel_certificates
+    prepare_mtr_backend
+    regenerate_diagnostics
+    restore_cron_and_firewall
+    stage 'Enabling and starting services'
+    systemctl daemon-reload
+    nginx -t > "$STAGING/nginx-test.log" 2>&1 || die 'nginx -t failed; nginx was not started. Fix the configuration and rerun restore.'
+    rm -f -- "$XHTTP_SOCKET"
+    for service in x-ui mtr-backend nginx; do
+        systemctl enable "$service" || die "Cannot enable $service."
+        systemctl start "$service" || die "Cannot start $service."
+    done
+    check_health
+    printf '\nRestore completed successfully.\n'
+    warn 'Recovery uses the saved domains. On a new VPS, point their DNS to this VPS separately.'
+}
+
+cmd_list() {
+    local archive
+    shopt -s nullglob
+    local archives=("$BACKUP_STORE"/*.tar.gz)
+    if (( ! ${#archives[@]} )); then printf 'No backups in %s\n' "$BACKUP_STORE"; return; fi
+    for archive in "${archives[@]}"; do
+        printf '%-52s %8s\n' "${archive##*/}" "$(du -h "$archive" | cut -f1)"
+    done
+}
+
+main() {
+    require_root
+    export LC_ALL=C
+    trap cleanup EXIT
+    trap 'printf "[FAIL] Operation failed during: %s\n" "$STAGE" >&2; exit 1' ERR
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    case ${1:-} in
+        backup) cmd_backup ;;
+        restore) cmd_restore "${2:-}" ;;
+        list) cmd_list ;;
+        *) die 'Usage: x-ui-backup {backup|restore <archive>|list}' ;;
+    esac
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi

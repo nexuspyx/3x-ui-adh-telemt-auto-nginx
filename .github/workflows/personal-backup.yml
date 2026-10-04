@@ -1,0 +1,38 @@
+name: Personal backup validation
+
+on:
+  push:
+    branches: [personal]
+  pull_request:
+    branches: [personal]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install fixture dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends sqlite3 nginx
+      - name: Shell syntax
+        run: |
+          bash -n x-ui-latest.sh
+          bash -n assets/backup/x-ui-backup.sh
+      - name: Backup and restore regression tests
+        env:
+          NGINX_BIN: /usr/sbin/nginx
+        run: sudo --preserve-env=NGINX_BIN python3 tests/test_personal_backup.py
+      - name: Whitespace validation
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          git diff --check
+          git show --format= --check HEAD
+          if [ -n "$BASE_SHA" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git diff --check "$BASE_SHA" HEAD
+          fi

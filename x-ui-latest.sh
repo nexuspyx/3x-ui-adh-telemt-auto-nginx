@@ -1128,6 +1128,7 @@ EOF
 # SYSTEM TUNING (BBR + kernel params)
 # ─────────────────────────────────────────────────────────────────────────────
 tune_system() {
+    local managed_file=/etc/sysctl.d/99-3x-ui-pro.conf
     local params=(
         "net.core.default_qdisc=fq"
         "net.ipv4.tcp_congestion_control=bbr"
@@ -1140,10 +1141,29 @@ tune_system() {
         "net.ipv4.tcp_rmem=4096 87380 16777216"
         "net.ipv4.tcp_wmem=4096 65536 16777216"
     )
-    for p in "${params[@]}"; do
-        grep -qxF "$p" /etc/sysctl.conf || echo "$p" >> /etc/sysctl.conf
-    done
-    sysctl -p
+    mkdir -p /etc/sysctl.d &&
+        printf '%s\n' "${params[@]}" > "$managed_file" &&
+        chown root:root "$managed_file" &&
+        chmod 0644 "$managed_file" &&
+        sysctl -p "$managed_file"
+}
+
+install_backup_tool() {
+    local temporary
+    mkdir -p /usr/local/bin || return 1
+    temporary=$(mktemp /usr/local/bin/.x-ui-backup.XXXXXX) || return 1
+    if ! curl -fsSL "${GITHUB_RAW}/assets/backup/x-ui-backup.sh" -o "$temporary" ||
+       ! bash -n "$temporary" || [[ ! -s "$temporary" ]]; then
+        rm -f "$temporary"
+        msg_err "Failed to download a valid backup tool."
+        return 1
+    fi
+    if ! chown root:root "$temporary" || ! chmod 0755 "$temporary" ||
+       ! mv -fT "$temporary" /usr/local/bin/x-ui-backup; then
+        rm -f "$temporary"
+        msg_err "Failed to install the backup tool."
+        return 1
+    fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1183,6 +1203,7 @@ show_results() {
         msg_inf "Network Diagnostics (panel login required): https://${domain}/${panel_path}/diag\n"
         msg_inf "────────────────────────────────────────────────────────────────────────────────"
         msg_inf "Please save this screen!"
+        msg_inf "Backup: x-ui-backup backup"
     else
         nginx -t
         printf '0\n' | x-ui | grep --color=never -i ':'
@@ -1211,7 +1232,8 @@ main() {
     install_clash_sub
     install_fake_site
     install_diagnostics
-    tune_system
+    tune_system || exit 1
+    install_backup_tool || exit 1
     setup_cron
     setup_firewall
 
