@@ -10,12 +10,12 @@
 #   6. Replaces fake cover site with a current one
 #
 # Usage:
-#   wget -qO x-ui-patch.sh https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main/x-ui-patch.sh
+#   wget -qO x-ui-patch.sh https://raw.githubusercontent.com/xPROMSx/3x-ui-stack/main/x-ui-patch.sh
 #   bash x-ui-patch.sh
 set -Eeuo pipefail
 
 XUIDB="/etc/x-ui/x-ui.db"
-GITHUB_RAW="https://raw.githubusercontent.com/xPROMSx/3x-ui-pro/personal"
+GITHUB_RAW="https://raw.githubusercontent.com/xPROMSx/3x-ui-stack/main"
 FAKE_SITE_COUNT=50
 LIB_DIR="/usr/local/lib/3x-ui-pro"
 DIAG_ROOT="/var/www/diagnostics"
