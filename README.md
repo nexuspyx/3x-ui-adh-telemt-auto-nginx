@@ -1,172 +1,154 @@
 <div align="center">
 
-# 3x-ui Stack
+# 🚀 3x-ui Auto Nginx
 
-**REALITY · XHTTP · Hysteria2 · nginx · Backup/Restore**
+**Введите два домена — остальное сделает скрипт.**
 
-[![XHTTP / security](https://github.com/xPROMSx/3x-ui-stack/actions/workflows/stack-xhttp.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-stack/actions/workflows/stack-xhttp.yml)
-[![Backup / restore](https://github.com/xPROMSx/3x-ui-stack/actions/workflows/stack-backup.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-stack/actions/workflows/stack-backup.yml)
-[![Tested OS](https://img.shields.io/badge/tested-Ubuntu%2026.04%20amd64-E95420?logo=ubuntu&logoColor=white)](#platforms)
-[![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-stack)](https://github.com/xPROMSx/3x-ui-stack/releases)
+Автоматически: **nginx · SSL · Fake Site · REALITY · XHTTP · Hysteria2 · Backup / Restore**
 
-[English](README_EN.md) · [Релизы](https://github.com/xPROMSx/3x-ui-stack/releases) · [Обсуждение ошибок](https://github.com/xPROMSx/3x-ui-stack/issues)
+[![XHTTP / security](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml)
+[![Backup / Restore](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml)
+[![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#-технические-подробности)
+[![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
+
+[English](README_EN.md) · [Релизы](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Ошибки](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
 
 </div>
 
-Поддерживаемый стек автоматического развёртывания [3x-ui](https://github.com/MHSanaei/3x-ui) и Xray: современные транспорты, nginx с SNI/TLS, подписки, диагностика и проверяемое восстановление. Развитие ведётся в `main` через отдельные PR с проверками безопасности и Backup/Restore.
+Готовое развёртывание [3x-ui](https://github.com/MHSanaei/3x-ui) и Xray: укажите домен панели и REALITY-домен — скрипт установит сервер, настроит nginx и TLS, развернёт сайт-прикрытие.
 
-> **Для новой установки или rebuild.** `x-ui-latest.sh` останавливает и очищает прежнюю установку, включая БД панели и конфигурацию nginx. Это не безопасное обновление существующего VPS. Сначала сохраните backup за пределами сервера.
+## ⚡ Быстрый старт
 
-## Возможности и транспорты
-
-| Возможность | Реализация | Назначение |
-| --- | --- | --- |
-| VLESS + REALITY | TCP, внешний 443 через nginx SNI, Xray на 8443 | Основной профиль с REALITY |
-| VLESS + XHTTP | `stream-up`, Unix socket, TLS через nginx | XHTTP без произвольного проксирования локальных портов |
-| Hysteria2 | UDP/QUIC на 443, TLS в Xray | Альтернативный транспорт при доступном UDP |
-| VLESS + WebSocket | Фиксированный маршрут nginx с TLS | Дополнительный профиль для совместимых клиентов |
-| Trojan + gRPC | Фиксированный маршрут nginx, HTTP/2 и TLS | Дополнительный профиль для совместимых клиентов |
-| Подписки и диагностика | Clash/Mihomo, JSON; MTR и LibreSpeed | Управление клиентами и проверка сети |
-| Backup/Restore v2 | Проверки архива, БД и состояния сервисов | Откат и перенос на совместимую чистую ОС |
-
-Installer создаёт все пять inbound-профилей. Использование WS и Trojan gRPC необязательно; отдельного переключателя их установки сейчас нет. Поддержка транспортов зависит от версии клиента и Xray.
-
-### nginx, SNI и TLS
-
-TCP 443 разделяется по SNI: REALITY направляется в Xray, домен панели - в TLS-vhost nginx. Сертификаты выпускает Let's Encrypt/Certbot. XHTTP использует Unix socket; WS и Trojan gRPC используют только известные маршруты и фиксированные backend-порты. Произвольные пути вида `/<port>/...` не должны открывать доступ к localhost-сервисам. Hysteria2 использует UDP 443 независимо от TCP-маршрутизации nginx.
-
-### Поведение UFW
-
-При активном UFW installer сохраняет существующую политику и добавляет 80/tcp, 443/tcp и 443/udp. При неактивном UFW перед включением определяет SSH-порт из текущего соединения или эффективной конфигурации sshd. Если порт определить нельзя, предупреждает и не включает firewall автоматически. Сброс правил и жёстко заданный SSH-порт 22 не используются.
-
-<a id="platforms"></a>
-## Поддерживаемые и проверенные платформы
-
-| Платформа | Статус |
-| --- | --- |
-| Ubuntu 26.04 LTS amd64 | Основная платформа; ранее проверена на реальном VPS |
-| Ubuntu 24.04 LTS | Допускается installer и restore; автоматические проверки выполняются в CI |
-| Debian 12 / 13 | Допускаются проверкой ОС; равная полнота проверки на реальном VPS не заявляется |
-
-Восстановление требует совпадения `ID`, `VERSION_ID` и архитектуры исходного сервера. Проверка версии ОС не означает, что все архитектуры проверены. Installer отклоняет CPU с моделью QEMU; используйте VPS с доступной реальной моделью CPU.
-
-## Установка
-
-Нужны root-доступ, чистая поддерживаемая ОС, домены панели и REALITY с корректным DNS, доступные TCP 80/443 и UDP 443 для Hysteria2.
-
-Скачайте и просмотрите скрипт перед запуском:
+1. Направьте **два домена** на VPS: один для панели, второй для REALITY.
+2. На чистой поддерживаемой ОС скачайте installer и при желании просмотрите его.
+3. Запустите от **root**, заменив домены в примере:
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-stack/main/x-ui-latest.sh -o x-ui-latest.sh
-less x-ui-latest.sh
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh
+# Можно сначала просмотреть: less x-ui-latest.sh
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
 ```
 
-Замените домены своими. По умолчанию выбирается последний стабильный релиз 3x-ui. Для воспроизводимой установки укажите проверенную версию панели через `-version <tag>`; сама утилита 3x-ui Stack и версия панели имеют отдельные циклы релизов.
+Можно запустить без аргументов доменов и ввести их по запросу. Нужны входящие TCP 80/443 и UDP 443; для получения сертификатов DNS должен указывать на этот сервер.
 
-## Companion project: Telemt WEB Manager
+> **⚠️ Только fresh install / rebuild.** `x-ui-latest.sh` удаляет предыдущую установку, включая базу панели и конфигурацию nginx. Это **не безопасный in-place updater** production VPS. Перед переустановкой сохраните backup за пределами сервера.
 
-[**Telemt WEB Manager**](https://github.com/xPROMSx/telemt-web-manager) дополняет этот стек установкой и управлением Telemt WEB proxy на Ubuntu, с nginx, Let's Encrypt, systemd и опциональным SOCKS5.
+## 🌐 Два домена → готовый сервер
 
-Это отдельный companion project для тех, кому вместе с 3x-ui нужен Telemt WEB proxy. Он не устанавливается этим скриптом автоматически. При совместном размещении заранее согласуйте домены, занятые порты и конфигурацию nginx по документации обоих проектов.
+| Вы вводите | Скрипт подготавливает | Вы получаете |
+| --- | --- | --- |
+| Домен панели + REALITY-домен | 3x-ui/Xray, nginx, Let's Encrypt TLS, автоматический fake site, пять inbound-профилей, subscriptions, diagnostics, Backup / Restore и интеграцию с UFW | URL панели, сгенерированные логин/пароль и URL diagnostics |
 
-## Backup / Restore
+**Клиентов создайте в 3x-ui после установки.** Share links и subscriptions управляются через панель; installer не создаёт клиентские аккаунты.
 
-Все команды ниже выполняются от root.
+## ✨ Всё для быстрого развёртывания
 
-### Backup
+| | |
+| --- | --- |
+| **⚡ Полная автоматизация**<br>Установка и конфигурация сервера по двум доменам. | **🔐 Генерация секретов**<br>Логин/пароль панели, REALITY keys/short IDs и пути генерируются автоматически. |
+| **🌐 nginx + SNI + TLS**<br>Готовая маршрутизация и сертификаты Let's Encrypt. | **🥸 Automatic Fake Site**<br>Сайт-прикрытие случайно выбирается из коллекции и разворачивается за вас. |
+| **🚀 Современные transport'ы**<br>REALITY, XHTTP stream-up и Hysteria2, дополнительные WS/gRPC-профили. | **💾 Backup / Restore**<br>Откат на текущем VPS и восстановление на совместимой чистой ОС. |
+| **📊 Diagnostics**<br>MTR и LibreSpeed с авторизацией через панель. | **🔥 UFW-aware**<br>Добавляет application rules, сохраняя существующие правила и policy. |
 
-Fresh install автоматически устанавливает `/usr/local/bin/x-ui-backup`.
-Если на существующем VPS утилиты нет, используйте блок её установки ниже;
-повторно запускать installer не нужно.
+### 🚀 Transport-профили
 
-Создать backup и посмотреть локальные архивы:
+| Transport | По умолчанию | Схема подключения |
+| --- | --- | --- |
+| VLESS + REALITY | ✅ Включён | TCP 443 → nginx SNI → Xray |
+| VLESS + XHTTP `stream-up` | ✅ Включён | TLS/HTTP/2 → nginx → Unix socket |
+| Hysteria2 | ✅ Включён | UDP 443 → Xray, TLS + H3 |
+| VLESS + WebSocket | ⏸ Выключен | TLS → фиксированный nginx route → Xray |
+| Trojan + gRPC | ⏸ Выключен | TLS/HTTP/2 → фиксированный nginx route → Xray |
+
+Создаются все пять профилей. При необходимости включите WS или Trojan gRPC вручную в 3x-ui. Поддержка зависит от transport'а и версии клиента.
+
+### 🥸 Automatic Fake Site
+
+Не нужно самостоятельно создавать сайт-прикрытие: installer выбирает страницу из встроенной коллекции fake sites и разворачивает её вместе с nginx и TLS. Это часть развёртывания, а не гарантия незаметности трафика.
+
+## ✈️ Нужен ещё и Telegram proxy?
+
+### [Telemt WEB Manager](https://github.com/xPROMSx/telemt-web-manager)
+
+Companion-проект для автоматической установки и управления Telemt WEB proxy: обновления, rollback и интеграция с nginx/TLS.
+
+**3x-ui Auto Nginx** разворачивает сервер 3x-ui/Xray, **Telemt WEB Manager** — Telemt WEB proxy. Это отдельные проекты: данный installer не устанавливает Telemt. Для совместного размещения нужно проверить порты, домены и конфигурацию nginx.
+
+## 💾 Backup / Restore
+
+Команды выполняются от root. Fresh install включает `/usr/local/bin/x-ui-backup`:
 
 ```bash
 x-ui-backup backup
 x-ui-backup list
 ```
 
-Архивы сохраняются в `/var/backups/x-ui/` с доступом только для root. Они содержат
-БД, UUID и состояние клиентов, сертификаты/private keys и REALITY/runtime secrets.
-**Обязательно скопируйте архив с VPS на ПК, NAS или в другое безопасное хранилище:**
-локальный backup не поможет при потере сервера.
+Архивы сохраняются в `/var/backups/x-ui/` с доступом только для root. Внутри — состояние клиентов/базы, сертификаты/private keys и runtime secrets. **Обязательно скопируйте архив с VPS** на ПК, NAS или в другое безопасное хранилище.
 
-### Restore на текущем VPS
-
-Выберите архив и восстановите его:
+Для отката на текущем VPS:
 
 ```bash
-x-ui-backup list
 x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 ```
 
-Restore сам выполняет необходимые проверки. Успех подтверждается сообщением
-`Restore completed successfully.` Это откат состояния 3x-ui Stack, а не всей ОС.
+Успешное восстановление заканчивается `Restore completed successfully.` Восстанавливается управляемое состояние приложения, а не вся ОС.
 
-### Restore на новом VPS
+<details>
+<summary>🛟 Восстановление на новом VPS / установка backup utility</summary>
 
-Нужен чистый VPS с **тем же OS ID, VERSION_ID и архитектурой**, что и backup.
-Например, Ubuntu 26.04 amd64 -> Ubuntu 26.04 amd64; переход на Ubuntu 24.04
-или arm64 не поддерживается.
+Нужны **те же OS ID, VERSION_ID и архитектура**, что у backup: например, Ubuntu 26.04 amd64 → Ubuntu 26.04 amd64. Ubuntu 24.04 или arm64 не подходят для такого архива.
 
-1. Установите совместимую ОС и при необходимости выполните свой OS/bootstrap script.
-2. **Не запускайте `x-ui-latest.sh`.** Установите только backup utility из `main`:
+1. Установите совместимую чистую ОС и при необходимости выполните свой OS/bootstrap script.
+2. **Не запускайте `x-ui-latest.sh`.** Установите только backup utility (этот же блок подходит для существующей установки без утилиты):
 
    ```bash
-   curl -fsSL \
-     https://raw.githubusercontent.com/xPROMSx/3x-ui-stack/main/assets/backup/x-ui-backup.sh \
-     -o /tmp/x-ui-backup
+   curl -fsSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
    install -o root -g root -m 0755 /tmp/x-ui-backup /usr/local/bin/x-ui-backup
    rm -f /tmp/x-ui-backup
    ```
 
-3. Безопасно передайте сохранённый архив на VPS, например в `/root/`, и выполните:
+3. Безопасно передайте сохранённый архив и выполните restore:
 
    ```bash
    x-ui-backup restore /root/x-ui-backup-....tar.gz
    ```
 
-4. Если IP изменился, переключите DNS старых доменов на новый VPS.
-   После успешного restore используйте существующие настройки панели и клиентов.
+4. Если IP изменился, переключите DNS существующих доменов на новый VPS. После восстановления используйте прежние конфигурации панели и клиентов.
 
-Restore сам устанавливает отсутствующие application dependencies и восстанавливает
-состояние 3x-ui Stack.
+Restore сам устанавливает отсутствующие application dependencies и восстанавливает panel/runtime, nginx, сертификаты, web/diagnostics, project systemd units, managed sysctl и managed Certbot cron. SSH, `authorized_keys`, fail2ban, базовая UFW policy и OS/bootstrap state остаются ответственностью администратора. Restore добавляет правила 80/tcp, 443/tcp и 443/udp, но никогда не включает UFW; посторонние cron jobs сохраняются.
 
-### Что восстанавливается / что не восстанавливается
+Backup/Restore v2 проверен на реальном Ubuntu 26.04 amd64 VPS: same-host rollback, clean-host recovery после bootstrap без installer, работа после reboot и подключения к панели/реальных клиентов (3x-ui 3.9.0, Xray 26.9.30, nginx 1.28.3).
 
-Backup покрывает panel/runtime, nginx, сертификаты, diagnostics/web state,
-systemd units проекта, managed sysctl и managed Certbot cron. SSH, `authorized_keys`,
-fail2ban, базовая политика UFW и OS/bootstrap state не восстанавливаются - их
-готовит bootstrap или администратор нового сервера. Restore добавляет только
-application rules 80/tcp, 443/tcp и 443/udp; посторонние cron jobs сохраняются.
+</details>
 
-### Validation
+## 🔧 Технические подробности
 
-Backup/Restore v2 проверен на реальном Ubuntu 26.04 amd64 VPS
-(3x-ui 3.9.0, Xray 26.9.30, nginx 1.28.3): backup/rollback на том же сервере,
-восстановление чистого VPS после bootstrap без запуска `x-ui-latest.sh`,
-сохранение работы сервисов после reboot, работа панели и реальных клиентских подключений.
+<details>
+<summary>Платформы, маршрутизация, firewall и optional tools</summary>
 
-## Проверки безопасности
+- **Платформы:** Ubuntu 26.04 amd64 проверен на реальном VPS; Ubuntu 24.04 используется в CI. Debian 12/13 допускаются OS checks без аналогичной live-проверки. Не все архитектуры протестированы. CPU с моделью QEMU отклоняется; VPS должен показывать реальную модель CPU.
+- **Маршрутизация:** nginx принимает TCP 443 и направляет по SNI в REALITY/Xray на 8443 либо TLS vhost панели на 7443. Camouflage target REALITY использует 9443. XHTTP работает через Unix socket; WS/gRPC имеют фиксированные paths/backends. Hysteria2 независимо принимает UDP 443.
+- **UFW:** активный UFW получает только правила 80/tcp, 443/tcp и 443/udp. Неактивный включается только после определения и разрешения SSH ports; иначе остаётся выключенным с warning. Существующие rules/default policy сохраняются, жёстко заданного SSH port 22 нет.
+- **Версии:** по умолчанию выбирается latest stable 3x-ui. `-version <tag>` позволяет выбрать релиз панели; binary и CLI берутся из одного tag.
+- **Diagnostics/subscriptions:** MTR/LibreSpeed с авторизацией через панель, JSON и Clash/Mihomo subscriptions. Новые пользовательские WS/gRPC inbounds требуют явных nginx routes; generic proxy к произвольному localhost port отсутствует.
+- **Optional tools:** `x-ui-adguard.sh` сохранён для опциональной интеграции AdGuard Home и дальнейшего развития; основной installer его не запускает. `x-ui-patch.sh` — дополнительная maintenance utility, а не миграция базы или универсальный updater.
+- **Совместимость:** `/usr/local/lib/3x-ui-pro` и `/etc/sysctl.d/99-3x-ui-pro.conf` намеренно сохранены для Backup/Restore.
 
-CI запускает полный текущий набор регрессий: генерация inbound/Host для обеих схем БД, XHTTP stream-up, Hysteria2, REALITY, фиксированные WS/gRPC маршруты, отрицательный тест доступа к постороннему localhost-порту, синтаксис nginx, UFW и согласованность версии панели/CLI. Отдельный workflow проверяет Backup/Restore v2 на изолированных фикстурах с настоящими tar/gzip, SQLite и nginx, включая опасные пути/ссылки в архиве, несовместимую ОС, сбои и проверки сервисов.
+</details>
 
-Проверяется Bash-синтаксис installer, patch, AdGuard и backup utility. Автоматические проверки не заменяют проверку реальных клиентских подключений на одноразовом VPS. Описанная выше live validation относится к ранее зафиксированному checkpoint, а не к каждому будущему коммиту.
+<details>
+<summary>Проверки, разработка и релизы</summary>
 
-## Разработка и релизы
+CI проверяет transport/Host-профили, nginx syntax, отрицательный тест arbitrary localhost-port access, firewall, version pinning, cron и canonical sources. Backup/Restore tests используют изолированные fixtures с настоящими tar/gzip, SQLite и nginx. Bash syntax проверяется для installer, patch, AdGuard и backup scripts. CI не заменяет live acceptance с реальным клиентом.
 
-- `main` - основная линия проекта. Изменения проходят через `feat/*`, `fix/*`, `docs/*` или `chore/*` и PR.
-- Обязательные проверки: `Stack XHTTP and security` и `Stack Backup and restore`. Внешние reviewers для единственного maintainer не обязательны.
-- Релизы стека публикуются как версии `vX.Y.Z` из проверенного `main` с описанием изменений. Новое имя само по себе не создаёт новый релиз.
-- Старые `personal-v*` tags/releases сохраняют историческое значение. Их зелёный badge не подтверждает свежий security checkpoint.
-- `personal` временно сохраняется для совместимости старых ссылок. Новые команды используют `main`; upstream не синхронизируется автоматически.
-- Для деталей защиты ветки и аварийного восстановления см. [CONTRIBUTING.md](CONTRIBUTING.md).
+Разработка ведётся через PR в `main`; см. [CONTRIBUTING.md](CONTRIBUTING.md). Имена обязательных jobs остаются `Stack XHTTP and security` и `Stack Backup and restore` для совместимости branch protection.
 
-Исторические пути `/usr/local/lib/3x-ui-pro` и `/etc/sysctl.d/99-3x-ui-pro.conf` сохранены для совместимости установки и Backup/Restore v2.
+Исторические `personal-v*` releases и branches сохраняются. Следующие project releases относятся к 3x-ui Auto Nginx; versioning проекта отделён от версий upstream 3x-ui/Xray. Branding changes сами по себе не создают новый релиз.
 
-## Происхождение проекта
+</details>
 
-3x-ui Stack остаётся в fork network [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) и развивается независимо. Панель 3x-ui и её релизы предоставляются [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Полезные upstream-изменения рассматриваются отдельно и переносятся после проверки.
+## 🤝 Credits / Origins
 
-Авторы исходных компонентов сохраняют свои права. Новая лицензия на унаследованный код в рамках этой миграции не добавляется.
+Проект основан на [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro). Панель предоставляется [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). **3x-ui Auto Nginx** развивается независимо и может выборочно принимать полезные upstream changes после ревью.
+
+Права авторов сторонних компонентов и существующие license/copyright statements сохраняются. Новая лицензия для унаследованного кода не добавляется.

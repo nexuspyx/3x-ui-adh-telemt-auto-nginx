@@ -1,4 +1,4 @@
-name: 3x-ui Stack Backup and restore validation
+name: 3x-ui Auto Nginx Backup and restore validation
 
 on:
   push:

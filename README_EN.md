@@ -1,172 +1,156 @@
 <div align="center">
 
-# 3x-ui Stack
+# 🚀 3x-ui Auto Nginx
 
-**REALITY · XHTTP · Hysteria2 · nginx · Backup/Restore**
+**One command. Two domains. Ready-to-use 3x-ui server.**
 
-[![XHTTP / security](https://github.com/xPROMSx/3x-ui-stack/actions/workflows/stack-xhttp.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-stack/actions/workflows/stack-xhttp.yml)
-[![Backup / restore](https://github.com/xPROMSx/3x-ui-stack/actions/workflows/stack-backup.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-stack/actions/workflows/stack-backup.yml)
-[![Tested OS](https://img.shields.io/badge/tested-Ubuntu%2026.04%20amd64-E95420?logo=ubuntu&logoColor=white)](#platforms)
-[![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-stack)](https://github.com/xPROMSx/3x-ui-stack/releases)
+Automatic **nginx · SSL · Fake Site · REALITY · XHTTP · Hysteria2 · Backup / Restore**
 
-[Русский](README.md) · [Releases](https://github.com/xPROMSx/3x-ui-stack/releases) · [Issues](https://github.com/xPROMSx/3x-ui-stack/issues)
+[![XHTTP / security](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml)
+[![Backup / Restore](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml)
+[![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
+[![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
+
+[Русский](README.md) · [Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Issues](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
 
 </div>
 
-An actively maintained deployment stack for [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray: modern transports, nginx SNI/TLS routing, subscriptions, diagnostics and validated recovery. Development takes place on `main` through separate pull requests with security and Backup/Restore checks.
+A turnkey deployment project for [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray. Supply a panel domain and a REALITY domain; the script installs the server, configures nginx and TLS, and deploys a cover website.
 
-> **Fresh installation or rebuild only.** `x-ui-latest.sh` stops and removes the previous installation, including the panel database and nginx configuration. It is not a safe in-place updater for an existing VPS. Save an off-server backup first.
+## ⚡ Get started
 
-## Features and transports
-
-| Feature | Implementation | Purpose |
-| --- | --- | --- |
-| VLESS + REALITY | TCP, public 443 through nginx SNI, Xray on 8443 | Primary REALITY profile |
-| VLESS + XHTTP | `stream-up`, Unix socket, TLS through nginx | XHTTP without arbitrary localhost-port proxying |
-| Hysteria2 | UDP/QUIC on 443, TLS in Xray | Alternative transport where UDP is available |
-| VLESS + WebSocket | Fixed nginx route with TLS | Additional profile for compatible clients |
-| Trojan + gRPC | Fixed nginx route, HTTP/2 and TLS | Additional profile for compatible clients |
-| Subscriptions and diagnostics | Clash/Mihomo, JSON; MTR and LibreSpeed | Client management and network checks |
-| Backup/Restore v2 | Archive, database and service health checks | Rollback and recovery on a compatible clean OS |
-
-The installer creates all five inbound profiles. WS and Trojan gRPC usage is optional; there is currently no separate installation toggle. Transport support depends on the client and Xray versions.
-
-### nginx, SNI and TLS
-
-TCP 443 is routed by SNI: REALITY traffic goes to Xray and the panel domain goes to the nginx TLS vhost. Let's Encrypt/Certbot provides certificates. XHTTP uses a Unix socket; WS and Trojan gRPC use known routes and fixed backend ports. Arbitrary `/<port>/...` paths must not expose localhost services. Hysteria2 uses UDP 443 independently of nginx TCP routing.
-
-### UFW behavior
-
-With active UFW, the installer preserves existing policy and adds 80/tcp, 443/tcp and 443/udp. With inactive UFW, it discovers the SSH port from the current connection or effective sshd configuration before enabling the firewall. If discovery fails, it warns and leaves UFW inactive. It does not reset rules or assume SSH port 22.
-
-<a id="platforms"></a>
-## Supported and tested platforms
-
-| Platform | Status |
-| --- | --- |
-| Ubuntu 26.04 LTS amd64 | Primary platform; previously validated on a real VPS |
-| Ubuntu 24.04 LTS | Accepted by installer and restore; automated checks run in CI |
-| Debian 12 / 13 | Accepted by OS checks; equivalent live VPS coverage is not claimed |
-
-Restore requires matching source `ID`, `VERSION_ID` and architecture. OS acceptance does not imply that every architecture is tested. The installer rejects CPUs reporting a QEMU model; use a VPS exposing the real CPU model.
-
-## Installation
-
-Use root access, a clean supported OS, correctly configured DNS for the panel and REALITY domains, TCP 80/443, and UDP 443 for Hysteria2.
-
-Download and review the script before running it:
+1. Point **two domains** to your VPS: one for the panel, one for REALITY.
+2. On a clean supported OS, download the installer and optionally review it.
+3. Run as **root**, replacing the example domains:
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-stack/main/x-ui-latest.sh -o x-ui-latest.sh
-less x-ui-latest.sh
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh
+# Optional review: less x-ui-latest.sh
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
 ```
 
-Replace the example domains. The latest stable 3x-ui release is selected by default. Pin a validated panel version with `-version <tag>` for reproducible deployment; the 3x-ui Stack utility and the panel have separate release cycles.
+You can also run without domain arguments and enter them when prompted. Allow inbound TCP 80/443 and UDP 443; DNS must resolve to this server for certificate issuance.
 
-## Companion project: Telemt WEB Manager
+> **⚠️ Fresh install / rebuild only.** `x-ui-latest.sh` removes the previous installation, including the panel database and nginx configuration. It is **not a safe in-place updater** for a production VPS. Copy a backup off-server before rebuilding.
 
-[**Telemt WEB Manager**](https://github.com/xPROMSx/telemt-web-manager) complements this stack with installation and management of Telemt WEB proxy on Ubuntu using nginx, Let's Encrypt, systemd and optional SOCKS5.
+## 🌐 Two domains → ready server
 
-It is a separate companion project for deployments that also need Telemt WEB proxy. This installer does not install it automatically. For a shared host, coordinate domains, occupied ports and nginx configuration using both projects' documentation.
+| You provide | The script prepares | You receive |
+| --- | --- | --- |
+| Panel domain + REALITY domain | 3x-ui/Xray, nginx, Let's Encrypt TLS, automatic fake site, five inbound profiles, subscriptions, diagnostics, Backup / Restore and UFW integration | Panel URL, generated login/password and diagnostics URL |
 
-## Backup / Restore
+**Create clients in 3x-ui after installation.** Share links and subscriptions are managed through the panel; the installer does not seed client accounts.
 
-Run all commands below as root.
+## ✨ Built for a quick deployment
 
-### Backup
+| | |
+| --- | --- |
+| **⚡ Fully automated**<br>Installation and server configuration from two domains. | **🔐 Generated secrets**<br>Panel credentials, REALITY keys/short IDs and paths are generated automatically. |
+| **🌐 nginx + SNI + TLS**<br>Ready routing and Let's Encrypt certificates. | **🥸 Automatic Fake Site**<br>A bundled cover site is randomly selected and deployed for you. |
+| **🚀 Modern transports**<br>REALITY, XHTTP stream-up and Hysteria2, with optional WS/gRPC profiles. | **💾 Backup / Restore**<br>Same-host rollback and recovery on a compatible clean OS. |
+| **📊 Diagnostics**<br>Panel-authenticated MTR and LibreSpeed tools. | **🔥 UFW-aware**<br>Adds application rules while preserving existing policy and rules. |
 
-A fresh install automatically installs `/usr/local/bin/x-ui-backup`.
-If the tool is missing on an existing VPS, use the installation block below;
-there is no need to rerun the installer.
+### 🚀 Transport profiles
 
-Create a backup and list local archives:
+| Transport | Fresh-install default | Connection model |
+| --- | --- | --- |
+| VLESS + REALITY | ✅ Enabled | TCP 443 → nginx SNI → Xray |
+| VLESS + XHTTP `stream-up` | ✅ Enabled | TLS/HTTP/2 → nginx → Unix socket |
+| Hysteria2 | ✅ Enabled | UDP 443 → Xray, TLS + H3 |
+| VLESS + WebSocket | ⏸ Disabled | TLS → fixed nginx route → Xray |
+| Trojan + gRPC | ⏸ Disabled | TLS/HTTP/2 → fixed nginx route → Xray |
+
+All five profiles are created. Enable WS or Trojan gRPC manually in 3x-ui when needed. Client support depends on the transport and client version.
+
+### 🥸 Automatic Fake Site
+
+No need to build a cover website yourself: the installer selects a page from the bundled fake-site collection and deploys it with nginx and TLS. The site is part of the deployment, not a guarantee of traffic invisibility.
+
+## ✈️ Need a Telegram proxy too?
+
+### [Telemt WEB Manager](https://github.com/xPROMSx/telemt-web-manager)
+
+A companion project for automated Telemt WEB proxy installation and management, with updates, rollback and nginx/TLS integration.
+
+**3x-ui Auto Nginx** handles your 3x-ui/Xray server; **Telemt WEB Manager** handles Telemt WEB proxy. They are separate projects: this installer does not install Telemt. Shared-host deployment requires checking ports, domains and nginx configuration.
+
+## 💾 Backup / Restore
+
+Run as root. A fresh install includes `/usr/local/bin/x-ui-backup`:
 
 ```bash
 x-ui-backup backup
 x-ui-backup list
 ```
 
-Archives are saved in `/var/backups/x-ui/` with root-only permissions. They contain
-the database, UUIDs and client state, certificates/private keys and REALITY/runtime secrets.
-**Always copy the archive off the VPS to a PC, NAS or another secure storage location:**
-a local backup cannot help if the server is lost.
+Archives are saved in `/var/backups/x-ui/` with root-only permissions. They contain client/database state, certificates/private keys and runtime secrets. **Copy the archive off the VPS** to a PC, NAS or another secure store.
 
-### Restore on the current VPS
-
-Choose an archive and restore it:
+For rollback on the current VPS:
 
 ```bash
-x-ui-backup list
 x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 ```
 
-Restore performs the required checks itself. Success is confirmed by
-`Restore completed successfully.` It rolls back 3x-ui Stack state, not the entire OS.
+Success ends with `Restore completed successfully.` Restore covers managed application state, not the entire OS.
 
-### Restore on a new VPS
+<details>
+<summary>🛟 Recovery on a new VPS / installing the backup utility</summary>
 
-Use a clean VPS with **the same OS ID, VERSION_ID and architecture** as the backup.
-For example, Ubuntu 26.04 amd64 -> Ubuntu 26.04 amd64; moving to Ubuntu 24.04
-or arm64 is not supported.
+Use **the same OS ID, VERSION_ID and architecture** as the backup, e.g. Ubuntu 26.04 amd64 → Ubuntu 26.04 amd64. Ubuntu 24.04 or arm64 is not a compatible target for that archive.
 
-1. Install a compatible OS and run your usual OS/bootstrap script if needed.
-2. **Do not run `x-ui-latest.sh`.** Install only the backup utility from `main`:
+1. Install the compatible clean OS and run your usual OS/bootstrap script if needed.
+2. **Do not run `x-ui-latest.sh`.** Install only the backup utility (also suitable for an existing installation missing the tool):
 
    ```bash
-   curl -fsSL \
-     https://raw.githubusercontent.com/xPROMSx/3x-ui-stack/main/assets/backup/x-ui-backup.sh \
-     -o /tmp/x-ui-backup
+   curl -fsSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
    install -o root -g root -m 0755 /tmp/x-ui-backup /usr/local/bin/x-ui-backup
    rm -f /tmp/x-ui-backup
    ```
 
-3. Securely transfer the saved archive to the VPS, for example into `/root/`, then run:
+3. Transfer the saved archive securely, then restore:
 
    ```bash
    x-ui-backup restore /root/x-ui-backup-....tar.gz
    ```
 
-4. If the IP has changed, point the existing domains' DNS records to the new VPS.
-   After a successful restore, use your existing panel and client configurations.
+4. If the server IP changed, point the existing domains' DNS to the new VPS. Use your existing panel and client configurations after recovery.
 
-Restore installs missing application dependencies and restores 3x-ui Stack state
-automatically.
+Restore installs missing application dependencies and restores panel/runtime, nginx, certificates, web/diagnostics, project systemd units, managed sysctl and managed Certbot cron. SSH, `authorized_keys`, fail2ban, base UFW policy and OS/bootstrap state remain the administrator's responsibility. Restore adds 80/tcp, 443/tcp and 443/udp rules but never enables UFW; unrelated cron jobs are preserved.
 
-### What is restored / what is not
+Backup/Restore v2 was validated on a real Ubuntu 26.04 amd64 VPS: same-host rollback, clean-host recovery after bootstrap without the installer, reboot persistence and panel/real client connectivity (3x-ui 3.9.0, Xray 26.9.30, nginx 1.28.3).
 
-Backup covers the panel/runtime, nginx, certificates, diagnostics/web state,
-project systemd units, managed sysctl and managed Certbot cron. SSH, `authorized_keys`,
-fail2ban, the base UFW policy and OS/bootstrap state are not restored - prepare
-them through bootstrap or as the new server's administrator. Restore only adds
-application rules for 80/tcp, 443/tcp and 443/udp; unrelated cron jobs are preserved.
+</details>
 
-### Validation
+<a id="technical-details"></a>
 
-Backup/Restore v2 was validated on a real Ubuntu 26.04 amd64 VPS
-(3x-ui 3.9.0, Xray 26.9.30, nginx 1.28.3): same-host backup/rollback,
-clean-host recovery after bootstrap without running `x-ui-latest.sh`,
-service persistence after reboot, and working panel and real client connections.
+## 🔧 Technical details
 
-## Security validation
+<details>
+<summary>Platforms, routing, firewall and optional tools</summary>
 
-CI runs the complete current regression suite: inbound/Host generation for both database schemas, XHTTP stream-up, Hysteria2, REALITY, fixed WS/gRPC routes, a negative arbitrary-localhost-port test, nginx syntax, UFW and matching panel/CLI versions. A separate workflow exercises Backup/Restore v2 on isolated fixtures with real tar/gzip, SQLite and nginx, including unsafe archive paths/links, incompatible OS versions, failures and service checks.
+- **Platforms:** Ubuntu 26.04 amd64 has live VPS validation; Ubuntu 24.04 runs in CI. Debian 12/13 are accepted by OS checks without equivalent live coverage. Not every architecture is tested. CPUs reporting a QEMU model are rejected; the VPS must expose the real CPU model.
+- **Routing:** nginx owns TCP 443 and routes by SNI to REALITY/Xray on 8443 or the panel TLS vhost on 7443. The REALITY camouflage target uses 9443. XHTTP uses a Unix socket; WS/gRPC have fixed paths/backends. Hysteria2 owns UDP 443 independently.
+- **UFW:** active UFW receives only 80/tcp, 443/tcp and 443/udp rules. Inactive UFW is enabled only after detecting and allowing SSH ports; otherwise it stays inactive with a warning. Existing rules/default policy are preserved, with no hardcoded SSH port 22.
+- **Versions:** latest stable 3x-ui is selected by default. Use `-version <tag>` to select a panel release; binary and CLI come from that same tag.
+- **Diagnostics/subscriptions:** panel-authenticated MTR/LibreSpeed, JSON and Clash/Mihomo subscriptions. New custom WS/gRPC inbounds require explicit nginx routes; there is no arbitrary localhost-port proxy.
+- **Optional tools:** `x-ui-adguard.sh` is retained for optional AdGuard Home integration and future development; the main installer does not run it. `x-ui-patch.sh` is a secondary maintenance utility, not a database migration or universal updater.
+- **Compatibility:** `/usr/local/lib/3x-ui-pro` and `/etc/sysctl.d/99-3x-ui-pro.conf` are deliberately preserved for Backup/Restore compatibility.
 
-Bash syntax is checked for the installer, patch, AdGuard and backup utility. Automated tests do not replace real client acceptance on a disposable VPS. The live validation above describes a previously recorded checkpoint, not every future commit.
+</details>
 
-## Development and releases
+<details>
+<summary>Validation, development and releases</summary>
 
-- `main` is the primary development line. Changes use `feat/*`, `fix/*`, `docs/*` or `chore/*` branches and pull requests.
-- Required checks: `Stack XHTTP and security` and `Stack Backup and restore`. External reviewers are not required for a single-maintainer project.
-- Stack releases use `vX.Y.Z` versions from validated `main` with release notes. Renaming alone does not create a release.
-- Existing `personal-v*` tags/releases retain their historical meaning. Their release badge does not certify the latest security checkpoint.
-- `personal` is temporarily retained for old-link compatibility. New commands use `main`; upstream is not synchronized automatically.
-- See [CONTRIBUTING.md](CONTRIBUTING.md) for branch protection and emergency recovery details.
+CI checks all transport/Host profiles, nginx syntax, negative arbitrary-localhost-port access, firewall behavior, version pinning, cron and canonical sources. Backup/Restore tests use isolated fixtures with real tar/gzip, SQLite and nginx. Bash syntax covers installer, patch, AdGuard and backup scripts. CI does not replace live client acceptance.
 
-Historical paths `/usr/local/lib/3x-ui-pro` and `/etc/sysctl.d/99-3x-ui-pro.conf` are retained for installation and Backup/Restore v2 compatibility.
+Development uses PRs to `main`; see [CONTRIBUTING.md](CONTRIBUTING.md). Required job names remain `Stack XHTTP and security` and `Stack Backup and restore` for branch-protection compatibility.
 
-## Attribution
+Historical `personal-v*` releases and branches are preserved. Future project releases belong to 3x-ui Auto Nginx; project versioning is independent of upstream 3x-ui/Xray versions. No new release is implied by branding changes.
 
-3x-ui Stack remains in the [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) fork network and follows an independent development path. The 3x-ui panel and its releases are provided by [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Useful upstream changes are reviewed and adopted individually.
+</details>
 
-Original component authors retain their rights. This migration adds no new license for inherited code.
+## 🤝 Credits / Origins
+
+Derived from [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro). The panel is provided by [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). **3x-ui Auto Nginx** develops independently and may selectively adopt useful upstream changes after review.
+
+Third-party authors retain their rights and existing license/copyright statements. No new license is added for inherited code.

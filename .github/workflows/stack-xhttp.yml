@@ -1,4 +1,4 @@
-name: 3x-ui Stack XHTTP and security validation
+name: 3x-ui Auto Nginx XHTTP and security validation
 
 on:
   push:

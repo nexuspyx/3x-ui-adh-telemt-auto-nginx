@@ -1,4 +1,4 @@
-# Contributing to 3x-ui Stack
+# Contributing to 3x-ui Auto Nginx
 
 ## Development
 
@@ -41,8 +41,8 @@ Emergency recovery is an explicit maintainer action: preserve the current commit
 
 The initial main checkpoint is `e02bd9e87768afb11b7cad18fc64d77ee637c3b3`, promoted by fast-forward from `personal` after PR #5.
 
-`personal` and historical feature branches/tags/releases are retained during migration. Removal needs a completed final audit and a status report to the maintainer beforehand. Old runtime paths and test identifiers are retained for Backup/Restore compatibility.
+`personal` and historical feature branches/tags/releases are preserved. Do not remove them as part of migration or routine maintenance. Old runtime paths and test identifiers are retained for Backup/Restore compatibility.
 
 ## Releases
 
-Publish `vX.Y.Z` stack releases from validated `main` with scope, test results and compatibility notes. Preserve historical `personal-v*` releases. Stack versioning is separate from the upstream 3x-ui/Xray release versions. Pin the panel with `-version <tag>` when validating a deployment.
+Publish `vX.Y.Z` project releases from validated `main` with scope, test results and compatibility notes. Preserve historical `personal-v*` releases. Project versioning is separate from the upstream 3x-ui/Xray release versions. Pin the panel with `-version <tag>` when validating a deployment.

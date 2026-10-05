@@ -551,7 +551,7 @@ die() { echo "$*" >&2; exit 1; }
         for name in ("x-ui-latest.sh", "x-ui-patch.sh"):
             source = (ROOT / name).read_text()
             self.assertEqual(re.findall(r'^GITHUB_RAW="(.*)"$', source, re.M), [
-                "https://raw.githubusercontent.com/xPROMSx/3x-ui-stack/main",
+                "https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main",
             ])
             for line in source.splitlines():
                 if "raw.githubusercontent.com/mozaroc/3x-ui-pro" in line:
