@@ -24,7 +24,7 @@ FIXTURE = {
     "private_key": "test-private", "public_key": "test-public",
     "sub_uri": "https://deploy.example/subscription/",
     "json_uri": "https://deploy.example/jsonsub?name=",
-    "gid_col": "", "gid_reality": "", "gid_ws": "", "gid_xhttp": "", "gid_trojan": "",
+    "gid_col": "", "gid_reality": "", "gid_ws": "", "gid_xhttp": "", "gid_trojan": "", "gid_hysteria": "",
     "http2_listen": " http2", "http2_on": "",
 }
 
@@ -45,18 +45,41 @@ def render(target, **variables):
     )
 
 
-def inbounds(**variables):
-    sql = render("sqlite3 $XUIDB", **variables)
+def seed(group_id=False, **variables):
+    """Execute generated inbound/Host INSERTs against both supported Host schemas."""
+    setup = re.search(r"    local gid_col=.*?^    fi", function("configure_xui_db"), re.M | re.S).group()
+    script = (
+        'sqlite3() { echo "$HOST_TEST_SCHEMA"; }\n' + function("gen_group_id") +
+        '\nemit() {\n' + setup + '\nshor=(a b c d e f g h)\ncat <<EOF\n' +
+        template("sqlite3 $XUIDB") + 'EOF\n}\nemit\n'
+    )
+    sql = subprocess.check_output(["bash", "-u", "-c", script], text=True, env={
+        **os.environ, **FIXTURE, **variables, "XUIDB": "/fixture/x-ui.db",
+        "HOST_TEST_SCHEMA": "group_id" if group_id else "id",
+    })
     blocks = re.findall(r'^INSERT INTO "inbounds"\s.*?^\);', sql, re.M | re.S)
-    if len(blocks) != 4:
-        raise AssertionError(f"Expected four inbound INSERTs, found {len(blocks)}")
+    if len(blocks) != 5:
+        raise AssertionError(f"Expected five inbound INSERTs, found {len(blocks)}")
     columns = re.search(r'\(("user_id".*?)\)\s*VALUES', blocks[0], re.S).group(1)
     with sqlite3.connect(":memory:") as db:
         db.row_factory = sqlite3.Row
-        db.execute("CREATE TABLE inbounds (" + columns + ")")
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute("CREATE TABLE inbounds (id INTEGER PRIMARY KEY," + columns + ")")
+        db.execute('''CREATE TABLE hosts (
+            id INTEGER PRIMARY KEY, inbound_id INTEGER NOT NULL REFERENCES inbounds(id),
+            sort_order INTEGER, remark TEXT, address TEXT, port INTEGER, security TEXT,
+            fingerprint TEXT, alpn TEXT, is_disabled INTEGER DEFAULT 0,
+            sni TEXT DEFAULT '', final_mask TEXT DEFAULT '', mux_params TEXT DEFAULT '',
+            sockopt_params TEXT DEFAULT '' ''' + (", group_id TEXT NOT NULL" if group_id else "") + ")")
         for block in blocks:
             db.execute(block)
-        return {row["remark"].split()[-1]: dict(row) for row in db.execute("SELECT * FROM inbounds")}
+        db.execute(re.search(r'^INSERT INTO "hosts".*?;', sql, re.M | re.S).group())
+        rows = {row["remark"].split()[-1]: dict(row) for row in db.execute("SELECT * FROM inbounds")}
+        return rows, [dict(row) for row in db.execute("SELECT * FROM hosts")]
+
+
+def inbounds(**variables):
+    return seed(**variables)[0]
 
 
 SHARED = "cat > /etc/nginx/snippets/includes.conf"
@@ -229,10 +252,14 @@ wget() {
 
     def test_inbound_and_sniffing(self):
         rows = inbounds()
-        self.assertEqual(set(rows), {"reality", "ws", "xhttp", "trojan-grpc"})
+        self.assertEqual(set(rows), {"reality", "ws", "xhttp", "trojan-grpc", "hysteria2"})
         self.assertEqual(rows["reality"]["enable"], "1")
         self.assertEqual(rows["ws"]["enable"], "0")
         self.assertEqual(rows["trojan-grpc"]["enable"], "0")
+        self.assertEqual({name: row["protocol"] for name, row in rows.items()}, {
+            "reality": "vless", "ws": "vless", "xhttp": "vless",
+            "trojan-grpc": "trojan", "hysteria2": "hysteria",
+        })
         for row in rows.values():
             json.loads(row["settings"])
             json.loads(row["stream_settings"])
@@ -250,6 +277,66 @@ wget() {
             "network": "xhttp", "security": "none",
             "xhttpSettings": {"path": "/Session7AbC", "mode": "stream-up"},
             "sockopt": {"trustedXForwardedFor": ["X-Forwarded-For"]},
+        })
+
+    def test_hysteria2_minimal_server_profile(self):
+        row = inbounds()["hysteria2"]
+        self.assertEqual({key: row[key] for key in ("enable", "protocol", "listen", "port", "tag")}, {
+            "enable": "1", "protocol": "hysteria", "listen": "", "port": "443", "tag": "inbound-443-udp",
+        })
+        self.assertEqual(json.loads(row["settings"]), {"version": 2, "clients": []})
+        # Exact profile excludes auth/useFile/fingerprint, FinalMask and all custom QUIC/mask/hopping tuning.
+        self.assertEqual(json.loads(row["stream_settings"]), {
+            "network": "hysteria", "security": "tls",
+            "hysteriaSettings": {"version": 2, "udpIdleTimeout": 60},
+            "tlsSettings": {
+                "serverName": "deploy.example", "alpn": ["h3"],
+                "certificates": [{
+                    "certificateFile": "/root/cert/deploy.example/fullchain.pem",
+                    "keyFile": "/root/cert/deploy.example/privkey.pem",
+                    "ocspStapling": 0, "oneTimeLoading": False,
+                    "usage": "encipherment", "buildChain": False,
+                }],
+            },
+        })
+        self.assertNotIn(FIXTURE["reality_domain"], row["stream_settings"])
+
+    def test_hysteria2_host_with_and_without_group_id(self):
+        for grouped in (False, True):
+            with self.subTest(group_id=grouped):
+                rows, hosts = seed(group_id=grouped)
+                self.assertEqual(len(hosts), 5)
+                matched = [host for host in hosts if host["inbound_id"] == rows["hysteria2"]["id"]]
+                self.assertEqual(len(matched), 1)
+                host = matched[0]
+                self.assertEqual({key: host[key] for key in ("remark", "address", "port", "security", "is_disabled")}, {
+                    "remark": "hysteria2", "address": "deploy.example", "port": 443,
+                    "security": "same", "is_disabled": 0,
+                })
+                self.assertEqual(json.loads(host["alpn"]), [])
+                for key in ("fingerprint", "sni", "final_mask", "mux_params", "sockopt_params"):
+                    self.assertEqual(host[key], "")
+                if grouped:
+                    self.assertEqual(len({host["group_id"] for host in hosts}), 5)
+                    for host in hosts:
+                        self.assertRegex(host["group_id"], r"^[a-z0-9]{16}$")
+                else:
+                    self.assertNotIn("group_id", host)
+
+    def test_reality_profile_is_preserved(self):
+        row = inbounds()["reality"]
+        self.assertEqual((row["port"], row["listen"], row["tag"]), ("8443", "", "inbound-8443"))
+        self.assertEqual(json.loads(row["settings"]), {"clients": [], "decryption": "none", "fallbacks": []})
+        self.assertEqual(json.loads(row["stream_settings"]), {
+            "network": "tcp", "security": "reality",
+            "realitySettings": {
+                "show": False, "xver": 0, "target": "127.0.0.1:9443",
+                "serverNames": ["cover.example"], "privateKey": "test-private",
+                "minClient": "", "maxClient": "", "maxTimediff": 0,
+                "shortIds": list("abcdefgh"),
+                "settings": {"publicKey": "test-public", "fingerprint": "firefox", "serverName": "", "spiderX": "/"},
+            },
+            "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
         })
 
     def test_nginx_prefix_and_headers(self):

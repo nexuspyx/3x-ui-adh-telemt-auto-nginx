@@ -797,13 +797,14 @@ configure_xui_db() {
     # Per-host group_id: without it the panel cannot edit or delete the host.
     # The column only exists since 3x-ui v3.5.0 (pinnable via -version), so
     # probe the migrated schema and skip it on older releases.
-    local gid_col="" gid_reality="" gid_ws="" gid_xhttp="" gid_trojan=""
+    local gid_col="" gid_reality="" gid_ws="" gid_xhttp="" gid_trojan="" gid_hysteria=""
     if sqlite3 "$XUIDB" "PRAGMA table_info(hosts);" | grep -qw "group_id"; then
         gid_col='"group_id",'
         gid_reality="'$(gen_group_id)',"
         gid_ws="'$(gen_group_id)',"
         gid_xhttp="'$(gen_group_id)',"
         gid_trojan="'$(gen_group_id)',"
+        gid_hysteria="'$(gen_group_id)',"
     fi
     emoji_flag=$(LC_ALL=en_US.UTF-8 curl -s --max-time 10 https://ipwho.is/ | jq -r '.flag.emoji' 2>/dev/null)
     [[ -z "$emoji_flag" || "$emoji_flag" == "null" ]] && emoji_flag="🌐"
@@ -969,16 +970,46 @@ VALUES (
     '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
 );
 
+INSERT INTO "inbounds"
+    ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
+VALUES (
+    '1','0','0','0','${emoji_flag} hysteria2','1','0','','443','hysteria',
+    '{"version":2,"clients":[]}',
+    '{
+  "network": "hysteria",
+  "security": "tls",
+  "hysteriaSettings": {
+    "version": 2,
+    "udpIdleTimeout": 60
+  },
+  "tlsSettings": {
+    "serverName": "${domain}",
+    "alpn": ["h3"],
+    "certificates": [{
+      "certificateFile": "/root/cert/${domain}/fullchain.pem",
+      "keyFile": "/root/cert/${domain}/privkey.pem",
+      "ocspStapling": 0,
+      "oneTimeLoading": false,
+      "usage": "encipherment",
+      "buildChain": false
+    }]
+  }
+}',
+    'inbound-443-udp',
+    '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
+);
+
 -- Hosts supersede the legacy externalProxy arrays: one host per inbound,
 -- rendered as the share-link endpoint at subscription time.
--- REALITY keeps its own TLS params (security=same); the rest front through
--- nginx at :443 with TLS.
+-- REALITY and Hysteria keep their own TLS params (security=same);
+-- WS/XHTTP/Trojan front through nginx at :443 with TLS.
 INSERT INTO "hosts" ("inbound_id",${gid_col}"sort_order","remark","address","port","security","fingerprint","alpn")
 VALUES
     ((SELECT id FROM inbounds WHERE tag='inbound-8443'),           ${gid_reality} 0, 'reality', '${domain}', 443, 'same', '',        '[]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-${ws_port}'),     ${gid_ws}      0, 'ws',      '${domain}', 443, 'tls',  'firefox', '["h2","http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-/dev/shm/uds2023.sock,0666:0|'), ${gid_xhttp} 0, 'xhttp', '${domain}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
-    ((SELECT id FROM inbounds WHERE tag='inbound-${trojan_port}'), ${gid_trojan}  0, 'trojan',  '${domain}', 443, 'tls',  'firefox', '["h2","http/1.1"]');
+    ((SELECT id FROM inbounds WHERE tag='inbound-${trojan_port}'), ${gid_trojan}  0, 'trojan',  '${domain}', 443, 'tls',  'firefox', '["h2","http/1.1"]'),
+    ((SELECT id FROM inbounds WHERE tag='inbound-443-udp'),        ${gid_hysteria} 0, 'hysteria2', '${domain}', 443, 'same', '', '[]');
 EOF
 
     /usr/local/x-ui/x-ui setting \
