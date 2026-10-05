@@ -51,6 +51,18 @@ printf "    sub_port   = %-6s  sub_path   = %s\n" "$sub_port"  "$sub_path"
 printf "    panel_port = %-6s  panel_path = %s\n" "$panel_port" "$panel_path"
 printf "    json_path  = %s\n" "$json_path"
 
+# Read only the installer-managed WS/gRPC routes, including disabled inbounds.
+read -r ws_port ws_route <<< "$(db "SELECT port, json_extract(stream_settings,'$.wsSettings.path')
+    FROM inbounds WHERE protocol='vless' AND tag='inbound-' || port
+    AND json_extract(stream_settings,'$.network')='ws' ORDER BY id LIMIT 1;" | tr '|' ' ')"
+read -r trojan_port trojan_route <<< "$(db "SELECT port, json_extract(stream_settings,'$.grpcSettings.serviceName')
+    FROM inbounds WHERE protocol='trojan' AND tag='inbound-' || port
+    AND json_extract(stream_settings,'$.network')='grpc' ORDER BY id LIMIT 1;" | tr '|' ' ')"
+[[ "$ws_port" =~ ^[0-9]{1,5}$ ]] && (( 10#$ws_port >= 1 && 10#$ws_port <= 65535 )) \
+    && [[ "$ws_route" =~ ^/${ws_port}/[a-zA-Z0-9]+$ ]] || die "Cannot detect the installer-managed WS route"
+[[ "$trojan_port" =~ ^[0-9]{1,5}$ ]] && (( 10#$trojan_port >= 1 && 10#$trojan_port <= 65535 )) \
+    && [[ "$trojan_route" =~ ^/${trojan_port}/[a-zA-Z0-9]+$ ]] || die "Cannot detect the installer-managed Trojan gRPC route"
+
 # ── detect domains ────────────────────────────────────────────────────────────
 blue "Detecting domains..."
 domain=""
@@ -312,13 +324,11 @@ cat > /etc/nginx/snippets/includes.conf <<EOF
         grpc_set_header X-Forwarded-Host  \$host;
     }
 
-    #Xray generic proxy (WS / gRPC by port+path)
-    location ~ ^/(?<fwdport>\d+)/(?<fwdpath>.*)\$ {
+    # Installer-managed WS: exact path, fixed backend port
+    location = ${ws_route} {
         if (\$hack = 1) { return 404; }
         client_max_body_size 0;
         client_body_timeout 1d;
-        grpc_read_timeout 1d;
-        grpc_socket_keepalive on;
         proxy_read_timeout 1d;
         proxy_http_version 1.1;
         proxy_buffering off;
@@ -329,18 +339,18 @@ cat > /etc/nginx/snippets/includes.conf <<EOF
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        if (\$content_type ~* "GRPC") {
-            grpc_pass grpc://127.0.0.1:\$fwdport\$is_args\$args;
-            break;
-        }
-        if (\$http_upgrade ~* "(WEBSOCKET|WS)") {
-            proxy_pass http://127.0.0.1:\$fwdport\$is_args\$args;
-            break;
-        }
-        if (\$request_method ~* ^(PUT|POST|GET)\$) {
-            proxy_pass http://127.0.0.1:\$fwdport\$is_args\$args;
-            break;
-        }
+        proxy_pass http://127.0.0.1:${ws_port};
+    }
+
+    # Xray custom gRPC serviceName is the full method path (no /Tun suffix)
+    location = ${trojan_route} {
+        if (\$hack = 1) { return 404; }
+        client_max_body_size 0;
+        client_body_timeout 1d;
+        grpc_read_timeout 1d;
+        grpc_socket_keepalive on;
+        grpc_set_header Host \$host;
+        grpc_pass grpc://127.0.0.1:${trojan_port};
     }
 
     location / { try_files \$uri \$uri/ =404; }

@@ -1,25 +1,32 @@
 """Validate fresh-install templates without sourcing or running the installer."""
 
 import json
+import http.client
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
 import re
 import shlex
 import shutil
+import socket
 import sqlite3
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "x-ui-latest.sh").read_text()
+PATCH = (ROOT / "x-ui-patch.sh").read_text()
 FIXTURE = {
     "domain": "deploy.example", "reality_domain": "cover.example",
     "xhttp_path": "Session7AbC", "sub_path": "subscription", "json_path": "jsonsub",
     "panel_path": "panel", "ws_path": "websocket", "trojan_path": "trojan",
     "sub_port": "10001", "panel_port": "10002", "ws_port": "10003",
     "trojan_port": "10004", "mtr_backend_port": "10005",
+    "ws_route": "/10003/websocket", "trojan_route": "/10004/trojan",
     "diag_path": "/diagnostics/", "diag_token": "test-token", "emoji_flag": "test",
     "private_key": "test-private", "public_key": "test-public",
     "sub_uri": "https://deploy.example/subscription/",
@@ -29,16 +36,16 @@ FIXTURE = {
 }
 
 
-def template(target):
+def template(target, source=SOURCE):
     """Extract one original heredoc; never execute its surrounding function."""
-    matches = re.findall(r"^\s*" + re.escape(target) + r" <<EOF\n(.*?)^EOF$", SOURCE, re.M | re.S)
+    matches = re.findall(r"^\s*" + re.escape(target) + r" <<EOF\n(.*?)^EOF$", source, re.M | re.S)
     if len(matches) != 1:
         raise AssertionError(f"Expected one heredoc for {target}, found {len(matches)}")
     return matches[0]
 
 
-def render(target, **variables):
-    script = "shor=(a b c d e f g h)\ncat <<EOF\n" + template(target) + "EOF\n"
+def render(target, source=SOURCE, **variables):
+    script = "shor=(a b c d e f g h)\ncat <<EOF\n" + template(target, source) + "EOF\n"
     return subprocess.check_output(
         ["bash", "-eu", "-c", script], text=True,
         env={**os.environ, **FIXTURE, **variables},
@@ -371,6 +378,175 @@ wget() {
         self.assertIn("cover.example    xray;", stream)
         self.assertIn("deploy.example            www;", stream)
 
+    def test_fixed_transport_routes_and_backend_authorities(self):
+        rows = inbounds()
+        ws_path = json.loads(rows["ws"]["stream_settings"])["wsSettings"]["path"]
+        grpc = json.loads(rows["trojan-grpc"]["stream_settings"])["grpcSettings"]
+        self.assertFalse(grpc["multiMode"])
+        # Xray 26.9.30 grpc/config.go + encoding/customSeviceName.go:
+        # custom /service/method paths are used verbatim, without a /Tun suffix.
+        grpc_path = grpc["serviceName"]
+        allowed_ports = {FIXTURE[key] for key in ("ws_port", "trojan_port", "panel_port", "sub_port", "mtr_backend_port")}
+        for source in (SOURCE, PATCH):
+            with self.subTest(script="installer" if source == SOURCE else "patch"):
+                shared = render(SHARED, source)
+                self.assertNotIn("(?<fwdport>", shared)
+                self.assertNotIn("$fwdport", shared)
+                fragments = [shared, render(MAIN, source), render('cat > "/etc/nginx/sites-available/${reality_domain}"', source)]
+                for fragment in fragments:
+                    for target in re.findall(r"\b(?:proxy_pass|grpc_pass)\s+([^;]+);", fragment):
+                        if target.startswith("unix:") or target.startswith("grpc://unix:"):
+                            self.assertNotIn("$", target)
+                            continue
+                        authority = re.match(r"^(?:https?|grpc)://127\.0\.0\.1:([0-9]+)(?:/.*)?$", target)
+                        self.assertIsNotNone(authority, f"Backend authority must be a fixed loopback port: {target}")
+                        self.assertIn(authority[1], allowed_ports)
+                def exact(path):
+                    matches = re.findall(r"location = " + re.escape(path) + r" \{\n(.*?)\n    \}", shared, re.S)
+                    self.assertEqual(len(matches), 1)
+                    return matches[0]
+                ws = exact(ws_path)
+                for directive in (
+                    "proxy_pass http://127.0.0.1:10003;", "proxy_http_version 1.1;",
+                    "proxy_set_header Upgrade $http_upgrade;", 'proxy_set_header Connection "upgrade";',
+                    "proxy_set_header Host $host;", "proxy_set_header X-Real-IP $remote_addr;",
+                    "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+                    "proxy_buffering off;", "proxy_request_buffering off;",
+                    "proxy_socket_keepalive on;", "proxy_read_timeout 1d;",
+                ):
+                    self.assertIn(directive, ws)
+                trojan = exact(grpc_path)
+                for directive in (
+                    "grpc_pass grpc://127.0.0.1:10004;", "grpc_read_timeout 1d;",
+                    "grpc_socket_keepalive on;", "client_body_timeout 1d;", "grpc_set_header Host $host;",
+                ):
+                    self.assertIn(directive, trojan)
+                # The only regex route remains the existing subscription handler.
+                self.assertEqual(re.findall(r"location ~[^\n]+", shared), ["location ~ ^/subscription/(?<clash_sub_id>[^/]+)$ {"])
+
+    def test_patch_reads_only_valid_seeded_transport_routes(self):
+        block = PATCH.split("# Read only the installer-managed WS/gRPC routes", 1)[1].split("\n", 1)[1].split("# ── detect domains", 1)[0]
+        mock = '''db() { python3 -c 'import os,sqlite3,sys; db=sqlite3.connect(os.environ["ROUTE_TEST_DB"]); print("\\n".join("|".join(map(str,row)) for row in db.execute(sys.argv[1])))' "$1"; }
+die() { echo "$*" >&2; exit 1; }
+'''
+        for invalid in (None, "missing", "/3000/wrong", "/10003/path;bad"):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "x-ui.db"
+                with sqlite3.connect(path) as db:
+                    db.execute("CREATE TABLE inbounds (id INTEGER PRIMARY KEY, port INTEGER, protocol TEXT, tag TEXT, stream_settings TEXT)")
+                    for row in inbounds().values():
+                        if invalid == "missing" and row["protocol"] == "trojan":
+                            continue
+                        stream = json.loads(row["stream_settings"])
+                        if invalid and invalid != "missing" and stream["network"] == "ws":
+                            stream["wsSettings"]["path"] = invalid
+                        db.execute("INSERT INTO inbounds VALUES (?,?,?,?,?)", (row["id"], row["port"], row["protocol"], row["tag"], json.dumps(stream)))
+                before = path.read_bytes()
+                result = subprocess.run(["bash", "-eu", "-c", mock + block + '\nprintf "%s %s %s %s\\n" "$ws_port" "$ws_route" "$trojan_port" "$trojan_route"'],
+                                        text=True, capture_output=True, env={**os.environ, "ROUTE_TEST_DB": str(path)})
+                self.assertEqual(result.returncode, 0 if invalid is None else 1, result.stdout + result.stderr)
+                if invalid is None:
+                    self.assertEqual(result.stdout.strip(), "10003 /10003/websocket 10004 /10004/trojan")
+                self.assertEqual(path.read_bytes(), before, "Patch route discovery must be read-only")
+
+    def test_nginx_runtime_rejects_arbitrary_ports_and_preserves_ws(self):
+        nginx = os.environ.get("NGINX_BIN") or shutil.which("nginx")
+        if not nginx:
+            self.skipTest("nginx unavailable; CI requires this runtime check")
+
+        class Backend(ThreadingHTTPServer):
+            def get_request(self):
+                result = super().get_request()
+                self.connections += 1
+                return result
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_GET(self):
+                self.server.hits.append((self.path, self.request_version, dict(self.headers)))
+                upgrade = self.headers.get("Upgrade") == "websocket"
+                self.send_response(101 if upgrade else 200)
+                if upgrade:
+                    self.send_header("Upgrade", "websocket")
+                    self.send_header("Connection", "upgrade")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            do_POST = do_GET
+
+            def log_message(self, *args):
+                pass
+
+        allowed = Backend(("127.0.0.1", 0), Handler)
+        forbidden = Backend(("127.0.0.1", 0), Handler)
+        for backend in (allowed, forbidden):
+            backend.hits, backend.connections = [], 0
+            threading.Thread(target=backend.serve_forever, daemon=True).start()
+        try:
+            port = str(allowed.server_port)
+            for source in (SOURCE, PATCH):
+                with self.subTest(script="installer" if source == SOURCE else "patch"), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    with socket.socket() as reserved:
+                        reserved.bind(("127.0.0.1", 0))
+                        public_port = reserved.getsockname()[1]
+                    shared = render(SHARED, source, ws_port=port, ws_path="websocket", ws_route=f"/{port}/websocket")
+                    (root / "includes.conf").write_text(shared)
+                    temp_paths = "".join(f"{kind}_temp_path {root}/{kind};\n" for kind in ("client_body", "proxy", "fastcgi", "uwsgi", "scgi"))
+                    config = root / "nginx.conf"
+                    config.write_text(
+                        f"pid {root}/nginx.pid;\nerror_log stderr;\nevents {{ worker_connections 32; }}\n"
+                        "http { access_log off;\n" + temp_paths +
+                        f"server {{ listen 127.0.0.1:{public_port}; server_name deploy.example cover.example;\n"
+                        f"root {root}; set $hack 0; set $serve_clash_yaml 0; include {root}/includes.conf; }} }}\n"
+                    )
+                    with (root / "nginx.log").open("w+") as log:
+                        process = subprocess.Popen([nginx, "-p", tmp + "/", "-c", str(config), "-g", "daemon off; master_process off;"], stdout=log, stderr=log)
+                        try:
+                            for _ in range(60):
+                                self.assertIsNone(process.poll(), "nginx exited during startup")
+                                try:
+                                    with socket.create_connection(("127.0.0.1", public_port), timeout=0.1):
+                                        break
+                                except OSError:
+                                    time.sleep(0.025)
+                            else:
+                                self.fail("nginx did not start")
+                            def request(host, path, method="GET", **headers):
+                                connection = http.client.HTTPConnection("127.0.0.1", public_port, timeout=3)
+                                try:
+                                    connection.request(method, path, headers={"Host": host, **headers})
+                                    response = connection.getresponse()
+                                    response.read()
+                                    return response.status
+                                finally:
+                                    connection.close()
+                            before = allowed.connections
+                            for host in ("deploy.example", "cover.example"):
+                                for path in ("/3000/test", "/9090/api", f"/{forbidden.server_port}/api/mtr", f"/{port}/wrong", f"/{port}/websocket/extra", "/10004/trojan/Tun"):
+                                    for method, headers in (("GET", {}), ("GET", {"Upgrade": "websocket", "Connection": "upgrade"}), ("POST", {"Content-Type": "application/grpc"})):
+                                        self.assertEqual(request(host, path, method, **headers), 404)
+                            self.assertEqual(forbidden.connections, 0, "Unmanaged backend must never receive a connection")
+                            self.assertEqual(allowed.connections, before, "Wrong paths must not reach the managed backend")
+                            for host in ("deploy.example", "cover.example"):
+                                self.assertEqual(request(host, f"/{port}/websocket?token=test", Upgrade="websocket", Connection="upgrade"), 101)
+                                path, version, headers = allowed.hits[-1]
+                                self.assertEqual(path, f"/{port}/websocket?token=test")
+                                self.assertEqual(version, "HTTP/1.1")
+                                self.assertEqual(headers["Host"], host)
+                                self.assertEqual(headers["Upgrade"], "websocket")
+                                self.assertEqual(headers["Connection"], "upgrade")
+                                self.assertEqual(headers["X-Real-IP"], "127.0.0.1")
+                                self.assertEqual(headers["X-Forwarded-For"], "127.0.0.1")
+                        finally:
+                            process.terminate()
+                            process.wait(timeout=5)
+        finally:
+            for backend in (allowed, forbidden):
+                backend.shutdown()
+                backend.server_close()
+
     def test_personal_runtime_source(self):
         for name in ("x-ui-latest.sh", "x-ui-patch.sh"):
             source = (ROOT / name).read_text()
@@ -395,28 +571,29 @@ wget() {
                 "-subj", "/CN=deploy.example", "-keyout", str(root / "key.pem"),
                 "-out", str(root / "cert.pem"),
             ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-            (root / "includes.conf").write_text(render(SHARED))
-            fragments = [render("cat > /etc/nginx/sites-available/00-maps.conf")]
-            for target in (MAIN, 'cat > "/etc/nginx/sites-available/${reality_domain}"'):
-                fragment = render(target, **http2)
-                fragment = re.sub(r"/etc/letsencrypt/live/[^/]+/fullchain.pem", str(root / "cert.pem"), fragment)
-                fragment = re.sub(r"/etc/letsencrypt/live/[^/]+/privkey.pem", str(root / "key.pem"), fragment)
-                fragments.append(fragment.replace("/etc/nginx/snippets/includes.conf", str(root / "includes.conf")))
-            # Relocate only filesystem dependencies; generated HTTP directives stay intact.
-            temp_paths = "".join(
-                f"{kind}_temp_path {root}/{kind};\n"
-                for kind in ("client_body", "proxy", "fastcgi", "uwsgi", "scgi")
-            )
-            (root / "nginx.conf").write_text(
-                f"pid {root}/nginx.pid;\nerror_log stderr;\nevents {{ worker_connections 32; }}\n"
-                "http {\naccess_log off;\n" + temp_paths + "\n".join(fragments) + "\n}\n"
-            )
-            result = subprocess.run(
-                [nginx, "-t", "-p", str(root) + "/", "-c", str(root / "nginx.conf")],
-                capture_output=True, text=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            print(f"\nnginx {'.'.join(map(str, number))}: generated HTTP vhosts syntax OK")
+            for source in (SOURCE, PATCH):
+                (root / "includes.conf").write_text(render(SHARED, source))
+                fragments = [render("cat > /etc/nginx/sites-available/00-maps.conf", source)]
+                for target in (MAIN, 'cat > "/etc/nginx/sites-available/${reality_domain}"'):
+                    fragment = render(target, source, **http2)
+                    fragment = re.sub(r"/etc/letsencrypt/live/[^/]+/fullchain.pem", str(root / "cert.pem"), fragment)
+                    fragment = re.sub(r"/etc/letsencrypt/live/[^/]+/privkey.pem", str(root / "key.pem"), fragment)
+                    fragments.append(fragment.replace("/etc/nginx/snippets/includes.conf", str(root / "includes.conf")))
+                # Relocate only filesystem dependencies; generated HTTP directives stay intact.
+                temp_paths = "".join(
+                    f"{kind}_temp_path {root}/{kind};\n"
+                    for kind in ("client_body", "proxy", "fastcgi", "uwsgi", "scgi")
+                )
+                (root / "nginx.conf").write_text(
+                    f"pid {root}/nginx.pid;\nerror_log stderr;\nevents {{ worker_connections 32; }}\n"
+                    "http {\naccess_log off;\n" + temp_paths + "\n".join(fragments) + "\n}\n"
+                )
+                result = subprocess.run(
+                    [nginx, "-t", "-p", str(root) + "/", "-c", str(root / "nginx.conf")],
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                print(f"\nnginx {'.'.join(map(str, number))}: generated HTTP vhosts syntax OK")
 
 
 if __name__ == "__main__":
