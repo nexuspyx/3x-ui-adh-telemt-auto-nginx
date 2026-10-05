@@ -11,7 +11,7 @@ Automatic **nginx · SSL · Fake Site · REALITY · XHTTP · Hysteria2 · Backup
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[Русский](README.md) · [Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Issues](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
+[Русский](README.md) · [Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Telemt WEB Manager](#telemt-web-manager) · [Issues](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
 
 </div>
 
@@ -19,19 +19,24 @@ A turnkey deployment project for [3x-ui](https://github.com/MHSanaei/3x-ui) and 
 
 ## ⚡ Get started
 
-1. Point **two domains** to your VPS: one for the panel, one for REALITY.
-2. On a clean supported OS, download the installer and optionally review it.
-3. Run as **root**, replacing the example domains:
+1. Point **two domains to your VPS**: one for the panel, one for REALITY.
+2. On a clean supported OS, connect to the server over SSH as **root**.
+3. Run:
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh
-# Optional review: less x-ui-latest.sh
+bash x-ui-latest.sh
+```
+
+The script will prompt for both domains. If you prefer to pass them directly:
+
+```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
 ```
 
-You can also run without domain arguments and enter them when prompted. Allow inbound TCP 80/443 and UDP 443; DNS must resolve to this server for certificate issuance.
+Allow inbound TCP 80/443 and UDP 443; the domains must resolve to this server for certificate issuance.
 
-> **⚠️ Fresh install / rebuild only.** `x-ui-latest.sh` removes the previous installation, including the panel database and nginx configuration. It is **not a safe in-place updater** for a production VPS. Copy a backup off-server before rebuilding.
+> **⚠️ Clean installation or full reinstall only.** `x-ui-latest.sh` removes an existing 3x-ui installation, including the panel database and nginx configuration. **Do not use it as a normal update command on a working VPS.** If the server is already configured, copy a backup off-server first.
 
 ## 🌐 Two domains → ready server
 
@@ -65,6 +70,8 @@ All five profiles are created. Enable WS or Trojan gRPC manually in 3x-ui when n
 ### 🥸 Automatic Fake Site
 
 No need to build a cover website yourself: the installer selects a page from the bundled fake-site collection and deploys it with nginx and TLS. The site is part of the deployment, not a guarantee of traffic invisibility.
+
+<a id="telemt-web-manager"></a>
 
 ## ✈️ Need a Telegram proxy too?
 
