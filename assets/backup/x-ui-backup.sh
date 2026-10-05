@@ -11,7 +11,7 @@ SYSCTL_FILE=/etc/sysctl.d/99-3x-ui-pro.conf
 XHTTP_SOCKET=/dev/shm/uds2023.sock
 MANAGED_CRON='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
 PACKAGES=(nginx-full certbot python3-certbot-nginx sqlite3 curl wget jq ufw
-          netcat-openbsd mtr python3 libcap2-bin ca-certificates cron)
+          netcat-openbsd mtr python3 libcap2-bin ca-certificates cron procps iproute2 tar gzip tzdata)
 RUNTIME_PATHS=(/etc/x-ui /usr/local/x-ui /usr/bin/x-ui)
 TREE_PATHS=(/etc/nginx /etc/letsencrypt /root/cert /usr/local/lib/3x-ui-pro
             /var/www/html /var/www/subpage)
@@ -412,14 +412,23 @@ PY
 restore_cron_and_firewall() {
     read_cron "$STAGING/current-root-cron"
     awk -v managed="$MANAGED_CRON" '$0 != managed' "$STAGING/current-root-cron" > "$STAGING/merged-root-cron"
-    cat "$STAGING/managed-root-cron" >> "$STAGING/merged-root-cron"
+    printf '%s\n' "$MANAGED_CRON" >> "$STAGING/merged-root-cron"
     crontab - < "$STAGING/merged-root-cron"
+    check_cron
     for rule in 80/tcp 443/tcp 443/udp; do ufw allow "$rule"; done
     local status
     status=$(LC_ALL=C ufw status) || die 'Cannot read UFW status.'
     if ! grep -q '^Status: active$' <<< "$status"; then
         warn 'UFW is inactive; application rules added without enabling the firewall.'
     fi
+}
+
+check_cron() {
+    systemctl is-active --quiet cron && systemctl is-enabled --quiet cron || die 'cron must be active and enabled.'
+    read_cron "$STAGING/verified-root-cron"
+    local count
+    count=$(awk -v managed="$MANAGED_CRON" '$0 == managed {n++} END {print n+0}' "$STAGING/verified-root-cron")
+    [[ "$count" == 1 ]] || die 'Managed Certbot cron must exist exactly once.'
 }
 
 check_health() {
@@ -436,6 +445,7 @@ check_health() {
         if systemctl is-active --quiet "$service"; then ok "$service is active";
         else printf '[FAIL] %s is not active\n' "$service" >&2; failed=1; fi
     done
+    check_cron
     for attempt in {1..10}; do
         [[ -S "$XHTTP_SOCKET" ]] && break
         sleep 0.5
@@ -464,6 +474,7 @@ cmd_restore() {
     tar -xzf "$archive" -C "$STAGING" --same-owner
     check_compatibility
     install_missing_packages "${PACKAGES[@]}"
+    systemctl enable --now cron || die 'Cannot enable and start cron.'
     quick_check "$STAGING/files$DB"
     stage 'Stopping services and restoring managed state'
     for service in nginx x-ui mtr-backend; do

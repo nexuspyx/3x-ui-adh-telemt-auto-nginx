@@ -22,6 +22,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "x-ui-latest.sh").read_text()
 PATCH = (ROOT / "x-ui-patch.sh").read_text()
+MONTHLY = ('@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" '
+           '--post-hook "systemctl start nginx" > /dev/null 2>&1')
 FIXTURE = {
     "domain": "deploy.example", "reality_domain": "cover.example",
     "xhttp_path": "Session7AbC", "sub_path": "subscription", "json_path": "jsonsub",
@@ -232,25 +234,124 @@ check() {
             "# Administrator's certbot/x-ui tasks",
         ]
         existing = "\n".join(preserved + [monthly, monthly]) + "\n"
-        # Mock only crontab; run the isolated function, never the installer/main.
-        mock = '''crontab() {
+        for initial, expected in (("", [monthly]), (existing, preserved + [monthly])):
+            with self.subTest(initial=initial):
+                result, cron = self.cron_setup(initial, runs=2)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                # No replacement restart/reload job may be added, at any schedule.
+                self.assertEqual(cron.splitlines(), expected)
+
+    def cron_setup(self, initial, failure="", runs=1):
+        # Only isolated cron functions execute; no real crontab/systemd changes.
+        mock = r'''msg_err() { echo "$*" >&2; }
+command() {
+    [[ "$FAIL_CRON" == missing && "$*" == '-v crontab' ]] && return 1
+    builtin command "$@"
+}
+systemctl() { [[ "$FAIL_CRON" != "$1" ]]; }
+crontab() {
     case "$1" in
-        -l) cat "$CRON_TEST_FILE" ;;
-        -) cat > "$CRON_TEST_FILE.new"; mv "$CRON_TEST_FILE.new" "$CRON_TEST_FILE" ;;
+        -l)
+            [[ "$FAIL_CRON" == read ]] && { echo 'permission denied' >&2; return 1; }
+            [[ -f "$CRON_TEST_FILE" ]] || { echo 'no crontab for root' >&2; return 1; }
+            cat "$CRON_TEST_FILE" ;;
+        -)
+            [[ "$FAIL_CRON" == write ]] && return 1
+            cat > "$CRON_TEST_FILE"
+            [[ "$FAIL_CRON" == dropped ]] && : > "$CRON_TEST_FILE"
+            [[ "$FAIL_CRON" == duplicate ]] && printf '%s\n' "$MANAGED_CRON" >> "$CRON_TEST_FILE"
+            return 0 ;;
         *) return 2 ;;
     esac
 }
 '''
-        for initial, expected in (("", [monthly]), (existing, preserved + [monthly])):
-            with self.subTest(initial=initial), tempfile.TemporaryDirectory() as tmp:
-                cron = Path(tmp) / "crontab"
+        with tempfile.TemporaryDirectory() as tmp:
+            cron = Path(tmp) / "crontab"
+            if initial is not None:
                 cron.write_text(initial)
-                subprocess.run(
-                    ["bash", "-eu", "-c", mock + functions[0] + "\nsetup_cron\nsetup_cron\n"],
-                    check=True, env={**os.environ, "CRON_TEST_FILE": str(cron)},
-                )
-                # No replacement restart/reload job may be added, at any schedule.
-                self.assertEqual(cron.read_text().splitlines(), expected)
+            script = mock + function("check_cron") + "\n" + function("setup_cron")
+            script += "\n" + "setup_cron || exit 1\n" * runs + "echo cron-success\n"
+            result = subprocess.run(["bash", "-u", "-c", script], capture_output=True, text=True, env={
+                **os.environ, "MANAGED_CRON": MONTHLY, "CRON_TEST_FILE": str(cron), "FAIL_CRON": failure,
+            })
+            return result, cron.read_text() if cron.exists() else ""
+
+    def test_cron_setup_fails_closed_and_handles_absent_root_crontab(self):
+        self.assertIn("MANAGED_CRON=" + shlex.quote(MONTHLY), SOURCE)
+        self.assertRegex(function("main"), r"setup_cron\s*\|\|.*exit 1")
+        result, cron = self.cron_setup(None)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(cron, MONTHLY + "\n")
+        for failure in ("missing", "read", "write", "dropped", "duplicate", "is-active", "is-enabled"):
+            with self.subTest(failure=failure):
+                result, _ = self.cron_setup("@hourly /opt/unrelated\n", failure)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("cron-success", result.stdout)
+
+    def test_ws_host_uses_only_http11_alpn(self):
+        for grouped in (False, True):
+            with self.subTest(group_id=grouped):
+                rows, hosts = seed(group_id=grouped)
+                ws = [h for h in hosts if h["inbound_id"] == rows["ws"]["id"]]
+                self.assertEqual(len(ws), 1)
+                self.assertEqual(json.loads(ws[0]["alpn"]), ["http/1.1"])
+                for name in ("xhttp", "trojan-grpc"):
+                    host = next(h for h in hosts if h["inbound_id"] == rows[name]["id"])
+                    self.assertEqual(json.loads(host["alpn"]), ["h2", "http/1.1"])
+
+    def test_installer_dependencies_and_cron_activation_are_required(self):
+        mock = r'''msg_err() { echo "$*" >&2; }
+apt() { echo "apt $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != apt ]]; }
+apt-get() { echo "apt-get $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != apt ]]; }
+systemctl() { echo "systemctl $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != cron || "$*" != 'enable --now cron' ]]; }
+command() { [[ "$*" != "-v $FAIL_DEP" ]]; }
+'''
+        required = {"cron", "openssl", "procps", "psmisc", "iproute2", "tar", "gzip", "tzdata", "ca-certificates",
+                    "curl", "wget", "jq", "bash", "sudo", "nginx-full", "certbot", "python3-certbot-nginx",
+                    "sqlite3", "ufw", "netcat-openbsd", "mtr", "python3", "libcap2-bin"}
+        self.assertRegex(function("main"), r"install_packages\s*\|\|.*exit 1")
+        for failure in ("", "apt", "crontab", "sysctl", "ip", "fuser", "cron"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                log = Path(tmp) / "calls"
+                result = subprocess.run(["bash", "-u", "-c", mock + function("install_packages") + "\ninstall_packages\n"],
+                                        capture_output=True, text=True, env={**os.environ, "Pak": "apt", "INSTALL": "y",
+                                                                            "TEST_LOG": str(log), "FAIL_DEP": failure})
+                self.assertEqual(result.returncode, 1 if failure else 0, result.stderr)
+                if not failure:
+                    calls = log.read_text().splitlines()
+                    packages = next(c.split()[3:] for c in calls if c.startswith("apt -y install "))
+                    self.assertTrue(required.issubset(packages))
+                    self.assertEqual(calls[-1], "systemctl enable --now cron")
+
+    def test_installer_final_health_gate_precedes_success_output(self):
+        main = function("main")
+        self.assertRegex(main, r"check_installation\s*\|\|.*exit 1")
+        self.assertLess(main.index("check_installation"), main.index("show_results"))
+        mock = r'''msg_err() { echo "$*" >&2; }
+systemctl() { [[ "$FAIL_HEALTH" != "$1:$3" ]]; }
+nginx() { [[ "$FAIL_HEALTH" != nginx-test ]]; }
+crontab() {
+    [[ "$FAIL_HEALTH" == cron-read ]] && return 1
+    [[ "$FAIL_HEALTH" == cron-missing ]] && return 0
+    printf '%s\n' "$MANAGED_CRON"
+    [[ "$FAIL_HEALTH" == cron-duplicate ]] && printf '%s\n' "$MANAGED_CRON"
+    return 0
+}
+sleep() { :; }
+'''
+        failures = ("", "is-active:x-ui", "is-active:nginx", "is-active:mtr-backend", "is-active:cron",
+                    "is-enabled:cron", "nginx-test", "cron-read", "cron-missing", "cron-duplicate", "socket")
+        for failure in failures:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "xhttp.sock"
+                with socket.socket(socket.AF_UNIX) as uds:
+                    if failure != "socket":
+                        uds.bind(str(path))
+                    script = mock + function("check_cron") + "\n" + function("check_installation").replace("/dev/shm/uds2023.sock", str(path))
+                    result = subprocess.run(["bash", "-u", "-c", script + "\ncheck_installation || exit 1\necho final-success\n"],
+                                            capture_output=True, text=True, env={**os.environ, "MANAGED_CRON": MONTHLY, "FAIL_HEALTH": failure})
+                    self.assertEqual(result.returncode, 1 if failure else 0, result.stderr)
+                    self.assertEqual("final-success" in result.stdout, not bool(failure))
 
     def test_inbound_and_sniffing(self):
         rows = inbounds()

@@ -53,6 +53,7 @@ check_cpu
 XUIDB="/etc/x-ui/x-ui.db"
 GITHUB_RAW="https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main"
 FAKE_SITE_COUNT=50
+MANAGED_CRON='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
 
 # ─── Default argument values ─────────────────────────────────────────────────
 domain=""
@@ -241,12 +242,17 @@ install_packages() {
         version=$(grep -oP '(?<=VERSION_ID=")[0-9]+' /etc/os-release)
         [[ "$version" == "20" || "$version" == "22" ]] && echo "System: Ubuntu $version"
 
-        $Pak -y update
-        $Pak -y install curl wget jq bash sudo nginx-full certbot python3-certbot-nginx sqlite3 ufw netcat-openbsd mtr python3 libcap2-bin
-        systemctl daemon-reload && systemctl enable --now nginx
+        $Pak -y update || return 1
+        $Pak -y install curl wget jq bash sudo nginx-full certbot python3-certbot-nginx sqlite3 ufw netcat-openbsd mtr python3 libcap2-bin cron openssl procps psmisc iproute2 tar gzip tzdata ca-certificates || return 1
+        systemctl daemon-reload && systemctl enable --now nginx || return 1
     fi
 
-    apt-get install -yqq --no-install-recommends ca-certificates
+    apt-get install -yqq --no-install-recommends ca-certificates || return 1
+    local binary
+    for binary in crontab openssl sysctl fuser ip ss tar gzip curl wget jq bash sudo nginx certbot sqlite3 ufw nc mtr python3 setcap; do
+        command -v "$binary" >/dev/null || { msg_err "Required binary is missing: $binary"; return 1; }
+    done
+    systemctl enable --now cron || return 1
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1058,7 +1064,7 @@ VALUES (
 INSERT INTO "hosts" ("inbound_id",${gid_col}"sort_order","remark","address","port","security","fingerprint","alpn")
 VALUES
     ((SELECT id FROM inbounds WHERE tag='inbound-8443'),           ${gid_reality} 0, 'reality', '${domain}', 443, 'same', '',        '[]'),
-    ((SELECT id FROM inbounds WHERE tag='inbound-${ws_port}'),     ${gid_ws}      0, 'ws',      '${domain}', 443, 'tls',  'firefox', '["h2","http/1.1"]'),
+    ((SELECT id FROM inbounds WHERE tag='inbound-${ws_port}'),     ${gid_ws}      0, 'ws',      '${domain}', 443, 'tls',  'firefox', '["http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-/dev/shm/uds2023.sock,0666:0|'), ${gid_xhttp} 0, 'xhttp', '${domain}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-${trojan_port}'), ${gid_trojan}  0, 'trojan',  '${domain}', 443, 'tls',  'firefox', '["h2","http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-443-udp'),        ${gid_hysteria} 0, 'hysteria2', '${domain}', 443, 'same', '', '[]');
@@ -1250,11 +1256,45 @@ install_backup_tool() {
 # CRON JOBS
 # ─────────────────────────────────────────────────────────────────────────────
 setup_cron() {
-    local managed_cron='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
+    local current error
+    command -v crontab >/dev/null || { msg_err "crontab is missing."; return 1; }
+    error=$(mktemp) || return 1
+    if ! current=$(LC_ALL=C crontab -l 2> "$error"); then
+        if grep -qi 'no crontab for' "$error"; then current="";
+        else rm -f "$error"; msg_err "Cannot read root crontab."; return 1; fi
+    fi
+    rm -f "$error"
+    current=$(awk -v managed="$MANAGED_CRON" '$0 != managed' <<< "$current") || return 1
     # Certs were issued with --standalone: renewal needs port 80 free,
     # so stop nginx for the few seconds certbot runs
-    { crontab -l 2>/dev/null | awk -v managed="$managed_cron" '$0 != managed';
-      printf '%s\n' "$managed_cron"; } | crontab -
+    { if [[ -n "$current" ]]; then printf '%s\n' "$current"; fi
+      printf '%s\n' "$MANAGED_CRON"; } | crontab - || { msg_err "Cannot install managed Certbot cron."; return 1; }
+    check_cron
+}
+
+check_cron() {
+    local current count
+    systemctl is-active --quiet cron && systemctl is-enabled --quiet cron || {
+        msg_err "cron must be active and enabled."; return 1;
+    }
+    current=$(crontab -l) || { msg_err "Cannot verify root crontab."; return 1; }
+    count=$(awk -v managed="$MANAGED_CRON" '$0 == managed {n++} END {print n+0}' <<< "$current")
+    [[ "$count" == 1 ]] || { msg_err "Managed Certbot cron must exist exactly once."; return 1; }
+}
+
+check_installation() {
+    local service attempt
+    for service in x-ui nginx mtr-backend; do
+        systemctl is-active --quiet "$service" || { msg_err "$service is not active."; return 1; }
+    done
+    check_cron || return 1
+    nginx -t || return 1
+    for attempt in {1..10}; do
+        [[ -S /dev/shm/uds2023.sock ]] && return 0
+        sleep 0.5
+    done
+    msg_err "XHTTP Unix socket is missing."
+    return 1
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1326,7 +1366,7 @@ show_results() {
 main() {
     validate_domains
     clean_previous_install
-    install_packages
+    install_packages || { msg_err "Dependency setup failed."; exit 1; }
     setup_firewall || { msg_err "Firewall setup failed."; exit 1; }
     get_server_ip
     get_ssl_certs
@@ -1340,12 +1380,13 @@ main() {
     install_diagnostics
     tune_system || exit 1
     install_backup_tool || exit 1
-    setup_cron
+    setup_cron || { msg_err "Cron setup failed."; exit 1; }
 
     if ! systemctl is-enabled --quiet x-ui; then
-        systemctl daemon-reload && systemctl enable x-ui.service
+        systemctl daemon-reload && systemctl enable x-ui.service || exit 1
     fi
-    x-ui restart
+    x-ui restart || exit 1
+    check_installation || { msg_err "Installation failed mandatory health checks."; exit 1; }
 
     show_results
 }
