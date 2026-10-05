@@ -1,10 +1,10 @@
-name: Personal XHTTP validation
+name: 3x-ui Auto Nginx Backup and restore validation
 
 on:
   push:
-    branches: [personal]
+    branches: [main]
   pull_request:
-    branches: [personal]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -12,19 +12,22 @@ permissions:
 
 jobs:
   validate:
+    name: Stack Backup and restore
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Install nginx for configuration syntax validation
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nginx
+      - name: Install fixture dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends sqlite3 nginx
       - name: Shell syntax
-        run: bash -n x-ui-latest.sh
-      - name: Targeted personal regression tests
+        run: |
+          bash -n x-ui-latest.sh
+          bash -n assets/backup/x-ui-backup.sh
+      - name: Backup and restore regression tests
         env:
           NGINX_BIN: /usr/sbin/nginx
-        run: python3 tests/test_personal_xhttp.py
+        run: sudo --preserve-env=NGINX_BIN python3 tests/test_personal_backup.py
       - name: Whitespace validation
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}

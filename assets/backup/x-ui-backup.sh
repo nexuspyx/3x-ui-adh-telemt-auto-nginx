@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Managed 3x-ui-pro backup: same-host rollback or clean-host recovery, same OS/arch.
+# Managed 3x-ui Auto Nginx backup: same-host rollback or clean-host recovery, same OS/arch.
 # Usage: x-ui-backup {backup|restore <archive>|list}
 set -Eeuo pipefail
 umask 077

@@ -1,5 +1,5 @@
 #!/bin/bash
-#################### x-ui-pro-refactor @ github.com/mozaroc #############################
+# 3x-ui Auto Nginx - based on x-ui-pro-refactor by mozaroc (github.com/mozaroc/3x-ui-pro)
 [[ $EUID -ne 0 ]] && { echo "Run as root: sudo bash $0"; exit 1; }
 
 # ─── Output helpers ──────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ check_cpu
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 XUIDB="/etc/x-ui/x-ui.db"
-GITHUB_RAW="https://raw.githubusercontent.com/xPROMSx/3x-ui-pro/personal"
+GITHUB_RAW="https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main"
 FAKE_SITE_COUNT=50
 
 # ─── Default argument values ─────────────────────────────────────────────────
@@ -1106,7 +1106,7 @@ install_diagnostics() {
     # Systemd service for mtr-backend
     cat > /etc/systemd/system/mtr-backend.service <<EOF
 [Unit]
-Description=3x-ui-pro MTR diagnostics backend
+Description=3x-ui Auto Nginx MTR diagnostics backend
 After=network.target
 
 [Service]
