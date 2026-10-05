@@ -108,6 +108,129 @@ class PersonalXHTTP(unittest.TestCase):
     def test_shell_syntax(self):
         subprocess.run(["bash", "-n", str(ROOT / "x-ui-latest.sh")], check=True)
 
+    def test_installer_branding_and_domain_prompts(self):
+        startup = SOURCE[SOURCE.index("msg_ok()"):SOURCE.index("# ─── Pre-flight checks")]
+        result = subprocess.run(["bash", "-eu", "-c", startup], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("3x-ui Auto Nginx", result.stdout)
+        self.assertIn("Automated 3x-ui / Xray deployment", result.stdout)
+        self.assertNotIn("X-UI-PRO", result.stdout.upper())
+        self.assertNotIn("X-UI Secure Panel", SOURCE)
+        helpers = '\n'.join(re.findall(r'^msg_\w+\(\).*$', SOURCE, re.M))
+        script = helpers + '\n' + function("validate_domains") + '\nvalidate_domains\nprintf "%s|%s" "$domain" "$reality_domain"\n'
+        for provided in (False, True):
+            with self.subTest(cli_domains=provided):
+                result = subprocess.run(["bash", "-eu", "-c", script], capture_output=True, text=True,
+                                        input="panel.example.com\nreality.example.com\n", env={**os.environ,
+                                        "domain": "panel.example.com" if provided else "",
+                                        "reality_domain": "reality.example.com" if provided else ""})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(result.stdout.endswith("panel.example.com|reality.example.com"))
+                for prompt in ("3x-ui panel domain (panel.example.com):", "REALITY domain (reality.example.com):"):
+                    self.assertEqual(prompt in result.stdout, not provided)
+
+    def test_final_summary_is_honest_and_only_follows_health_gate(self):
+        summary = function("show_results")
+        self.assertNotIn("/root/cert/${reality_domain}", summary)
+        self.assertNotRegex(summary, r"\|\s*x-ui\b")
+        self.assertNotIn("nginx -t", summary)
+        self.assertLess(function("main").index("check_installation"), function("main").index("show_results"))
+        helpers = '\n'.join(re.findall(r'^msg_\w+\(\).*$', SOURCE, re.M))
+        # Run the actual main ordering/summary on files; installer operations are no-ops.
+        mocks = '\n'.join(name + '() { :; }' for name in (
+            "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
+            "get_ssl_certs", "install_panel", "configure_nginx", "configure_xui_db", "install_clash_sub",
+            "install_fake_site", "install_diagnostics", "tune_system", "install_backup_tool", "setup_cron",
+        )) + r'''
+systemctl() { echo "systemctl $*" >> "$SUMMARY_LOG"; [[ "$*" == 'is-enabled --quiet x-ui' ]]; }
+x-ui() { echo "x-ui $*" >> "$SUMMARY_LOG"; [[ "$*" == restart ]]; }
+ufw() {
+    echo "ufw $*" >> "$SUMMARY_LOG"
+    [[ "$*" == status && "$UFW_STATE" != unknown ]] || return 1
+    echo "Status: $UFW_STATE"
+}
+check_installation() { echo health-gate >> "$SUMMARY_LOG"; [[ "$FAIL_GATE" == 0 ]]; }
+'''
+        certificates = tuple(
+            f"etc/letsencrypt/live/{domain}/{name}"
+            for domain in (FIXTURE["domain"], FIXTURE["reality_domain"])
+            for name in ("fullchain.pem", "privkey.pem")
+        ) + tuple(f"root/cert/{FIXTURE['domain']}/{name}" for name in ("fullchain.pem", "privkey.pem"))
+        scenarios = (("active", False, False, False, None), ("inactive", False, False, False, None),
+                     ("unknown", False, False, False, None), ("active", True, False, False, None),
+                     ("active", False, True, False, None), ("active", False, False, True, None))
+        scenarios += tuple(("active", False, False, False, path) for path in certificates)
+        for state, missing_assets, failed_version, failed_gate, missing_certificate in scenarios:
+            with self.subTest(ufw=state, missing_assets=missing_assets, version_failure=failed_version, gate_failure=failed_gate, missing_certificate=missing_certificate), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                relocated = summary
+                for path in ("/etc/letsencrypt/live", "/root/cert", "/var/www/diagnostics", "/usr/local/lib/3x-ui-pro",
+                             "/usr/local/bin/x-ui-backup", "/usr/local/x-ui/x-ui"):
+                    relocated = relocated.replace(path, str(root) + path)
+                binary = root / "usr/local/x-ui/x-ui"
+                binary.parent.mkdir(parents=True)
+                binary.write_text('''#!/bin/sh
+echo "binary $*" >> "$SUMMARY_LOG"
+[ "$FAIL_VERSION" = 0 ] || exit 1
+echo 'x-ui 3.9.0'
+''')
+                binary.chmod(0o755)
+                if not missing_assets:
+                    for relative in certificates:
+                        path = root / relative
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        if relative.startswith("root/cert/"):
+                            path.symlink_to(root / f"etc/letsencrypt/live/{FIXTURE['domain']}/{path.name}")
+                        else:
+                            path.write_text("fixture certificate")
+                    if missing_certificate:
+                        (root / missing_certificate).unlink()
+                self.assertFalse((root / f"root/cert/{FIXTURE['reality_domain']}").exists())
+                if not missing_assets:
+                    for name in ("var/www/diagnostics/index.html", "var/www/diagnostics/speedtest.js",
+                                 "var/www/diagnostics/speedtest_worker.js", "usr/local/lib/3x-ui-pro/mtr-backend.py",
+                                 "usr/local/bin/x-ui-backup"):
+                        path = root / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text("fixture file")
+                        path.chmod(0o755)
+                log = root / "calls"
+                script = helpers + '\n' + mocks + '\n' + relocated + '\n' + function("main") + '\nmain\n'
+                result = subprocess.run(["bash", "-euo", "pipefail", "-c", script], capture_output=True, text=True, env={
+                    **os.environ, **FIXTURE, "SUMMARY_LOG": str(log), "UFW_STATE": state,
+                    "FAIL_GATE": "1" if failed_gate else "0", "FAIL_VERSION": "1" if failed_version else "0",
+                    "config_username": "fixture-user", "config_password": "fixture-password",
+                })
+                self.assertEqual(result.returncode, 1 if failed_gate else 0, result.stderr)
+                text = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+                calls = log.read_text().splitlines()
+                self.assertEqual(calls[:3], ["systemctl is-enabled --quiet x-ui", "x-ui restart", "health-gate"])
+                if failed_gate:
+                    self.assertNotIn("Installation Complete", text)
+                    self.assertNotIn("fixture-password", text)
+                    self.assertEqual(len(calls), 3)
+                    continue
+                self.assertEqual(calls[3:], ["binary -v", "ufw status"])
+                for item in ("3x-ui Auto Nginx — Installation Complete", "Panel:", "Diagnostics", "Username: fixture-user",
+                             "Password: fixture-password", "Backup:", "x-ui-backup backup", "Certificate renewal",
+                             "https://deploy.example/panel/", "https://deploy.example/panel/diag",
+                             "Enabled by default: REALITY · XHTTP · Hysteria2", "Optional profiles: WS · Trojan gRPC"):
+                    self.assertIn(item, text)
+                self.assertEqual("(3x-ui 3.9.0)" in text, not failed_version)
+                firewall_line = next(line for line in result.stdout.splitlines() if "Firewall / UFW" in line)
+                self.assertIn("\x1b[1;32m" if state == "active" else "\x1b[1;33m", firewall_line)
+                self.assertIn("[✓]" if state == "active" else "[!]", firewall_line)
+                self.assertIn(state.capitalize(), firewall_line)
+                if state != "active":
+                    self.assertIn("review firewall settings", firewall_line)
+                for label in ("TLS certificates", "Diagnostics", "Backup / Restore"):
+                    line = next(line for line in result.stdout.splitlines() if label in line and ("[✓]" in line or "[!]" in line))
+                    warning = missing_assets or (label == "TLS certificates" and missing_certificate is not None)
+                    self.assertIn("\x1b[1;33m" if warning else "\x1b[1;32m", line)
+                    self.assertIn("[!]" if warning else "[✓]", line)
+                    if label == "TLS certificates":
+                        self.assertIn("Check certificate files" if warning else "Ready", line)
+
     def firewall(self, status, connection="", sshd="", fail="", sshd_exit="0"):
         # Run only setup_firewall; mock all UFW/sshd operations on private files.
         mock = '''ufw() {
@@ -823,22 +946,27 @@ stage() {
         mock = '''ip() { return 1; }
 curl() {
     printf '%s\\n' "$*" >> "$IP_TEST_LOG"
-    [[ "$IP_BAD_RESULT" == 0 ]] || { echo invalid; return 22; }
     case "${@: -1}" in
-        https://ipv4.icanhazip.com) echo 203.0.113.5 ;;
-        https://ipv6.icanhazip.com) echo 2001:db8::5 ;;
+        https://ipv4.icanhazip.com)
+            [[ "$IP_BAD_RESULT" != 1 ]] || { echo 'IPv4 discovery failed' >&2; echo invalid; return 22; }
+            echo 203.0.113.5 ;;
+        https://ipv6.icanhazip.com)
+            [[ "$IP_BAD_RESULT" == 0 ]] || { echo 'Optional IPv6 discovery failed' >&2; echo invalid; return 7; }
+            echo 2001:db8::5 ;;
         *) return 1 ;;
     esac
 }
 '''
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "calls"
-            for bad in ("0", "1"):
+            for bad in ("0", "1", "ipv6-only"):
                 with self.subTest(bad=bad):
                     log.write_text("")
-                    result = subprocess.check_output(["bash", "-u", "-c", mock + declarations + '\n' + function("get_server_ip") + '\nget_server_ip\nprintf "%s|%s" "$IP4" "$IP6"'],
-                                                     text=True, env={**os.environ, "IP_TEST_LOG": str(log), "IP_BAD_RESULT": bad})
-                    self.assertEqual(result, "203.0.113.5|2001:db8::5" if bad == "0" else "|")
+                    result = subprocess.run(["bash", "-u", "-c", mock + declarations + '\n' + function("get_server_ip") + '\nget_server_ip\nprintf "%s|%s" "$IP4" "$IP6"'],
+                                            capture_output=True, text=True, env={**os.environ, "IP_TEST_LOG": str(log), "IP_BAD_RESULT": bad})
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, {"0": "203.0.113.5|2001:db8::5", "1": "|", "ipv6-only": "203.0.113.5|"}[bad])
+                    self.assertEqual(result.stderr, "IPv4 discovery failed\n" if bad == "1" else "")
                     for call in log.read_text().splitlines():
                         self.assertIn("-fsS", call)
                         self.assertIn("--connect-timeout 5", call)

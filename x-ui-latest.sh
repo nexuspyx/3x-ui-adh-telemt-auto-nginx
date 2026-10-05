@@ -3,13 +3,17 @@
 [[ $EUID -ne 0 ]] && { echo "Run as root: sudo bash $0"; exit 1; }
 
 # ─── Output helpers ──────────────────────────────────────────────────────────
-msg_ok()  { echo -e "\e[1;42m $1 \e[0m"; }
+msg_ok()  { printf '\e[1;32m%s\e[0m\n' "$1"; }
 msg_err() { echo -e "\e[1;41m $1 \e[0m"; }
 msg_inf() { echo -e "\e[1;34m$1\e[0m"; }
+msg_warn() { printf '\e[1;33m%s\e[0m\n' "$1"; }
 
-echo; msg_inf '           ___    _   _   _  '
-msg_inf      ' \/ __ | |  | __ |_) |_) / \ '
-msg_inf      ' /\    |_| _|_   |   | \ \_/ '; echo
+echo
+msg_inf '============================================================'
+msg_inf '  3x-ui Auto Nginx'
+msg_inf '  Automated 3x-ui / Xray deployment'
+msg_inf '============================================================'
+echo
 
 # ─── Pre-flight checks ───────────────────────────────────────────────────────
 check_os() {
@@ -181,7 +185,7 @@ uninstall_xui() {
 
 if [[ ${UNINSTALL} == *"y"* ]]; then
     uninstall_xui
-    clear && msg_ok "Completely Uninstalled!" && exit 0
+    clear && msg_ok "3x-ui Auto Nginx completely uninstalled." && exit 0
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -194,7 +198,7 @@ get_server_ip() {
     IP4=$(ip route get 8.8.8.8 2>&1 | grep -Po -- 'src \K\S*')
     IP6=$(ip route get 2620:fe::fe 2>&1 | grep -Po -- 'src \K\S*')
     [[ $IP4 =~ $IP4_REGEX ]] || IP4=$(curl -4 -fsS --connect-timeout 5 --max-time 10 https://ipv4.icanhazip.com | tr -d '[:space:]')
-    [[ $IP6 =~ $IP6_REGEX ]] || IP6=$(curl -6 -fsS --connect-timeout 5 --max-time 10 https://ipv6.icanhazip.com | tr -d '[:space:]')
+    [[ $IP6 =~ $IP6_REGEX ]] || IP6=$(curl -6 -fsS --connect-timeout 5 --max-time 10 https://ipv6.icanhazip.com 2>/dev/null | tr -d '[:space:]')
     [[ $IP4 =~ $IP4_REGEX ]] || IP4=""
     [[ $IP6 =~ $IP6_REGEX ]] || IP6=""
 }
@@ -211,7 +215,7 @@ IP4=$(ip route get 8.8.8.8 2>&1 | grep -Po -- 'src \K\S*')
 validate_domains() {
     while true; do
         [[ -n "$domain" ]] && break
-        echo -en "Enter available subdomain (sub.domain.tld): " && read -r domain
+        echo -en "3x-ui panel domain (panel.example.com): " && read -r domain
     done
     domain=$(echo "$domain" | tr -d '[:space:]')
     SubDomain=$(echo "$domain"   | sed 's/^[^ ]* \|\..*//g')
@@ -220,7 +224,7 @@ validate_domains() {
 
     while true; do
         [[ -n "$reality_domain" ]] && break
-        echo -en "Enter available subdomain for REALITY (sub.domain.tld): " && read -r reality_domain
+        echo -en "REALITY domain (reality.example.com): " && read -r reality_domain
     done
     reality_domain=$(echo "$reality_domain" | tr -d '[:space:]')
     RealitySubDomain=$(echo "$reality_domain" | sed 's/^[^ ]* \|\..*//g')
@@ -1341,23 +1345,55 @@ setup_firewall() {
 # SHOW RESULTS
 # ─────────────────────────────────────────────────────────────────────────────
 show_results() {
-    clear
-    if systemctl is-active --quiet x-ui; then
-        printf '0\n' | x-ui | grep --color=never -i ':'
-        msg_inf "────────────────────────────────────────────────────────────────────────────────"
-        msg_inf "X-UI Secure Panel: https://${domain}/${panel_path}/\n"
-        echo -e "Username:  ${config_username}\n"
-        echo -e "Password:  ${config_password}\n"
-        msg_inf "────────────────────────────────────────────────────────────────────────────────"
-        msg_inf "Network Diagnostics (panel login required): https://${domain}/${panel_path}/diag\n"
-        msg_inf "────────────────────────────────────────────────────────────────────────────────"
-        msg_inf "Please save this screen!"
-        msg_inf "Backup: x-ui-backup backup"
+    local version version_label="" firewall
+    version=$(/usr/local/x-ui/x-ui -v 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) || version=""
+    [[ -n "$version" ]] && version_label=" (3x-ui ${version})"
+
+    echo
+    msg_inf '============================================================'
+    msg_inf '  3x-ui Auto Nginx — Installation Complete'
+    msg_inf '============================================================'
+    # main() has already passed check_installation for services, nginx and cron.
+    msg_ok " [✓] 3x-ui / Xray           Running${version_label}"
+    msg_ok ' [✓] nginx                  Running'
+    if [[ -s "/etc/letsencrypt/live/${domain}/fullchain.pem" && -s "/etc/letsencrypt/live/${domain}/privkey.pem" &&
+          -s "/etc/letsencrypt/live/${reality_domain}/fullchain.pem" && -s "/etc/letsencrypt/live/${reality_domain}/privkey.pem" &&
+          -s "/root/cert/${domain}/fullchain.pem" && -s "/root/cert/${domain}/privkey.pem" ]]; then
+        msg_ok ' [✓] TLS certificates       Ready'
     else
-        nginx -t
-        printf '0\n' | x-ui | grep --color=never -i ':'
-        msg_err "x-ui or nginx check failed. Try on a clean Linux install."
+        msg_warn ' [!] TLS certificates       Check certificate files'
     fi
+    msg_ok ' [✓] XHTTP                  Ready'
+    if [[ -s /var/www/diagnostics/index.html && -s /var/www/diagnostics/speedtest.js &&
+          -s /var/www/diagnostics/speedtest_worker.js && -s /usr/local/lib/3x-ui-pro/mtr-backend.py ]]; then
+        msg_ok ' [✓] Diagnostics            Ready'
+    else
+        msg_warn ' [!] Diagnostics            Check diagnostics files'
+    fi
+    if [[ -x /usr/local/bin/x-ui-backup ]]; then
+        msg_ok ' [✓] Backup / Restore       Installed'
+    else
+        msg_warn ' [!] Backup / Restore       Backup utility unavailable'
+    fi
+    msg_ok ' [✓] Certificate renewal    Ready'
+    firewall=$(LC_ALL=C ufw status 2>/dev/null) || firewall=""
+    case "$firewall" in
+        "Status: active"*)   msg_ok ' [✓] Firewall / UFW         Active' ;;
+        "Status: inactive"*) msg_warn ' [!] Firewall / UFW         Inactive — review firewall settings' ;;
+        *)                   msg_warn ' [!] Firewall / UFW         Unknown — review firewall settings' ;;
+    esac
+
+    printf '\n Enabled by default: REALITY · XHTTP · Hysteria2\n Optional profiles: WS · Trojan gRPC\n'
+    msg_inf "\n Panel:"
+    msg_inf " https://${domain}/${panel_path}/"
+    msg_inf "\n Diagnostics (panel login required):"
+    msg_inf " https://${domain}/${panel_path}/diag"
+    printf '\n Username: %s\n Password: %s\n' "$config_username" "$config_password"
+    msg_inf "\n Backup:"
+    printf ' x-ui-backup backup\n\n'
+    msg_inf '============================================================'
+    msg_inf ' Save these credentials before closing the terminal.'
+    msg_inf '============================================================'
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
