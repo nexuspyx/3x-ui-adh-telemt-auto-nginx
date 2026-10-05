@@ -1,6 +1,8 @@
 """Validate fresh-install templates without sourcing or running the installer."""
 
 import json
+import hashlib
+import tarfile
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
@@ -20,6 +22,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "x-ui-latest.sh").read_text()
 PATCH = (ROOT / "x-ui-patch.sh").read_text()
+MONTHLY = ('@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" '
+           '--post-hook "systemctl start nginx" > /dev/null 2>&1')
 FIXTURE = {
     "domain": "deploy.example", "reality_domain": "cover.example",
     "xhttp_path": "Session7AbC", "sub_path": "subscription", "json_path": "jsonsub",
@@ -134,7 +138,7 @@ msg_err() { echo "$1" >&2; }
                 ["bash", "-u", "-c", mock + function("setup_firewall") + "\nsetup_firewall\n"],
                 text=True, capture_output=True, env={
                     **os.environ, "FIREWALL_TEST_ROOT": tmp, "SSH_CONNECTION": connection,
-                    "SSHD_OUTPUT": sshd, "SSHD_EXIT": sshd_exit, "FAIL_UFW": fail,
+                    "SSHD_OUTPUT": sshd, "SSHD_EXIT": sshd_exit, "FAIL_UFW": fail, "panel_port": FIXTURE["panel_port"],
                 },
             )
             return result, (root / "calls").read_text().splitlines(), (root / "rules").read_text().splitlines(), (root / "status").read_text().strip()
@@ -200,28 +204,20 @@ msg_err() { echo "$1" >&2; }
 
     def test_panel_and_cli_download_use_the_same_release_tag(self):
         panel = function("install_panel")
-        self.assertNotIn("https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh", panel)
-        self.assertIn('https://raw.githubusercontent.com/MHSanaei/3x-ui/${tag_version}/x-ui.sh', panel)
-        downloads = re.search(r"    wget -N .*?(?=\n    \[\[ -d /usr/local/x-ui/)", panel, re.S).group()
+        self.assertNotIn("raw.githubusercontent.com/MHSanaei/3x-ui", panel)
+        self.assertIn('install -m 0755 x-ui.sh /usr/bin/x-ui', panel)
+        self.assertLess(panel.index("_download_panel_archive"), panel.index("tar zxvf"))
+        self.assertLess(panel.index("tar zxvf"), panel.index("install -m 0755 x-ui.sh"))
+        download = re.search(r"    _download_panel_archive .*?\n        \"\$archive\" \|\| return 1", panel, re.S).group()
         mock = '''_arch() { echo amd64; }
-wget() {
-    local url="${@: -1}"
-    echo "$url" >> "$DOWNLOAD_TEST_LOG"
-    [[ "$FAIL_CLI" != 1 || "$url" != */x-ui.sh ]]
-}
+_download_panel_archive() { printf '%s\\n' "$1"; }
+check() {
 '''
-        with tempfile.TemporaryDirectory() as tmp:
-            log = Path(tmp) / "urls"
-            for tag, fail in (("v3.9.0", "0"), ("v9.8.7", "0"), ("v9.8.7", "1")):
-                with self.subTest(tag=tag, fail=fail):
-                    log.write_text("")
-                    result = subprocess.run(["bash", "-u", "-c", mock + downloads + "\ntrue\n"], text=True, capture_output=True,
-                                            env={**os.environ, "tag_version": tag, "FAIL_CLI": fail, "DOWNLOAD_TEST_LOG": str(log)})
-                    self.assertEqual(result.returncode, int(fail), result.stdout + result.stderr)
-                    self.assertEqual(log.read_text().splitlines(), [
-                        f"https://github.com/MHSanaei/3x-ui/releases/download/{tag}/x-ui-linux-amd64.tar.gz",
-                        f"https://raw.githubusercontent.com/MHSanaei/3x-ui/{tag}/x-ui.sh",
-                    ])
+        for tag in ("v3.8.0", "v3.9.0", "v9.8.7"):
+            with self.subTest(tag=tag):
+                result = subprocess.check_output(["bash", "-eu", "-c", mock + download + "\n}\ncheck"], text=True,
+                                                 env={**os.environ, "tag_version": tag, "archive": "/fixture/archive"})
+                self.assertEqual(result.strip(), f"https://github.com/MHSanaei/3x-ui/releases/download/{tag}/x-ui-linux-amd64.tar.gz")
 
     def test_setup_cron_without_scheduled_restart(self):
         functions = re.findall(r"^setup_cron\(\)\s*\{.*?^\}", SOURCE, re.M | re.S)
@@ -230,32 +226,132 @@ wget() {
             '@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" '
             '--post-hook "systemctl start nginx" > /dev/null 2>&1'
         )
-        preserved = "@hourly /usr/local/bin/backup"
-        legacy = (
-            "@daily x-ui restart > /dev/null 2>&1 && nginx -s reload\n"
-            "0 3 * * * systemctl restart x-ui\n"
-            "@monthly certbot renew --old-option\n"
-            "@daily /opt/cloudflareips\n" + preserved + "\n"
-        )
-        # Mock only crontab; run the isolated function, never the installer/main.
-        mock = '''crontab() {
+        preserved = [
+            "@hourly /usr/local/bin/backup",
+            "0 3 * * * /opt/x-ui-metrics",
+            "@weekly certbot certificates > /root/cert-report",
+            "@daily /opt/cloudflareips",
+            "# Administrator's certbot/x-ui tasks",
+        ]
+        existing = "\n".join(preserved + [monthly, monthly]) + "\n"
+        for initial, expected in (("", [monthly]), (existing, preserved + [monthly])):
+            with self.subTest(initial=initial):
+                result, cron = self.cron_setup(initial, runs=2)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                # No replacement restart/reload job may be added, at any schedule.
+                self.assertEqual(cron.splitlines(), expected)
+
+    def cron_setup(self, initial, failure="", runs=1):
+        # Only isolated cron functions execute; no real crontab/systemd changes.
+        mock = r'''msg_err() { echo "$*" >&2; }
+command() {
+    [[ "$FAIL_CRON" == missing && "$*" == '-v crontab' ]] && return 1
+    builtin command "$@"
+}
+systemctl() { [[ "$FAIL_CRON" != "$1" ]]; }
+crontab() {
     case "$1" in
-        -l) cat "$CRON_TEST_FILE" ;;
-        -) cat > "$CRON_TEST_FILE.new"; mv "$CRON_TEST_FILE.new" "$CRON_TEST_FILE" ;;
+        -l)
+            [[ "$FAIL_CRON" == read ]] && { echo 'permission denied' >&2; return 1; }
+            [[ -f "$CRON_TEST_FILE" ]] || { echo 'no crontab for root' >&2; return 1; }
+            cat "$CRON_TEST_FILE" ;;
+        -)
+            [[ "$FAIL_CRON" == write ]] && return 1
+            cat > "$CRON_TEST_FILE"
+            [[ "$FAIL_CRON" == dropped ]] && : > "$CRON_TEST_FILE"
+            [[ "$FAIL_CRON" == duplicate ]] && printf '%s\n' "$MANAGED_CRON" >> "$CRON_TEST_FILE"
+            return 0 ;;
         *) return 2 ;;
     esac
 }
 '''
-        for initial, expected in (("", [monthly]), (legacy, [preserved, monthly])):
-            with self.subTest(initial=initial), tempfile.TemporaryDirectory() as tmp:
-                cron = Path(tmp) / "crontab"
+        with tempfile.TemporaryDirectory() as tmp:
+            cron = Path(tmp) / "crontab"
+            if initial is not None:
                 cron.write_text(initial)
-                subprocess.run(
-                    ["bash", "-eu", "-c", mock + functions[0] + "\nsetup_cron\n"],
-                    check=True, env={**os.environ, "CRON_TEST_FILE": str(cron)},
-                )
-                # No replacement restart/reload job may be added, at any schedule.
-                self.assertEqual(cron.read_text().splitlines(), expected)
+            script = mock + function("check_cron") + "\n" + function("setup_cron")
+            script += "\n" + "setup_cron || exit 1\n" * runs + "echo cron-success\n"
+            result = subprocess.run(["bash", "-u", "-c", script], capture_output=True, text=True, env={
+                **os.environ, "MANAGED_CRON": MONTHLY, "CRON_TEST_FILE": str(cron), "FAIL_CRON": failure,
+            })
+            return result, cron.read_text() if cron.exists() else ""
+
+    def test_cron_setup_fails_closed_and_handles_absent_root_crontab(self):
+        self.assertIn("MANAGED_CRON=" + shlex.quote(MONTHLY), SOURCE)
+        self.assertRegex(function("main"), r"setup_cron\s*\|\|.*exit 1")
+        result, cron = self.cron_setup(None)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(cron, MONTHLY + "\n")
+        for failure in ("missing", "read", "write", "dropped", "duplicate", "is-active", "is-enabled"):
+            with self.subTest(failure=failure):
+                result, _ = self.cron_setup("@hourly /opt/unrelated\n", failure)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("cron-success", result.stdout)
+
+    def test_ws_host_uses_only_http11_alpn(self):
+        for grouped in (False, True):
+            with self.subTest(group_id=grouped):
+                rows, hosts = seed(group_id=grouped)
+                ws = [h for h in hosts if h["inbound_id"] == rows["ws"]["id"]]
+                self.assertEqual(len(ws), 1)
+                self.assertEqual(json.loads(ws[0]["alpn"]), ["http/1.1"])
+                for name in ("xhttp", "trojan-grpc"):
+                    host = next(h for h in hosts if h["inbound_id"] == rows[name]["id"])
+                    self.assertEqual(json.loads(host["alpn"]), ["h2", "http/1.1"])
+
+    def test_installer_dependencies_and_cron_activation_are_required(self):
+        mock = r'''msg_err() { echo "$*" >&2; }
+apt() { echo "apt $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != apt ]]; }
+apt-get() { echo "apt-get $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != apt ]]; }
+systemctl() { echo "systemctl $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != cron || "$*" != 'enable --now cron' ]]; }
+command() { [[ "$*" != "-v $FAIL_DEP" ]]; }
+'''
+        required = {"cron", "openssl", "procps", "psmisc", "iproute2", "tar", "gzip", "tzdata", "ca-certificates",
+                    "curl", "wget", "jq", "bash", "sudo", "nginx-full", "certbot", "python3-certbot-nginx",
+                    "sqlite3", "ufw", "netcat-openbsd", "mtr", "python3", "libcap2-bin"}
+        self.assertRegex(function("main"), r"install_packages\s*\|\|.*exit 1")
+        for failure in ("", "apt", "crontab", "sysctl", "ip", "fuser", "cron"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                log = Path(tmp) / "calls"
+                result = subprocess.run(["bash", "-u", "-c", mock + function("install_packages") + "\ninstall_packages\n"],
+                                        capture_output=True, text=True, env={**os.environ, "Pak": "apt", "INSTALL": "y",
+                                                                            "TEST_LOG": str(log), "FAIL_DEP": failure})
+                self.assertEqual(result.returncode, 1 if failure else 0, result.stderr)
+                if not failure:
+                    calls = log.read_text().splitlines()
+                    packages = next(c.split()[3:] for c in calls if c.startswith("apt -y install "))
+                    self.assertTrue(required.issubset(packages))
+                    self.assertEqual(calls[-1], "systemctl enable --now cron")
+
+    def test_installer_final_health_gate_precedes_success_output(self):
+        main = function("main")
+        self.assertRegex(main, r"check_installation\s*\|\|.*exit 1")
+        self.assertLess(main.index("check_installation"), main.index("show_results"))
+        mock = r'''msg_err() { echo "$*" >&2; }
+systemctl() { [[ "$FAIL_HEALTH" != "$1:$3" ]]; }
+nginx() { [[ "$FAIL_HEALTH" != nginx-test ]]; }
+crontab() {
+    [[ "$FAIL_HEALTH" == cron-read ]] && return 1
+    [[ "$FAIL_HEALTH" == cron-missing ]] && return 0
+    printf '%s\n' "$MANAGED_CRON"
+    [[ "$FAIL_HEALTH" == cron-duplicate ]] && printf '%s\n' "$MANAGED_CRON"
+    return 0
+}
+sleep() { :; }
+'''
+        failures = ("", "is-active:x-ui", "is-active:nginx", "is-active:mtr-backend", "is-active:cron",
+                    "is-enabled:cron", "nginx-test", "cron-read", "cron-missing", "cron-duplicate", "socket")
+        for failure in failures:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "xhttp.sock"
+                with socket.socket(socket.AF_UNIX) as uds:
+                    if failure != "socket":
+                        uds.bind(str(path))
+                    script = mock + function("check_cron") + "\n" + function("check_installation").replace("/dev/shm/uds2023.sock", str(path))
+                    result = subprocess.run(["bash", "-u", "-c", script + "\ncheck_installation || exit 1\necho final-success\n"],
+                                            capture_output=True, text=True, env={**os.environ, "MANAGED_CRON": MONTHLY, "FAIL_HEALTH": failure})
+                    self.assertEqual(result.returncode, 1 if failure else 0, result.stderr)
+                    self.assertEqual("final-success" in result.stdout, not bool(failure))
 
     def test_inbound_and_sniffing(self):
         rows = inbounds()
@@ -332,7 +428,7 @@ wget() {
 
     def test_reality_profile_is_preserved(self):
         row = inbounds()["reality"]
-        self.assertEqual((row["port"], row["listen"], row["tag"]), ("8443", "", "inbound-8443"))
+        self.assertEqual((row["port"], row["listen"], row["tag"]), ("8443", "127.0.0.1", "inbound-8443"))
         self.assertEqual(json.loads(row["settings"]), {"clients": [], "decryption": "none", "fallbacks": []})
         self.assertEqual(json.loads(row["stream_settings"]), {
             "network": "tcp", "security": "reality",
@@ -370,7 +466,7 @@ wget() {
         for directive in (
             "http2_max_concurrent_streams 256;", "http2_body_preread_size 128k;",
             "client_body_buffer_size 512k;", "real_ip_header proxy_protocol;",
-            "set_real_ip_from 127.0.0.1;", "listen 7443 ssl http2 proxy_protocol;",
+            "set_real_ip_from 127.0.0.1;", "listen 127.0.0.1:7443 ssl http2 proxy_protocol;",
         ):
             self.assertIn(directive, main)
         stream = render("cat > /etc/nginx/stream-enabled/stream.conf")
@@ -556,6 +652,197 @@ die() { echo "$*" >&2; exit 1; }
             for line in source.splitlines():
                 if "raw.githubusercontent.com/mozaroc/3x-ui-pro" in line:
                     self.assertTrue(line.lstrip().startswith("#"), "Unexpected upstream runtime source")
+
+    def test_panel_bootstrap_uses_final_random_config_without_starting_services(self):
+        self.assertNotIn("asdfasdf", SOURCE)
+        self.assertNotIn('"2096"', SOURCE)
+        initial = function("_panel_initial_config")
+        for name in ("install_panel", "configure_xui_db"):
+            self.assertNotRegex(function(name), r"(?m)^\s*(?:systemctl\s+(?:start|restart)\s+x-ui|x-ui\s+(?:start|restart))\b")
+        main = function("main")
+        self.assertEqual(len(re.findall(r"(?m)^\s*x-ui restart\b", main)), 1)
+        self.assertGreater(main.index("x-ui restart"), main.index("configure_xui_db"))
+        self.assertRegex(main, r"install_panel\s*\|\|\s*exit 1")
+        self.assertRegex(main, r"configure_xui_db\s*\|\|\s*exit 1")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log = root / "calls"
+            executable = root / "panel"
+            executable.write_text('''#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ["PANEL_TEST_LOG"], "a") as log: log.write(json.dumps(sys.argv[1:]) + "\\n")
+sys.exit(1 if sys.argv[1] == os.environ["FAIL_PANEL_COMMAND"] else 0)
+''')
+            executable.chmod(0o755)
+            script = 'sqlite3() { echo "$PANEL_SAVED_STATE"; }\nmsg_err() { echo "$*" >&2; }\n' + initial.replace("/usr/local/x-ui/x-ui", str(executable)) + "\n_panel_initial_config\n"
+            for failed in ("", "setting", "migrate", "unsaved-state"):
+                with self.subTest(failed=failed):
+                    log.write_text("")
+                    result = subprocess.run(["bash", "-u", "-c", script], capture_output=True, text=True, env={
+                        **os.environ, "PANEL_TEST_LOG": str(log), "FAIL_PANEL_COMMAND": failed,
+                        "config_username": "fixture-user", "config_password": "fixture-secret",
+                        "panel_port": "10002", "panel_path": "fixture-path", "XUIDB": str(root / "db"),
+                        "PANEL_SAVED_STATE": "admin|0.0.0.0|2053|/" if failed == "unsaved-state" else "fixture-user||10002|/fixture-path/",
+                    })
+                    calls = [json.loads(line) for line in log.read_text().splitlines()]
+                    self.assertEqual(calls[0], ["setting", "-username", "fixture-user", "-password", "fixture-secret",
+                                                "-port", "10002", "-webBasePath", "fixture-path"])
+                    self.assertEqual(calls[1:], [] if failed == "setting" else [["migrate"]])
+                    self.assertEqual(result.returncode, 1 if failed else 0)
+
+    def test_firewall_does_not_open_panel_port_for_mtls_automatically(self):
+        for status, connection, expected in (
+            ("active", "", ["80/tcp", "443/tcp", "443/udp"]),
+            ("inactive", "198.51.100.10 54321 203.0.113.5 2222", ["80/tcp", "443/tcp", "443/udp", "2222/tcp"]),
+            ("inactive", "", ["80/tcp", "443/tcp", "443/udp"]),
+        ):
+            with self.subTest(status=status, connection=connection):
+                result, calls, _, _ = self.firewall(status, connection)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                allowed = [call.split()[1] for call in calls if call.startswith("allow ")]
+                self.assertCountEqual(allowed, expected)
+                self.assertNotIn(FIXTURE["panel_port"], [rule.split("/")[0] for rule in allowed])
+
+    def test_panel_version_minimum_is_checked_before_destructive_actions(self):
+        start = SOURCE.index('while [ "$#" -gt 0 ]; do')
+        end = SOURCE.index("# ─── Detect package manager")
+        preflight = SOURCE[start:end]
+        self.assertLess(end, SOURCE.index('    uninstall_xui\n'))
+        for version, accepted in (("v3.7.0", False), ("v3.7.99", False), ("v3.8.0", True), ("v3.8.5", True),
+                                  ("v3.9.0", True), ("3.10.0", True), ("v4.0.0", True),
+                                  ("v3.08.0", False), ("v3.8", False), ("latest", False), ("", False)):
+            with self.subTest(version=version):
+                script = 'PANEL_VERSION=""\nmsg_err() { echo "$*" >&2; }\n' + preflight + '\necho destructive-actions\n'
+                result = subprocess.run(["bash", "-u", "-c", script, "fixture", "-version", version], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0 if accepted else 1, result.stderr)
+                self.assertEqual("destructive-actions" in result.stdout, accepted)
+
+    def test_panel_mtls_bind_and_managed_backend_listeners(self):
+        rows = inbounds()
+        for name in ("reality", "ws", "trojan-grpc"):
+            self.assertEqual(rows[name]["listen"], "127.0.0.1", name)
+        self.assertEqual((rows["hysteria2"]["listen"], rows["hysteria2"]["port"], rows["hysteria2"]["enable"]), ("", "443", "1"))
+        self.assertEqual(rows["xhttp"]["listen"], "/dev/shm/uds2023.sock,0666")
+        sql = render("sqlite3 $XUIDB", XUIDB="/fixture/x-ui.db").split('INSERT INTO "inbounds"', 1)[0]
+        with sqlite3.connect(":memory:") as db:
+            db.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)')
+            db.executemany('INSERT INTO settings VALUES (?,?)', [("webListen", "0.0.0.0"), ("subListen", "::")])
+            db.executescript(sql)
+            values = dict(db.execute('SELECT key,value FROM settings'))
+        self.assertEqual(values["webListen"], "", "Native node mTLS needs an external-capable panel listener")
+        self.assertNotIn("-listenIP", function("_panel_initial_config") + function("configure_xui_db"))
+        self.assertEqual(values["subListen"], "127.0.0.1")
+
+    def test_nginx_internal_tls_listeners_are_loopback_only(self):
+        for target, port in ((MAIN, "7443"), ('cat > "/etc/nginx/sites-available/${reality_domain}"', "9443")):
+            with self.subTest(port=port):
+                self.assertEqual(re.findall(r"(?m)^\s*listen\s+(\S+)", render(target)), ["127.0.0.1:" + port])
+        stream = render("cat > /etc/nginx/stream-enabled/stream.conf")
+        self.assertRegex(stream, r"\blisten\s+443;")
+        self.assertIn("127.0.0.1:8443", stream)
+        self.assertIn("127.0.0.1:7443", stream)
+
+    def release_stage(self, failure=""):
+        # Execute only the isolated download/extraction block, relocated into a
+        # private directory. curl/systemctl are mocked; tar and sha256sum are real.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            destination = root / "local"
+            destination.mkdir()
+            (destination / "x-ui").mkdir()
+            (destination / "x-ui" / "old-state").write_text("preserve until verified")
+            cli = root / "x-ui.sh"
+            cli.write_text("#!/bin/bash\necho verified-release\n")
+            archive = root / "fixture.tar.gz"
+            with tarfile.open(archive, "w:gz") as bundle:
+                bundle.add(cli, arcname="x-ui/x-ui.sh")
+            checksum = root / "fixture.sha256"
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            checksum.write_text(("0" * 64 if failure == "mismatch" else "bad-hash" if failure == "malformed" else digest) + "  x-ui-linux-amd64.tar.gz\n")
+            log = root / "calls"
+            log.write_text("")
+            panel = function("install_panel")
+            block = panel[panel.index('    archive=$(mktemp'):panel.index('    cd x-ui')]
+            block = block.replace("/usr/local", str(destination))
+            mock = '''_arch() { echo amd64; }
+msg_err() { echo "$*" >&2; }
+systemctl() { :; }
+curl() {
+    local url="" output=""
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -o) output="$2"; shift 2 ;;
+            https://*) url="$1"; shift ;;
+            *) shift ;;
+        esac
+    done
+    printf '%s\\n' "$url" >> "$RELEASE_LOG"
+    if [[ "$url" == *.sha256 ]]; then
+        [[ "$RELEASE_FAILURE" != checksum-download ]] || { echo partial > "$output"; return 22; }
+        cp "$CHECKSUM_FIXTURE" "$output"
+    else
+        [[ "$RELEASE_FAILURE" != archive-download ]] || { echo partial > "$output"; return 22; }
+        cp "$ARCHIVE_FIXTURE" "$output"
+    fi
+}
+tar() { echo extract >> "$RELEASE_LOG"; command tar "$@"; }
+stage() {
+'''
+            result = subprocess.run(["bash", "-u", "-c", mock + function("_download_panel_archive") + "\n" + block + "\n}\nstage"],
+                                    capture_output=True, text=True, env={**os.environ,
+                                    "RELEASE_LOG": str(log), "RELEASE_FAILURE": failure,
+                                    "ARCHIVE_FIXTURE": str(archive), "CHECKSUM_FIXTURE": str(checksum), "tag_version": "v3.9.0"})
+            calls = log.read_text().splitlines()
+            self.assertFalse(list(destination.glob("x-ui-release.*")), "Candidates/sidecars must not survive failure or extraction")
+            if failure:
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("extract", calls, "Unverified archive must not reach tar")
+                self.assertTrue((destination / "x-ui" / "old-state").exists())
+            else:
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual((destination / "x-ui" / "x-ui.sh").read_bytes(), cli.read_bytes())
+                self.assertEqual(calls[-1], "extract")
+            return calls
+
+    def test_release_checksum_success_extracts_verified_bundled_cli(self):
+        self.release_stage()
+
+    def test_release_checksum_mismatch_or_invalid_digest_aborts_before_extraction(self):
+        for failure in ("mismatch", "malformed"):
+            with self.subTest(failure=failure):
+                self.release_stage(failure)
+
+    def test_release_download_failure_aborts_before_extraction(self):
+        for failure in ("archive-download", "checksum-download"):
+            with self.subTest(failure=failure):
+                self.release_stage(failure)
+
+    def test_ip_discovery_fallback_is_https_bounded_and_validated(self):
+        self.assertNotRegex(SOURCE, r"(?<!https://)(?:ipv4|ipv6)\.icanhazip\.com")
+        declarations = '\n'.join(line for line in SOURCE.splitlines() if line.startswith(('IP4_REGEX=', 'IP6_REGEX=')))
+        mock = '''ip() { return 1; }
+curl() {
+    printf '%s\\n' "$*" >> "$IP_TEST_LOG"
+    [[ "$IP_BAD_RESULT" == 0 ]] || { echo invalid; return 22; }
+    case "${@: -1}" in
+        https://ipv4.icanhazip.com) echo 203.0.113.5 ;;
+        https://ipv6.icanhazip.com) echo 2001:db8::5 ;;
+        *) return 1 ;;
+    esac
+}
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "calls"
+            for bad in ("0", "1"):
+                with self.subTest(bad=bad):
+                    log.write_text("")
+                    result = subprocess.check_output(["bash", "-u", "-c", mock + declarations + '\n' + function("get_server_ip") + '\nget_server_ip\nprintf "%s|%s" "$IP4" "$IP6"'],
+                                                     text=True, env={**os.environ, "IP_TEST_LOG": str(log), "IP_BAD_RESULT": bad})
+                    self.assertEqual(result, "203.0.113.5|2001:db8::5" if bad == "0" else "|")
+                    for call in log.read_text().splitlines():
+                        self.assertIn("-fsS", call)
+                        self.assertIn("--connect-timeout 5", call)
+                        self.assertIn("--max-time 10", call)
 
     def test_nginx_syntax(self):
         nginx = os.environ.get("NGINX_BIN") or shutil.which("nginx")

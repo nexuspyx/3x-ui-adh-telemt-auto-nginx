@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -52,10 +53,26 @@ args = sys.argv[1:]
 root = pathlib.Path(os.environ['FIXTURE_ROOT'])
 with open(root / 'commands', 'a') as log:
     log.write(json.dumps([name, *args]) + '\n')
+installed_path = root / 'installed-packages'
+installed = set(installed_path.read_text().split()) if installed_path.exists() else set()
+if name in ('python3', 'gzip', 'tar') and name in os.environ.get('MISSING_PACKAGES', '').split() and name not in installed:
+    sys.exit(127)
 if name == 'systemctl':
     path = root / 'services.json'
     services = json.loads(path.read_text())
     command, service = args[0], args[-1]
+    enabled_path = root / 'enabled.json'
+    enabled = json.loads(enabled_path.read_text()) if enabled_path.exists() else {}
+    if command == 'enable':
+        if service == 'cron' and os.environ.get('FAIL_CRON_ENABLE'):
+            sys.exit(1)
+        enabled[service] = True
+        enabled_path.write_text(json.dumps(enabled))
+        if '--now' in args:
+            services[service] = 'active'
+            path.write_text(json.dumps(services))
+    if command == 'is-enabled':
+        sys.exit(0 if enabled.get(service) else 1)
     if command == 'is-active':
         active = services.get(service) == 'active'
         if '--quiet' in args and os.environ.get('FAIL_HEALTH_SERVICE') == service:
@@ -68,6 +85,17 @@ if name == 'systemctl':
     if command in ('start', 'stop'):
         services[service] = 'active' if command == 'start' else 'inactive'
         path.write_text(json.dumps(services))
+        if command == 'start' and service == 'nginx':
+            broken = os.environ.get('BREAK_FINAL_CRON')
+            if broken == 'active':
+                services['cron'] = 'inactive'
+                path.write_text(json.dumps(services))
+            elif broken == 'enabled':
+                enabled['cron'] = False
+                enabled_path.write_text(json.dumps(enabled))
+            elif broken in ('missing', 'duplicate'):
+                cron = root / 'crontab'
+                cron.write_text('' if broken == 'missing' else cron.read_text() * 2)
         if command == 'start' and service == 'x-ui':
             sock = root / 'dev/shm/uds2023.sock'
             sock.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +114,8 @@ elif name == 'crontab':
             sys.exit(1)
         print(path.read_text(), end='')
     elif args == ['-']:
+        if os.environ.get('FAIL_CRON_WRITE'):
+            sys.exit(1)
         path.write_text(sys.stdin.read())
     else:
         sys.exit(2)
@@ -96,12 +126,17 @@ elif name == 'ip':
 elif name == 'curl':
     sys.exit(1)
 elif name == 'dpkg-query':
-    if args[-1] in os.environ.get('MISSING_PACKAGES', '').split():
+    if args[-1] in os.environ.get('MISSING_PACKAGES', '').split() and args[-1] not in installed:
         sys.exit(1)
     print('install ok installed', end='')
 elif name == 'apt-get':
-    if os.environ.get('FAIL_APT'):
+    if os.environ.get('FAIL_APT') and (os.environ['FAIL_APT'] != 'install' or args[0] == 'install'):
         sys.exit(1)
+    if args[0] == 'install':
+        installed.update(arg for arg in args[1:] if not arg.startswith('-'))
+        installed_path.write_text('\n'.join(sorted(installed)))
+elif name in ('python3', 'gzip'):
+    sys.exit(subprocess.call([os.environ['REAL_' + name.upper()], *args]))
 elif name == 'ufw':
     if args == ['status']:
         print('Status: ' + os.environ.get('UFW_STATE', 'inactive'))
@@ -157,7 +192,7 @@ class PersonalBackup(unittest.TestCase):
             commands += ['chown', 'install']
         for name in commands:
             path = self.bin / name
-            path.write_text(MOCK)
+            path.write_text(MOCK.replace('#!/usr/bin/env python3', '#!' + sys.executable, 1))
             path.chmod(0o755)
         sqlite = os.environ.get('SQLITE3_BIN') or shutil.which('sqlite3')
         if not sqlite:
@@ -241,7 +276,7 @@ class PersonalBackup(unittest.TestCase):
     def member(self, path):
         return 'files/' + str(self.path(path)).lstrip('/')
 
-    def changed_archive(self, archive, metadata=None, extra=None, db=None, omit=None):
+    def changed_archive(self, archive, metadata=None, extra=None, db=None, omit=None, managed_cron=None):
         fd, target = tempfile.mkstemp(dir=self.temp.name, suffix='.tar.gz')
         os.close(fd)
         target = Path(target)
@@ -256,6 +291,8 @@ class PersonalBackup(unittest.TestCase):
                     data = json.dumps(meta).encode()
                 if item.name == self.member('/etc/x-ui/x-ui.db') and db is not None:
                     data = db
+                if item.name == 'managed-root-cron' and managed_cron is not None:
+                    data = managed_cron
                 item = copy.copy(item)
                 if data is not None:
                     item.size = len(data)
@@ -469,6 +506,74 @@ class PersonalBackup(unittest.TestCase):
         self.assertIn('192.0.2.10', self.path('/var/www/diagnostics/index.html').read_text())
         self.assertIn('Cannot detect current IPv4', result.stderr)
         self.assertEqual((self.root / 'crontab').read_text(), CRON + '\n')
+
+    def test_restore_dependencies_and_cron_service_contract(self):
+        archive = self.backup()
+        missing = 'cron procps iproute2 tar gzip tzdata'
+        (self.root / 'commands').write_text('')
+        # Even archives from an install with no managed renewal job must recover it.
+        archive = self.changed_archive(archive, managed_cron=b'')
+        (self.root / 'crontab').write_text('@hourly /opt/unrelated\n' + CRON + '\n' + CRON + '\n')
+        result = self.run_tool('restore', archive, MISSING_PACKAGES=missing)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.commands()
+        packages = [package for c in calls if c[:2] == ['apt-get', 'install'] for package in c[4:]]
+        self.assertCountEqual(packages, missing.split())
+        activation = calls.index(['systemctl', 'enable', '--now', 'cron'])
+        self.assertLess(activation, calls.index(['systemctl', 'stop', 'x-ui']))
+        for command in ('is-active', 'is-enabled'):
+            self.assertIn(['systemctl', command, '--quiet', 'cron'], calls)
+            # Checks occur after writing cron and again at the final health gate.
+            self.assertGreater(calls.index(['systemctl', command, '--quiet', 'cron'],
+                                          calls.index(['systemctl', 'start', 'nginx'])), activation)
+        self.assertEqual((self.root / 'crontab').read_text(), '@hourly /opt/unrelated\n' + CRON + '\n')
+        self.assertEqual(json.loads((self.root / 'services.json').read_text())['cron'], 'active')
+        self.assertTrue(json.loads((self.root / 'enabled.json').read_text())['cron'])
+
+    def test_restore_bootstraps_archive_tools_before_first_use(self):
+        archive = self.backup()
+        saved_archive = archive.read_bytes()
+        self.write('/etc/x-ui/marker', 'unchanged')
+        for name in ('python3', 'gzip'):
+            wrapper = self.bin / name
+            wrapper.write_text(MOCK.replace('#!/usr/bin/env python3', '#!' + sys.executable, 1))
+            wrapper.chmod(0o755)
+        self.env.update(REAL_PYTHON3=sys.executable, REAL_GZIP=shutil.which('gzip'))
+        for failed in (True, False):
+            with self.subTest(bootstrap_failure=failed):
+                (self.root / 'commands').write_text('')
+                result = self.run_tool('restore', archive, MISSING_PACKAGES='python3 gzip tar',
+                                       FAIL_APT='install' if failed else '')
+                calls = self.commands()
+                self.assertEqual(archive.read_bytes(), saved_archive)
+                if failed:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn('Restore completed successfully.', result.stdout)
+                    self.assertEqual(self.path('/etc/x-ui/marker').read_text(), 'unchanged')
+                    self.assertFalse(any(c[0] in ('python3', 'gzip', 'tar') or c[:2] == ['systemctl', 'stop'] for c in calls))
+                else:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('Restore completed successfully.', result.stdout)
+                    install = calls.index(['apt-get', 'install', '-y', '--no-install-recommends', 'python3', 'gzip', 'tar'])
+                    gzip_test = next(i for i, c in enumerate(calls) if c[:2] == ['gzip', '-t'])
+                    validation = next(i for i, c in enumerate(calls) if c[:3] == ['python3', '-', str(archive)])
+                    extraction = next(i for i, c in enumerate(calls) if c[:2] == ['tar', '-xzf'])
+                    self.assertLess(install, gzip_test)
+                    self.assertLess(gzip_test, validation)
+                    self.assertLess(validation, extraction)
+
+    def test_restore_cron_failures_never_report_success(self):
+        archive = self.backup()
+        for env in ({'FAIL_CRON_ENABLE': '1'}, {'FAIL_CRON_WRITE': '1'}, {'FAIL_HEALTH_SERVICE': 'cron'},
+                    *({'BREAK_FINAL_CRON': state} for state in ('active', 'enabled', 'missing', 'duplicate'))):
+            with self.subTest(failure=env):
+                (self.root / 'commands').write_text('')
+                result = self.run_tool('restore', archive, **env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('Restore completed successfully.', result.stdout)
+                if 'BREAK_FINAL_CRON' in env:
+                    self.assertIn(['systemctl', 'start', 'nginx'], self.commands())
+                    self.assertIn('[FAIL]', result.stderr)
 
     def test_setcap_failure_is_best_effort_but_service_health_is_required(self):
         archive = self.backup()
