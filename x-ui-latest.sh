@@ -1356,8 +1356,9 @@ show_results() {
     # main() has already passed check_installation for services, nginx and cron.
     msg_ok " [✓] 3x-ui / Xray           Running${version_label}"
     msg_ok ' [✓] nginx                  Running'
-    if [[ -s "/root/cert/${domain}/fullchain.pem" && -s "/root/cert/${domain}/privkey.pem" &&
-          -s "/root/cert/${reality_domain}/fullchain.pem" && -s "/root/cert/${reality_domain}/privkey.pem" ]]; then
+    if [[ -s "/etc/letsencrypt/live/${domain}/fullchain.pem" && -s "/etc/letsencrypt/live/${domain}/privkey.pem" &&
+          -s "/etc/letsencrypt/live/${reality_domain}/fullchain.pem" && -s "/etc/letsencrypt/live/${reality_domain}/privkey.pem" &&
+          -s "/root/cert/${domain}/fullchain.pem" && -s "/root/cert/${domain}/privkey.pem" ]]; then
         msg_ok ' [✓] TLS certificates       Ready'
     else
         msg_warn ' [!] TLS certificates       Check certificate files'

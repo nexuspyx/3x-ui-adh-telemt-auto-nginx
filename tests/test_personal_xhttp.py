@@ -131,6 +131,7 @@ class PersonalXHTTP(unittest.TestCase):
 
     def test_final_summary_is_honest_and_only_follows_health_gate(self):
         summary = function("show_results")
+        self.assertNotIn("/root/cert/${reality_domain}", summary)
         self.assertNotRegex(summary, r"\|\s*x-ui\b")
         self.assertNotIn("nginx -t", summary)
         self.assertLess(function("main").index("check_installation"), function("main").index("show_results"))
@@ -150,14 +151,20 @@ ufw() {
 }
 check_installation() { echo health-gate >> "$SUMMARY_LOG"; [[ "$FAIL_GATE" == 0 ]]; }
 '''
-        scenarios = (("active", False, False, False), ("inactive", False, False, False),
-                     ("unknown", False, False, False), ("active", True, False, False),
-                     ("active", False, True, False), ("active", False, False, True))
-        for state, missing_assets, failed_version, failed_gate in scenarios:
-            with self.subTest(ufw=state, missing_assets=missing_assets, version_failure=failed_version, gate_failure=failed_gate), tempfile.TemporaryDirectory() as tmp:
+        certificates = tuple(
+            f"etc/letsencrypt/live/{domain}/{name}"
+            for domain in (FIXTURE["domain"], FIXTURE["reality_domain"])
+            for name in ("fullchain.pem", "privkey.pem")
+        ) + tuple(f"root/cert/{FIXTURE['domain']}/{name}" for name in ("fullchain.pem", "privkey.pem"))
+        scenarios = (("active", False, False, False, None), ("inactive", False, False, False, None),
+                     ("unknown", False, False, False, None), ("active", True, False, False, None),
+                     ("active", False, True, False, None), ("active", False, False, True, None))
+        scenarios += tuple(("active", False, False, False, path) for path in certificates)
+        for state, missing_assets, failed_version, failed_gate, missing_certificate in scenarios:
+            with self.subTest(ufw=state, missing_assets=missing_assets, version_failure=failed_version, gate_failure=failed_gate, missing_certificate=missing_certificate), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 relocated = summary
-                for path in ("/root/cert", "/var/www/diagnostics", "/usr/local/lib/3x-ui-pro",
+                for path in ("/etc/letsencrypt/live", "/root/cert", "/var/www/diagnostics", "/usr/local/lib/3x-ui-pro",
                              "/usr/local/bin/x-ui-backup", "/usr/local/x-ui/x-ui"):
                     relocated = relocated.replace(path, str(root) + path)
                 binary = root / "usr/local/x-ui/x-ui"
@@ -169,11 +176,17 @@ echo 'x-ui 3.9.0'
 ''')
                 binary.chmod(0o755)
                 if not missing_assets:
-                    for domain in (FIXTURE["domain"], FIXTURE["reality_domain"]):
-                        for name in ("fullchain.pem", "privkey.pem"):
-                            path = root / f"root/cert/{domain}/{name}"
-                            path.parent.mkdir(parents=True, exist_ok=True)
+                    for relative in certificates:
+                        path = root / relative
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        if relative.startswith("root/cert/"):
+                            path.symlink_to(root / f"etc/letsencrypt/live/{FIXTURE['domain']}/{path.name}")
+                        else:
                             path.write_text("fixture certificate")
+                    if missing_certificate:
+                        (root / missing_certificate).unlink()
+                self.assertFalse((root / f"root/cert/{FIXTURE['reality_domain']}").exists())
+                if not missing_assets:
                     for name in ("var/www/diagnostics/index.html", "var/www/diagnostics/speedtest.js",
                                  "var/www/diagnostics/speedtest_worker.js", "usr/local/lib/3x-ui-pro/mtr-backend.py",
                                  "usr/local/bin/x-ui-backup"):
@@ -212,8 +225,11 @@ echo 'x-ui 3.9.0'
                     self.assertIn("review firewall settings", firewall_line)
                 for label in ("TLS certificates", "Diagnostics", "Backup / Restore"):
                     line = next(line for line in result.stdout.splitlines() if label in line and ("[✓]" in line or "[!]" in line))
-                    self.assertIn("\x1b[1;33m" if missing_assets else "\x1b[1;32m", line)
-                    self.assertIn("[!]" if missing_assets else "[✓]", line)
+                    warning = missing_assets or (label == "TLS certificates" and missing_certificate is not None)
+                    self.assertIn("\x1b[1;33m" if warning else "\x1b[1;32m", line)
+                    self.assertIn("[!]" if warning else "[✓]", line)
+                    if label == "TLS certificates":
+                        self.assertIn("Check certificate files" if warning else "Ready", line)
 
     def firewall(self, status, connection="", sshd="", fail="", sshd_exit="0"):
         # Run only setup_firewall; mock all UFW/sshd operations on private files.
