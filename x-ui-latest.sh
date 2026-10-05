@@ -386,13 +386,11 @@ EOF
         grpc_pass unix:/dev/shm/uds2023.sock;
     }
 
-    #Xray generic proxy (WS / gRPC by port+path)
-    location ~ ^/(?<fwdport>\d+)/(?<fwdpath>.*)\$ {
+    # Installer-managed WS: exact path, fixed backend port
+    location = /${ws_port}/${ws_path} {
         if (\$hack = 1) { return 404; }
         client_max_body_size 0;
         client_body_timeout 1d;
-        grpc_read_timeout 1d;
-        grpc_socket_keepalive on;
         proxy_read_timeout 1d;
         proxy_http_version 1.1;
         proxy_buffering off;
@@ -403,18 +401,18 @@ EOF
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        if (\$content_type ~* "GRPC") {
-            grpc_pass grpc://127.0.0.1:\$fwdport\$is_args\$args;
-            break;
-        }
-        if (\$http_upgrade ~* "(WEBSOCKET|WS)") {
-            proxy_pass http://127.0.0.1:\$fwdport\$is_args\$args;
-            break;
-        }
-        if (\$request_method ~* ^(PUT|POST|GET)\$) {
-            proxy_pass http://127.0.0.1:\$fwdport\$is_args\$args;
-            break;
-        }
+        proxy_pass http://127.0.0.1:${ws_port};
+    }
+
+    # Xray custom gRPC serviceName is the full method path (no /Tun suffix)
+    location = /${trojan_port}/${trojan_path} {
+        if (\$hack = 1) { return 404; }
+        client_max_body_size 0;
+        client_body_timeout 1d;
+        grpc_read_timeout 1d;
+        grpc_socket_keepalive on;
+        grpc_set_header Host \$host;
+        grpc_pass grpc://127.0.0.1:${trojan_port};
     }
 
     location / { try_files \$uri \$uri/ =404; }
