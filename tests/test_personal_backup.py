@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -52,6 +53,10 @@ args = sys.argv[1:]
 root = pathlib.Path(os.environ['FIXTURE_ROOT'])
 with open(root / 'commands', 'a') as log:
     log.write(json.dumps([name, *args]) + '\n')
+installed_path = root / 'installed-packages'
+installed = set(installed_path.read_text().split()) if installed_path.exists() else set()
+if name in ('python3', 'gzip', 'tar') and name in os.environ.get('MISSING_PACKAGES', '').split() and name not in installed:
+    sys.exit(127)
 if name == 'systemctl':
     path = root / 'services.json'
     services = json.loads(path.read_text())
@@ -121,12 +126,17 @@ elif name == 'ip':
 elif name == 'curl':
     sys.exit(1)
 elif name == 'dpkg-query':
-    if args[-1] in os.environ.get('MISSING_PACKAGES', '').split():
+    if args[-1] in os.environ.get('MISSING_PACKAGES', '').split() and args[-1] not in installed:
         sys.exit(1)
     print('install ok installed', end='')
 elif name == 'apt-get':
-    if os.environ.get('FAIL_APT'):
+    if os.environ.get('FAIL_APT') and (os.environ['FAIL_APT'] != 'install' or args[0] == 'install'):
         sys.exit(1)
+    if args[0] == 'install':
+        installed.update(arg for arg in args[1:] if not arg.startswith('-'))
+        installed_path.write_text('\n'.join(sorted(installed)))
+elif name in ('python3', 'gzip'):
+    sys.exit(subprocess.call([os.environ['REAL_' + name.upper()], *args]))
 elif name == 'ufw':
     if args == ['status']:
         print('Status: ' + os.environ.get('UFW_STATE', 'inactive'))
@@ -182,7 +192,7 @@ class PersonalBackup(unittest.TestCase):
             commands += ['chown', 'install']
         for name in commands:
             path = self.bin / name
-            path.write_text(MOCK)
+            path.write_text(MOCK.replace('#!/usr/bin/env python3', '#!' + sys.executable, 1))
             path.chmod(0o755)
         sqlite = os.environ.get('SQLITE3_BIN') or shutil.which('sqlite3')
         if not sqlite:
@@ -507,7 +517,7 @@ class PersonalBackup(unittest.TestCase):
         result = self.run_tool('restore', archive, MISSING_PACKAGES=missing)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         calls = self.commands()
-        packages = next(c[4:] for c in calls if c[:2] == ['apt-get', 'install'])
+        packages = [package for c in calls if c[:2] == ['apt-get', 'install'] for package in c[4:]]
         self.assertCountEqual(packages, missing.split())
         activation = calls.index(['systemctl', 'enable', '--now', 'cron'])
         self.assertLess(activation, calls.index(['systemctl', 'stop', 'x-ui']))
@@ -519,6 +529,38 @@ class PersonalBackup(unittest.TestCase):
         self.assertEqual((self.root / 'crontab').read_text(), '@hourly /opt/unrelated\n' + CRON + '\n')
         self.assertEqual(json.loads((self.root / 'services.json').read_text())['cron'], 'active')
         self.assertTrue(json.loads((self.root / 'enabled.json').read_text())['cron'])
+
+    def test_restore_bootstraps_archive_tools_before_first_use(self):
+        archive = self.backup()
+        saved_archive = archive.read_bytes()
+        self.write('/etc/x-ui/marker', 'unchanged')
+        for name in ('python3', 'gzip'):
+            wrapper = self.bin / name
+            wrapper.write_text(MOCK.replace('#!/usr/bin/env python3', '#!' + sys.executable, 1))
+            wrapper.chmod(0o755)
+        self.env.update(REAL_PYTHON3=sys.executable, REAL_GZIP=shutil.which('gzip'))
+        for failed in (True, False):
+            with self.subTest(bootstrap_failure=failed):
+                (self.root / 'commands').write_text('')
+                result = self.run_tool('restore', archive, MISSING_PACKAGES='python3 gzip tar',
+                                       FAIL_APT='install' if failed else '')
+                calls = self.commands()
+                self.assertEqual(archive.read_bytes(), saved_archive)
+                if failed:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn('Restore completed successfully.', result.stdout)
+                    self.assertEqual(self.path('/etc/x-ui/marker').read_text(), 'unchanged')
+                    self.assertFalse(any(c[0] in ('python3', 'gzip', 'tar') or c[:2] == ['systemctl', 'stop'] for c in calls))
+                else:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('Restore completed successfully.', result.stdout)
+                    install = calls.index(['apt-get', 'install', '-y', '--no-install-recommends', 'python3', 'gzip', 'tar'])
+                    gzip_test = next(i for i, c in enumerate(calls) if c[:2] == ['gzip', '-t'])
+                    validation = next(i for i, c in enumerate(calls) if c[:3] == ['python3', '-', str(archive)])
+                    extraction = next(i for i, c in enumerate(calls) if c[:2] == ['tar', '-xzf'])
+                    self.assertLess(install, gzip_test)
+                    self.assertLess(gzip_test, validation)
+                    self.assertLess(validation, extraction)
 
     def test_restore_cron_failures_never_report_success(self):
         archive = self.backup()

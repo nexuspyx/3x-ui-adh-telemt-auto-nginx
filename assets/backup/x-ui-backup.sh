@@ -465,10 +465,9 @@ cmd_restore() {
             die 'Move the archive outside managed paths (for example /var/backups/x-ui) before restore.'
     done
     host_identity
+    # Bootstrap archive tools before validation/extraction; managed state is untouched.
+    install_missing_packages python3 gzip tar
     gzip -t -- "$archive" || die 'Archive gzip integrity check failed.'
-    # Minimal Debian images may lack the Python archive/JSON parser. Bootstrap
-    # only that dependency here; no managed state has been touched yet.
-    if ! command -v python3 >/dev/null; then install_missing_packages python3; fi
     validate_archive "$archive"
     prepare_store restore
     tar -xzf "$archive" -C "$STAGING" --same-owner
