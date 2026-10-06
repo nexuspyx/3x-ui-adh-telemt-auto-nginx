@@ -195,7 +195,7 @@ printf 'CPU_STATE|%s|%s\n' "$CPU_SUPPORT_LEVEL" "$CPU_SUPPORT_TEXT"
         helpers = '\n'.join(re.findall(r'^msg_\w+\(\).*$', SOURCE, re.M))
         # Run the actual main ordering/summary on files; installer operations are no-ops.
         mocks = '\n'.join(name + '() { :; }' for name in (
-            "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
+            "select_adguard", "cleanup_adguard", "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
             "get_ssl_certs", "install_panel", "configure_nginx", "configure_xui_db", "install_clash_sub",
             "install_fake_site", "install_diagnostics", "tune_system", "install_backup_tool", "setup_certificate_renewal", "setup_acme_http", "confirm_destructive_reinstall",
         )) + r'''
@@ -262,7 +262,7 @@ echo 'x-ui 3.9.0'
                 result = subprocess.run(["bash", "-euo", "pipefail", "-c", script], capture_output=True, text=True, env={
                     **os.environ, **FIXTURE, "SUMMARY_LOG": str(log), "UFW_STATE": state,
                     "FAIL_GATE": "1" if failed_gate else "0", "FAIL_VERSION": "1" if failed_version else "0",
-                    "CPUINFO": str(cpuinfo),
+                    "CPUINFO": str(cpuinfo), "INSTALL_AGH": "n",
                     "config_username": "fixture-user", "config_password": "fixture-password",
                 })
                 self.assertEqual(result.returncode, 1 if failed_gate else 0, result.stderr)
@@ -1057,7 +1057,7 @@ curl() {
                     fragment = render(target, source, **http2)
                     fragment = re.sub(r"/etc/letsencrypt/live/[^/]+/fullchain.pem", str(root / "cert.pem"), fragment)
                     fragment = re.sub(r"/etc/letsencrypt/live/[^/]+/privkey.pem", str(root / "key.pem"), fragment)
-                    fragments.append(fragment.replace("/etc/nginx/snippets/includes.conf", str(root / "includes.conf")))
+                    fragments.append(fragment.replace("/etc/nginx/snippets/includes.conf", str(root / "includes.conf")).replace("/etc/nginx/snippets/x-ui-auto-optional", str(root / "optional")))
                 # Relocate only filesystem dependencies; generated HTTP directives stay intact.
                 temp_paths = "".join(
                     f"{kind}_temp_path {root}/{kind};\n"
@@ -1076,6 +1076,7 @@ curl() {
 
 
 from test_certificate_renewal import CertificateRenewal
+from test_adguard import AdGuardInstaller
 
 
 if __name__ == "__main__":

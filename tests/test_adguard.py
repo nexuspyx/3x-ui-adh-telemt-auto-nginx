@@ -1,0 +1,325 @@
+"""Execute integrated AGH paths only on private fixtures; no live installation."""
+import io
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import socket
+import subprocess
+import tarfile
+import tempfile
+import threading
+import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from certificate_fixtures import function, relocate
+
+ROOT = Path(__file__).resolve().parents[1]
+HELPER = (ROOT / 'assets/adguard/managed.sh').read_text()
+INSTALLER = (ROOT / 'x-ui-latest.sh').read_text()
+
+MOCK = r'''
+msg_err() { echo "$*" >&2; }
+msg_warn() { echo "$*"; }
+msg_ok() { echo "$*"; }
+msg_inf() { echo "$*"; }
+check_installation() { echo core-health >> "$CALLS"; }
+uname() { echo "${TEST_ARCH:-x86_64}"; }
+apt-get() { echo "package $*" >> "$CALLS"; [[ "${FAIL:-}" != package ]]; }
+chown() { :; }
+install() {
+    local -a args=()
+    while (( $# )); do case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac; done
+    command install "${args[@]}"
+}
+gen_random_string() {
+    [[ "${FAIL:-}" != random-exit ]] || return 1
+    [[ "${FAIL:-}" != path || "$1" != 12 ]] || { echo short; return; }
+    [[ "${FAIL:-}" != random ]] || { echo short; return; }
+    printf '%*s' "$1" '' | tr ' ' A
+}
+htpasswd() {
+    echo "bcrypt $*" >> "$CALLS"
+    [[ "$*" == '-niB -C 12 admin' ]] || return 1
+    local pass; IFS= read -r pass
+    [[ "$pass" == AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA && "${FAIL:-}" != bcrypt ]] || return 1
+    printf 'admin:$2y$12$'; printf '%053d\n' 0
+}
+python3() {
+    [[ "${FAIL:-}" != extraction || "$*" != *extracted* ]] || return 1
+    command python3 "$@"
+}
+sha256sum() {
+    [[ "${FAIL:-}" != checksum ]] || { echo wrong; return; }
+    echo "c48f4a43000665484c5ec28177de11a004759b620dae8f77b2aabefc9ef3687f  $1"
+}
+systemctl() {
+    echo "systemctl $*" >> "$CALLS"
+    local verb=$1 unit="${!#}"
+    case "$verb" in
+        cat) [[ -f "$ROOT/etc/systemd/system/AdGuardHome.service" ]] || return 1; cat "$ROOT/etc/systemd/system/AdGuardHome.service" ;;
+        show)
+            if [[ "$*" == *FragmentPath* ]]; then echo "$ROOT/etc/systemd/system/AdGuardHome.service";
+            else echo 12345; fi ;;
+        is-active) [[ -e "$ROOT/active" ]]; return $? ;;
+        is-enabled) [[ -e "$ROOT/enabled" ]]; return $? ;;
+        enable) [[ "${FAIL:-}" != start ]] || return 1; touch "$ROOT/enabled" "$ROOT/active" ;;
+        stop) [[ "${FAIL:-}" != cleanup ]] || return 1; rm -f "$ROOT/active" ;;
+        disable) rm -f "$ROOT/enabled" ;;
+        reload)
+            if [[ "${FAIL:-}" == reload && ! -e "$ROOT/reload-failed" ]]; then touch "$ROOT/reload-failed"; return 1; fi ;;
+    esac
+    return 0
+}
+nginx() {
+    echo nginx-test >> "$CALLS"
+    [[ "${FAIL:-}" != nginx || ! -e "$ROOT/etc/nginx/snippets/x-ui-auto-optional/adguard.conf" ]]
+}
+ss() {
+    echo "tcp LISTEN 0 128 127.0.0.1:${AGH_WEB_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=12345,fd=5))"
+    echo "udp UNCONN 0 0 127.0.0.1:${AGH_DNS_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=12345,fd=6))"
+}
+curl() {
+    echo "curl $*" >> "$CALLS"
+    local arg prev='' output='' headers='' url="${!#}"
+    for arg in "$@"; do
+        [[ "$prev" != -o ]] || output=$arg
+        [[ "$prev" != -D ]] || headers=$arg
+        prev=$arg
+    done
+    if [[ "$*" == *assets/adguard/managed.sh* ]]; then cp "$HELPER_FIXTURE" "$output"; return; fi
+    if [[ "$*" == *AdGuardHome_linux_* ]]; then
+        [[ "${FAIL:-}" != download ]] || return 1
+        cp "$ARCHIVE_FIXTURE" "$output"; return
+    fi
+    if [[ "$url" == *login.html ]]; then
+        [[ "${FAIL:-}" != admin ]] || return 1
+        [[ "${FAIL:-}" != admin-body ]] || { echo '<html>unrelated cover page</html>'; return; }
+        echo '<html><script src="login.fixture.js"></script></html>'; return
+    fi
+    if [[ "$url" == http:* ]]; then [[ "${FAIL:-}" != backend ]] || return 1;
+    else [[ "${FAIL:-}" != public ]] || return 1; fi
+    printf 'Content-Type: application/dns-message\r\n' > "$headers"
+    printf '\000\000\200\000\000\001\000\001\000\000\000\000' > "$output"
+    printf 200
+}
+'''
+
+BINARY = '''#!/bin/bash
+echo "binary $*" >> "$CALLS"
+if [[ "$*" == --version ]]; then
+    [[ "${FAIL:-}" != version ]] || { echo wrong; exit; }
+    echo 'AdGuard Home, version v0.107.79'
+elif [[ "$*" == *--check-config* ]]; then
+    [[ "${FAIL:-}" != config ]] || exit 1
+elif [[ "$*" == *'-s install'* ]]; then
+    [[ "${FAIL:-}" != service ]] || exit 1
+    mkdir -p "$ROOT/etc/systemd/system"
+    printf 'ExecStart=%s/opt/AdGuardHome/AdGuardHome -c %s/opt/AdGuardHome/AdGuardHome.yaml -w %s/opt/AdGuardHome -s run --no-check-update\\n' "$ROOT" "$ROOT" "$ROOT" > "$ROOT/etc/systemd/system/AdGuardHome.service"
+    touch "$ROOT/active"
+else exit 1; fi
+'''
+
+
+class AdGuardInstaller(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='agh-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.calls = self.root / 'calls'
+        for directory in ('opt', 'usr/local/lib/3x-ui-pro', 'etc/nginx/snippets/x-ui-auto-optional'):
+            (self.root / directory).mkdir(parents=True)
+        self.helper = self.root / 'helper'
+        self.helper.write_text(relocate(HELPER, self.root))
+        self.certificate_state = self.root / 'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx'
+        self.certificate_state.parent.mkdir(parents=True)
+        self.certificate_state.write_bytes(b'frozen renewal hook fixture')
+        self.archive = self.root / 'archive.tar.gz'
+        with tarfile.open(self.archive, 'w:gz') as tar:
+            d = tarfile.TarInfo('./AdGuardHome'); d.type = tarfile.DIRTYPE; tar.addfile(d)
+            f = tarfile.TarInfo('./AdGuardHome/AdGuardHome'); b = BINARY.encode(); f.size = len(b); f.mode = 0o755; tar.addfile(f, io.BytesIO(b))
+        self.env = {**os.environ, 'ROOT': str(self.root), 'CALLS': str(self.calls), 'HELPER_FIXTURE': str(self.helper),
+                    'ARCHIVE_FIXTURE': str(self.archive), 'GITHUB_RAW': 'https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/' + 'a' * 40,
+                    'domain': 'example.com', 'INSTALL_AGH': 'n'}
+
+    def run_shell(self, names, body, input=None, **env):
+        source = MOCK + '\n' + '\n'.join(relocate(function(n), self.root) for n in names)
+        return subprocess.run(['bash', '-eu', '-c', source + '\n' + body], input=input, text=True,
+                              capture_output=True, env={**self.env, **env})
+
+    def test_prompt_default_yes_reprompt_and_arch_gate(self):
+        for answer, expected in (('\n','n'),('n\n','n'),('N\n','n'),('','n'),('y\n','y'),('Y\n','y'),('bad\ny\n','y')):
+            r = self.run_shell(('select_adguard',), 'select_adguard; echo selection=$INSTALL_AGH', input=answer)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('selection=' + expected, r.stdout)
+            self.assertFalse(self.calls.exists())
+        r = self.run_shell(('select_adguard',), 'select_adguard; echo destruction', input='y\n', TEST_ARCH='mips64')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn('destruction', r.stdout)
+        r = self.run_shell(('select_adguard',), 'select_adguard', input='n\n', TEST_ARCH='mips64')
+        self.assertEqual(r.returncode, 0)
+        main = function('main')
+        self.assertLess(main.index('select_adguard'), main.index('clean_previous_install'))
+        self.assertLess(main.index('check_installation'), main.index('install_adguard'))
+        self.assertLess(main.index('install_adguard'), main.index('show_results'))
+
+    def test_pinned_architecture_hashes_and_retired_tool(self):
+        for arch in ('x86_64','amd64','aarch64','arm64'):
+            r = subprocess.run(['bash','-eu','-c',HELPER+'\nagh_release "$TEST_ARCH"; echo "$AGH_ARCH $AGH_SHA"'],
+                               text=True,capture_output=True,env={**os.environ,'TEST_ARCH':arch})
+            self.assertEqual(r.returncode,0,r.stderr)
+            self.assertRegex(r.stdout,r'^(amd64|arm64) [0-9a-f]{64}\n$')
+        self.assertNotIn('releases/latest', function('adguard_stage'))
+        self.assertIn('tar.extractall', function('adguard_stage'))
+        self.assertLess(function('adguard_stage').index('sha256sum'), function('adguard_stage').index('tar.extractall'))
+        stub = (ROOT / 'x-ui-adguard.sh').read_text()
+        self.assertIn('retired', stub)
+        self.assertNotRegex(stub, r'curl|apt-get|systemctl|rm -')
+        self.assertNotIn('AdGuardHome', function('setup_certificate_renewal'))
+
+    def test_success_config_service_routes_and_password(self):
+        r = self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'), 'install_adguard; echo "path=$AGH_PATH"')
+        self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        config = (self.root/'opt/AdGuardHome/AdGuardHome.yaml').read_text()
+        self.assertIn('schema_version: 34',config)
+        self.assertIn('insecure_enabled: true',config)
+        self.assertIn('      - GET /dns-query\n      - POST /dns-query',config)
+        self.assertNotIn('allow_unencrypted_doh',config)
+        self.assertNotIn('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',config)
+        m = json.loads((self.root/'opt/AdGuardHome/managed.json').read_text())
+        self.assertNotEqual(m['web_port'],m['dns_port'])
+        self.assertGreaterEqual(m['web_port'],10000);self.assertGreaterEqual(m['dns_port'],10000)
+        self.assertEqual(m['path'],'adg-'+'A'*12)
+        log = self.calls.read_text()
+        self.assertNotIn('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',log)
+        self.assertIn('bcrypt -niB -C 12 admin',log)
+        self.assertIn(self.env['GITHUB_RAW'] + '/assets/adguard/managed.sh', log)
+        self.assertLess(log.index('--check-config'),log.index('-s install'))
+        self.assertIn('--no-check-update -s install',log)
+        self.assertIn('--resolve example.com:443:127.0.0.1',log)
+        snippet=(self.root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf').read_text()
+        self.assertIn('location = /dns-query',snippet)
+        self.assertIn('location ^~ /adg-'+'A'*12+'/',snippet)
+        self.assertNotIn('$fwdport',snippet)
+        self.assertNotIn('releases/latest',log)
+
+    def test_failure_matrix_rolls_back_without_false_success(self):
+        for failure in ('package','download','checksum','extraction','version','random','random-exit','path','bcrypt','config','service','start','nginx','reload','backend','public','admin','admin-body'):
+            with self.subTest(failure=failure):
+                self.calls.write_text(''); (self.root/'reload-failed').unlink(missing_ok=True)
+                r=self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'),
+                                 'install_adguard; echo Installation-Complete',FAIL=failure)
+                self.assertNotEqual(r.returncode,0,r.stdout+r.stderr)
+                self.assertNotIn('Installation-Complete',r.stdout)
+                self.assertIn('Core 3x-ui stack remains operational.',r.stdout)
+                self.assertFalse((self.root/'opt/AdGuardHome').exists())
+                self.assertFalse((self.root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf').exists())
+                self.assertFalse((self.root/'etc/systemd/system/AdGuardHome.service').exists())
+                self.assertIn('core-health',self.calls.read_text())
+                self.assertEqual(self.certificate_state.read_bytes(), b'frozen renewal hook fixture')
+                self.assertNotRegex(self.calls.read_text(), r'systemctl (stop|disable) (x-ui|nginx|mtr-backend|certbot)')
+                if failure=='nginx': self.assertNotIn('reload nginx',self.calls.read_text())
+        for data in (b'corrupt',None):
+            if data is not None:self.archive.write_bytes(data)
+            else:
+                with tarfile.open(self.archive,'w:gz') as tar:
+                    f=tarfile.TarInfo('../escape');f.size=1;tar.addfile(f,io.BytesIO(b'x'))
+            r=self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'),'install_adguard; echo Installation-Complete')
+            self.assertNotEqual(r.returncode,0)
+            self.assertFalse((self.root/'opt/AdGuardHome').exists())
+            self.assertNotIn('binary ',self.calls.read_text().split('core-health')[-1])
+
+    def test_cleanup_precedes_core_and_preserves_core_on_failure(self):
+        main=function('main'); uninstall=function('uninstall_xui')
+        self.assertLess(main.index('cleanup_adguard'),main.index('clean_previous_install'))
+        self.assertLess(uninstall.index('cleanup_adguard'),uninstall.index('remove_legacy_certbot_cron'))
+        r=self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'),'install_adguard')
+        self.assertEqual(r.returncode,0,r.stderr)
+        r=self.run_shell(('cleanup_adguard',),'cleanup_adguard; echo core-destruction',FAIL='cleanup')
+        self.assertNotEqual(r.returncode,0);self.assertNotIn('core-destruction',r.stdout)
+        r=self.run_shell(('cleanup_adguard',),'cleanup_adguard')
+        self.assertEqual(r.returncode,0,r.stderr)
+        self.assertFalse((self.root/'opt/AdGuardHome').exists())
+
+    def test_core_first_and_opt_out_has_no_optional_installation(self):
+        operations=('confirm_destructive_reinstall','validate_domains','clean_previous_install','install_packages',
+                    'setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel','configure_nginx',
+                    'configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
+                    'install_backup_tool','setup_certificate_renewal','check_installation','show_results')
+        stubs='\n'.join(n+'() { echo '+n+' >> "$CALLS"; }' for n in operations)
+        stubs+='\ninstall_adguard() { echo optional-AGH >> "$CALLS"; }\nx-ui() { :; }\n'
+        for answer, expected in (('\n',False),('n\n',False),('N\n',False),('y\n',True),('Y\n',True)):
+            self.calls.write_text('')
+            r=self.run_shell(('select_adguard','cleanup_adguard','main'),stubs+'\nmain',input=answer)
+            self.assertEqual(r.returncode,0,r.stderr)
+            log=self.calls.read_text()
+            self.assertEqual('optional-AGH' in log,expected)
+            self.assertNotIn('apache2-utils',log)
+            self.assertFalse((self.root/'opt/AdGuardHome').exists())
+            self.assertFalse((self.root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf').exists())
+            if expected:self.assertLess(log.index('check_installation'),log.index('optional-AGH'))
+
+    def test_optional_summary_and_unit_contract(self):
+        for choice in ('n','y'):
+            r=self.run_shell(('show_results',), 'AGH_PATH=adg-ABCDEFGHIJKL; AGH_PASSWORD=single-secret; panel_path=panel; config_username=user; config_password=panel-pass; reality_domain=cover.example; ufw() { echo "Status: active"; }; show_results',INSTALL_AGH=choice)
+            self.assertEqual(r.returncode,0,r.stderr)
+            self.assertEqual('AdGuard Home:' in r.stdout,choice=='y')
+            self.assertEqual(r.stdout.count('single-secret'),1 if choice=='y' else 0)
+            if choice=='y':self.assertIn('https://example.com/dns-query',r.stdout)
+        r=self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'),'install_adguard')
+        self.assertEqual(r.returncode,0,r.stderr)
+        unit=self.root/'etc/systemd/system/AdGuardHome.service'
+        unit.write_text(unit.read_text().replace('--no-check-update',''))
+        r=subprocess.run(['bash','-c',MOCK+'\nsource "$HELPER_FIXTURE"; agh_unit'],text=True,capture_output=True,env=self.env)
+        self.assertNotEqual(r.returncode,0)
+
+    def test_real_nginx_optional_include_and_exact_routes(self):
+        nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
+        if not nginx:self.skipTest('nginx is required by CI')
+        hits=[]
+        class Backend(BaseHTTPRequestHandler):
+            def do_GET(self):
+                hits.append(('GET',self.path));self.send_response(200);self.end_headers();self.wfile.write(b'backend')
+            def do_POST(self):
+                hits.append(('POST',self.path));self.send_response(200);self.end_headers();self.wfile.write(b'backend')
+            def log_message(self,*args):pass
+        server=ThreadingHTTPServer(('127.0.0.1',0),Backend)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
+        with socket.socket() as s:s.bind(('127.0.0.1',0));port=s.getsockname()[1]
+        optional=self.root/'optional';optional.mkdir()
+        self.root.chmod(0o755)
+        config=self.root/'nginx.conf'
+        paths='\n'.join(f'{kind}_temp_path {self.root}/{kind};' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
+        config.write_text(f'pid {self.root}/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{ access_log off;\n{paths}\nserver {{ listen 127.0.0.1:{port}; include {optional}/*.conf; location / {{ return 404; }} }} }}')
+        cmd=[nginx,'-p',str(self.root)+'/', '-c',str(config)]
+        for enabled in (False,True):
+            if enabled:
+                r=subprocess.run(['bash','-c',HELPER+'\nAGH_WEB_PORT=$PORT; AGH_PATH=adg-ABCDEFGHIJKL; agh_snippet'],
+                                 capture_output=True,text=True,env={**os.environ,'PORT':str(server.server_port)})
+                (optional/'adguard.conf').write_text(r.stdout)
+            checked=subprocess.run(cmd+['-t'],capture_output=True,text=True)
+            self.assertEqual(checked.returncode,0,checked.stderr)
+            subprocess.run(cmd,check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            try:
+                for path,method,status in (('/dns-query','GET',200 if enabled else 404),('/dns-query','POST',200 if enabled else 404),
+                                           ('/dns-query/extra','GET',404),('/3000/test','GET',404),('/9090/api','GET',404),
+                                           ('/adg-ABCDEFGHIJKL/control/status','GET',200 if enabled else 404),('/dns-query','DELETE',403 if enabled else 404)):
+                    url=f'http://127.0.0.1:{port}{path}'
+                    r=subprocess.run(['curl','--noproxy','*','-s','-o','/dev/null','-w','%{http_code}','-X',method,url],text=True,capture_output=True)
+                    self.assertEqual(r.stdout,str(status),(path,method,r.stderr))
+                if enabled:
+                    self.assertIn(('GET','/dns-query'),hits);self.assertIn(('POST','/dns-query'),hits)
+                    self.assertIn(('GET','/control/status'),hits)
+                    self.assertFalse(any('3000' in p or '/extra' in p for _,p in hits))
+                else:self.assertEqual(hits,[])
+            finally:
+                subprocess.run(cmd+['-s','quit'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
+                # Wait for pid removal before starting the next isolated instance.
+                import time
+                for _ in range(50):
+                    if not (self.root/'nginx.pid').exists():break
+                    time.sleep(.02)
+
+
+if __name__=='__main__':unittest.main(verbosity=2)

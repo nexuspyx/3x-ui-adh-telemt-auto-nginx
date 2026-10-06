@@ -91,6 +91,7 @@ INSTALL="y"
 AUTODOMAIN="n"
 CFALLOW="n"
 PANEL_VERSION=""
+INSTALL_AGH=n
 
 # ─── Stop & clean previous install (called from main, after domain validation) ─
 clean_previous_install() {
@@ -215,6 +216,12 @@ detect_existing_installation() {
     if command -v crontab >/dev/null && LC_ALL=C crontab -l 2>/dev/null | grep -Fxq -- "$LEGACY_CERTBOT_CRON"; then
         EXISTING_INSTALL_CATEGORIES+=("Legacy project certificate renewal")
     fi
+    if [[ -e /opt/AdGuardHome || -e /etc/systemd/system/AdGuardHome.service ||
+          -e /etc/nginx/snippets/adguard.conf || -e /etc/nginx/snippets/x-ui-auto-optional/adguard.conf ]] ||
+       systemctl is-active --quiet AdGuardHome 2>/dev/null || systemctl is-enabled --quiet AdGuardHome 2>/dev/null ||
+       grep -RqE 'location.*(/adg-|/dns-query)' /etc/nginx/sites-available /etc/nginx/snippets 2>/dev/null; then
+        EXISTING_INSTALL_CATEGORIES+=("AdGuard Home")
+    fi
     return 0
 }
 
@@ -250,7 +257,24 @@ remove_legacy_certbot_cron() {
     rm -rf "$directory"
 }
 
+cleanup_adguard() {
+    # Only the upstream-generated project unit is owned here; never run an old binary.
+    if systemctl cat AdGuardHome >/dev/null 2>&1 || systemctl is-active --quiet AdGuardHome 2>/dev/null; then
+        local fragment
+        fragment=$(systemctl show -p FragmentPath --value AdGuardHome) || return 1
+        [[ "$fragment" == /etc/systemd/system/AdGuardHome.service ]] || return 1
+        systemctl stop AdGuardHome && systemctl disable AdGuardHome || return 1
+        systemctl is-active --quiet AdGuardHome && return 1
+        rm -f /etc/systemd/system/AdGuardHome.service || return 1
+        systemctl daemon-reload || return 1
+    fi
+    rm -rf /opt/AdGuardHome || return 1
+    rm -f /etc/nginx/snippets/adguard.conf /etc/nginx/snippets/x-ui-auto-optional/adguard.conf || return 1
+    rm -f /usr/local/lib/3x-ui-pro/managed-adguard.sh
+}
+
 uninstall_xui() {
+    cleanup_adguard || { msg_err "Cannot clean AdGuard Home; core deployment was not removed."; return 1; }
     remove_legacy_certbot_cron || { msg_err "Cannot remove the exact legacy certificate renewal job."; return 1; }
     rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx || return 1
     printf 'y\n' | x-ui uninstall 2>/dev/null || true
@@ -417,6 +441,7 @@ get_ssl_certs() {
 # CONFIGURE NGINX
 # ─────────────────────────────────────────────────────────────────────────────
 configure_nginx() {
+    mkdir -p /etc/nginx/snippets/x-ui-auto-optional || return 1
     mkdir -p /etc/nginx/stream-enabled /etc/nginx/snippets
 
     # nginx >= 1.25.1 deprecates "listen ... http2" in favor of "http2 on;";
@@ -767,6 +792,7 @@ server {
         proxy_set_header    X-Real-IP \$remote_addr;
     }
 
+    include /etc/nginx/snippets/x-ui-auto-optional/*.conf;
     include /etc/nginx/snippets/includes.conf;
 }
 EOF
@@ -1565,6 +1591,169 @@ setup_firewall() {
 # ─────────────────────────────────────────────────────────────────────────────
 # SHOW RESULTS
 # ─────────────────────────────────────────────────────────────────────────────
+select_adguard() {
+    INSTALL_AGH=n
+    local answer
+    while true; do
+        printf 'Install AdGuard Home with DNS-over-HTTPS? [y/N]: '
+        if ! IFS= read -r answer; then return 0; fi
+        case "$answer" in
+            ''|n|N) return 0 ;;
+            y|Y)
+                case "$(uname -m)" in
+                    x86_64|aarch64|arm64) INSTALL_AGH=y; return 0 ;;
+                    *) msg_err 'AdGuard Home supports only amd64/arm64; existing deployment was not changed.'; return 1 ;;
+                esac ;;
+            *) printf 'Please enter y or n.\n' ;;
+        esac
+    done
+}
+
+adguard_stage() {
+    # The shared helper is conditional and uses the same validated project ref.
+    curl -fsSL "${GITHUB_RAW}/assets/adguard/managed.sh" -o "$AGH_TEMP/helper" &&
+        bash -n "$AGH_TEMP/helper" || return 1
+    install -o root -g root -m 0600 "$AGH_TEMP/helper" /usr/local/lib/3x-ui-pro/managed-adguard.sh || return 1
+    . /usr/local/lib/3x-ui-pro/managed-adguard.sh
+    agh_release "$(uname -m)" || return 1
+    apt-get install -y --no-install-recommends apache2-utils || return 1
+    curl -fsSL --connect-timeout 15 --max-time 180 \
+        "https://github.com/AdguardTeam/AdGuardHome/releases/download/${AGH_VERSION}/AdGuardHome_linux_${AGH_ARCH}.tar.gz" \
+        -o "$AGH_TEMP/archive" || return 1
+    [[ "$(sha256sum "$AGH_TEMP/archive" | awk '{print $1}')" == "$AGH_SHA" ]] || return 1
+    mkdir "$AGH_TEMP/extracted" || return 1
+    python3 - "$AGH_TEMP/archive" "$AGH_TEMP/extracted" <<'PY'
+import pathlib, sys, tarfile
+with tarfile.open(sys.argv[1], 'r:gz') as tar:
+    names = set()
+    for item in tar:
+        name = item.name.removeprefix('./').rstrip('/')
+        assert name == 'AdGuardHome' or name in {'AdGuardHome/' + n for n in (
+            'AdGuardHome', 'CHANGELOG.md', 'AdGuardHome.sig', 'LICENSE.txt', 'README.md')}
+        assert name not in names
+        names.add(name)
+        assert item.isdir() if name == 'AdGuardHome' else item.isfile()
+    assert 'AdGuardHome/AdGuardHome' in names
+    tar.extractall(sys.argv[2], filter='data')
+PY
+    [[ $? == 0 ]] || return 1
+    [[ -f "$AGH_TEMP/extracted/AdGuardHome/AdGuardHome" && ! -L "$AGH_TEMP/extracted/AdGuardHome/AdGuardHome" ]] || return 1
+    chmod 0755 "$AGH_TEMP/extracted/AdGuardHome/AdGuardHome" || return 1
+    [[ "$("$AGH_TEMP/extracted/AdGuardHome/AdGuardHome" --version)" == "AdGuard Home, version $AGH_VERSION" ]] || return 1
+    mv "$AGH_TEMP/extracted/AdGuardHome" /opt/AdGuardHome || return 1
+    chown -R root:root /opt/AdGuardHome && chmod 0700 /opt/AdGuardHome || return 1
+    AGH_PASSWORD=$(gen_random_string 32) || return 1
+    AGH_PATH="adg-$(gen_random_string 12)" || return 1
+    [[ "$AGH_PASSWORD" =~ ^[A-Za-z0-9]{32}$ && "$AGH_PATH" =~ ^adg-[A-Za-z0-9]{12}$ ]] || return 1
+    local hash ports
+    hash=$(printf '%s\n' "$AGH_PASSWORD" | htpasswd -niB -C 12 admin) || return 1
+    hash=${hash#admin:}
+    [[ "$hash" =~ ^\$2[aby]\$12\$[./A-Za-z0-9]{53}$ ]] || return 1
+    # Binding both TCP and UDP sockets avoids the core generator's TCP-only probe.
+    ports=$(python3 - <<'PY'
+import secrets, socket
+sockets = []
+try:
+    for _ in range(100):
+        port = 10000 + secrets.randbelow(55536)
+        try:
+            tcp, udp = socket.socket(), socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            tcp.bind(('127.0.0.1', port)); udp.bind(('127.0.0.1', port))
+        except OSError:
+            tcp.close(); udp.close(); continue
+        sockets.extend([tcp, udp]); print(port)
+        if len(sockets) == 4: break
+    assert len(sockets) == 4
+finally:
+    for s in sockets: s.close()
+PY
+    ) || return 1
+    local -a selected
+    mapfile -t selected <<< "$ports"
+    AGH_WEB_PORT=${selected[0]} AGH_DNS_PORT=${selected[1]} AGH_DOMAIN=$domain
+    cat > /opt/AdGuardHome/AdGuardHome.yaml <<EOFAGH
+http:
+  address: 127.0.0.1:${AGH_WEB_PORT}
+  doh:
+    insecure_enabled: true
+    routes:
+      - GET /dns-query
+      - POST /dns-query
+users:
+  - name: admin
+    password: '${hash}'
+auth_attempts: 5
+block_auth_min: 15
+dns:
+  bind_hosts:
+    - 127.0.0.1
+  port: ${AGH_DNS_PORT}
+  upstream_dns:
+    - https://dns.cloudflare.com/dns-query
+    - https://dns.google/dns-query
+    - https://dns.quad9.net/dns-query
+  bootstrap_dns:
+    - 1.1.1.1
+    - 8.8.8.8
+    - 9.9.9.9
+  trusted_proxies:
+    - 127.0.0.1/32
+filtering:
+  protection_enabled: true
+  filtering_enabled: true
+filters:
+  - enabled: true
+    url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt
+    name: AdGuard DNS filter
+    id: 1
+tls:
+  enabled: false
+schema_version: 34
+EOFAGH
+    [[ $? == 0 ]] || return 1
+    chmod 0600 /opt/AdGuardHome/AdGuardHome.yaml || return 1
+    python3 - /opt/AdGuardHome/managed.json "$domain" "$AGH_PATH" "$AGH_WEB_PORT" "$AGH_DNS_PORT" "$AGH_ARCH" <<'PY'
+import json, sys
+file, domain, path, web, dns, arch = sys.argv[1:]
+with open(file, 'w') as out:
+    json.dump(dict(version='v0.107.79', domain=domain, path=path, web_port=int(web), dns_port=int(dns), arch=arch), out)
+PY
+    [[ $? == 0 ]] || return 1
+    chmod 0600 /opt/AdGuardHome/managed.json || return 1
+    agh_install_service || return 1
+    agh_snippet > "$AGH_TEMP/candidate" || return 1
+    install -o root -g root -m 0600 "$AGH_TEMP/candidate" /etc/nginx/snippets/x-ui-auto-optional/adguard.conf || return 1
+    nginx -t || return 1
+    AGH_NGINX_RELOAD_ATTEMPTED=1
+    systemctl reload nginx && agh_health && check_installation
+}
+
+install_adguard() {
+    local AGH_TEMP had_snippet=0 result=0 AGH_NGINX_RELOAD_ATTEMPTED=0
+    AGH_TEMP=$(mktemp -d) || return 1
+    chmod 0700 "$AGH_TEMP" || { rm -rf "$AGH_TEMP"; return 1; }
+    if [[ -e /etc/nginx/snippets/x-ui-auto-optional/adguard.conf ]]; then
+        cp -a /etc/nginx/snippets/x-ui-auto-optional/adguard.conf "$AGH_TEMP/previous" || { rm -rf "$AGH_TEMP"; return 1; }
+        had_snippet=1
+    fi
+    if ! adguard_stage; then
+        msg_err 'AdGuard Home stage failed.'
+        cleanup_adguard || result=1
+        if (( had_snippet )); then
+            cp -a "$AGH_TEMP/previous" /etc/nginx/snippets/x-ui-auto-optional/adguard.conf || result=1
+        fi
+        nginx -t || result=1
+        if (( AGH_NGINX_RELOAD_ATTEMPTED )); then systemctl reload nginx || result=1; fi
+        check_installation || result=1
+        AGH_PASSWORD=''
+        if (( result == 0 )); then msg_warn 'Core 3x-ui stack remains operational.';
+        else msg_err 'Rollback could not be verified. Inspect nginx and core services.'; fi
+        rm -rf "$AGH_TEMP"
+        return 1
+    fi
+    rm -rf "$AGH_TEMP"
+}
+
 show_results() {
     local version version_label="" firewall
     version=$(/usr/local/x-ui/x-ui -v 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) || version=""
@@ -1601,6 +1790,10 @@ show_results() {
     else
         msg_warn ' [!] Backup / Restore       Backup utility unavailable'
     fi
+    if [[ "${INSTALL_AGH:-n}" == y ]]; then
+        msg_ok ' [✓] AdGuard Home           Running (v0.107.79)'
+        msg_ok ' [✓] DNS-over-HTTPS         Ready'
+    fi
     msg_ok ' [✓] Certificate renewal    Webroot + systemd timer'
     firewall=$(LC_ALL=C ufw status 2>/dev/null) || firewall=""
     case "$firewall" in
@@ -1617,6 +1810,11 @@ show_results() {
     printf '\n Username: %s\n Password: %s\n' "$config_username" "$config_password"
     msg_inf "\n Backup:"
     printf ' x-ui-backup backup\n\n'
+    if [[ "${INSTALL_AGH:-n}" == y ]]; then
+        msg_inf " AdGuard Home: https://${domain}/${AGH_PATH}/"
+        printf ' Login: admin\n Password: %s\n DoH: https://%s/dns-query\n\n' "$AGH_PASSWORD" "$domain"
+        AGH_PASSWORD=''
+    fi
     msg_inf '============================================================'
     msg_inf ' Save these credentials before closing the terminal.'
     msg_inf '============================================================'
@@ -1628,6 +1826,8 @@ show_results() {
 main() {
     confirm_destructive_reinstall || exit 1
     validate_domains
+    select_adguard || exit 1
+    cleanup_adguard || { msg_err "Cannot clean AdGuard Home; core deployment was not removed."; exit 1; }
     clean_previous_install
     install_packages || { msg_err "Dependency setup failed."; exit 1; }
     setup_firewall || { msg_err "Firewall setup failed."; exit 1; }
@@ -1652,6 +1852,7 @@ main() {
     x-ui restart || exit 1
     check_installation || { msg_err "Installation failed mandatory health checks."; exit 1; }
 
+    if [[ "$INSTALL_AGH" == y ]]; then install_adguard || exit 1; fi
     show_results
 }
 

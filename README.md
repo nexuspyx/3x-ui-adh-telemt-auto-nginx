@@ -140,7 +140,7 @@ Restore сам устанавливает отсутствующие application
 - **UFW:** активный UFW получает только правила 80/tcp, 443/tcp и 443/udp. Неактивный включается только после определения и разрешения SSH ports; иначе остаётся выключенным с warning. Существующие rules/default policy сохраняются, жёстко заданного SSH port 22 нет.
 - **Версии:** по умолчанию выбирается latest stable 3x-ui. `-version <tag>` позволяет выбрать релиз панели; binary и CLI берутся из одного tag.
 - **Diagnostics/subscriptions:** MTR/LibreSpeed с авторизацией через панель, JSON и Clash/Mihomo subscriptions. Новые пользовательские WS/gRPC inbounds требуют явных nginx routes; generic proxy к произвольному localhost port отсутствует.
-- **Optional tools:** `x-ui-adguard.sh` сохранён для опциональной интеграции AdGuard Home и дальнейшего развития; основной installer его не запускает. `x-ui-patch.sh` — дополнительная maintenance utility, а не миграция базы или универсальный updater.
+- **Optional AdGuard Home:** installer предлагает интегрированный AGH (по умолчанию **N**). DoH и admin UI используют тот же panel domain и nginx TLS; отдельный домен и публичный :53 не нужны. Установленный AGH включается в Backup/Restore v3. `x-ui-adguard.sh` — retired non-destructive stub. `x-ui-patch.sh` остаётся secondary maintenance utility, а не универсальным updater.
 - **TLS renewal:** webroot `/var/www/acme` + distro `certbot.timer`. Nginx остаётся online и graceful reload применяется после renewal; x-ui перезапускается только при обновлении сертификата панели. Release acceptance включает `certbot renew --dry-run` для обоих сертификатов.
 - **Совместимость:** `/usr/local/lib/3x-ui-pro` и `/etc/sysctl.d/99-3x-ui-pro.conf` намеренно сохранены для Backup/Restore.
 
