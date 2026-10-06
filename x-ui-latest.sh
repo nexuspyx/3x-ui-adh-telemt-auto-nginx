@@ -441,7 +441,7 @@ get_ssl_certs() {
 # CONFIGURE NGINX
 # ─────────────────────────────────────────────────────────────────────────────
 configure_nginx() {
-    mkdir -p /etc/nginx/snippets/x-ui-auto-optional || return 1
+    install -d -o root -g root -m 0755 /etc/nginx/snippets/x-ui-auto-optional || return 1
     mkdir -p /etc/nginx/stream-enabled /etc/nginx/snippets
 
     # nginx >= 1.25.1 deprecates "listen ... http2" in favor of "http2 on;";
@@ -1609,6 +1609,56 @@ select_adguard() {
     done
 }
 
+adguard_admin_probe() {
+    # Install-only: Backup/Restore health never needs the plaintext password.
+    (
+        local directory result
+        directory=$(mktemp -d) || exit 1
+        trap 'rm -rf -- "$directory"' EXIT
+        chmod 0700 "$directory" || exit 1
+        umask 077
+        printf '%s' "$AGH_PASSWORD" | python3 -c 'import json,sys; json.dump({"name":"admin","password":sys.stdin.read()}, sys.stdout)' > "$directory/login.json" || exit 1
+        chmod 0600 "$directory/login.json" || exit 1
+        result=$(curl --noproxy '*' -fsS --connect-timeout 5 --max-time 15 \
+            --resolve "${domain}:443:127.0.0.1" -H 'Content-Type: application/json' \
+            --data-binary "@$directory/login.json" -c "$directory/cookies" \
+            -o "$directory/login-response" -w '%{http_code}' \
+            "https://${domain}/${AGH_PATH}/control/login") || exit 1
+        [[ "$result" == 200 ]] || exit 1
+        # Require nginx's cookie-path rewrite, not merely a successful login HTTP code.
+        python3 - "$directory/cookies" "$domain" "/${AGH_PATH}/" <<'PY'
+import pathlib, sys
+cookie_file, domain, path = sys.argv[1:]
+cookies = []
+for line in pathlib.Path(cookie_file).read_text().splitlines():
+    if line.startswith('#HttpOnly_'):
+        line = line[len('#HttpOnly_'):]
+    elif line.startswith('#'):
+        continue
+    fields = line.split('\t')
+    if len(fields) == 7:
+        cookies.append(fields)
+if not any(c[0].lower() == domain.lower() and c[2] == path and c[5] == 'agh_session' and c[6] for c in cookies):
+    raise ValueError('Missing usable AGH session cookie at the managed admin prefix')
+PY
+        [[ $? == 0 ]] || exit 1
+        result=$(curl --noproxy '*' -fsS --connect-timeout 5 --max-time 15 \
+            --resolve "${domain}:443:127.0.0.1" -b "$directory/cookies" \
+            -o "$directory/status.json" -w '%{http_code}' \
+            "https://${domain}/${AGH_PATH}/control/status") || exit 1
+        [[ "$result" == 200 ]] || exit 1
+        python3 - "$directory/status.json" "$AGH_WEB_PORT" "$AGH_DNS_PORT" <<'PY'
+import json, pathlib, sys
+status = json.loads(pathlib.Path(sys.argv[1]).read_text())
+if not isinstance(status, dict) or status.get('version') != 'v0.107.79' or status.get('running') is not True:
+    raise ValueError('Invalid authenticated AGH status')
+for key, expected in (('http_port', sys.argv[2]), ('dns_port', sys.argv[3])):
+    if type(status.get(key)) is not int or status[key] != int(expected):
+        raise ValueError('Authenticated AGH status does not match managed ports')
+PY
+    )
+}
+
 adguard_stage() {
     # The shared helper is conditional and uses the same validated project ref.
     curl -fsSL "${GITHUB_RAW}/assets/adguard/managed.sh" -o "$AGH_TEMP/helper" &&
@@ -1628,12 +1678,16 @@ with tarfile.open(sys.argv[1], 'r:gz') as tar:
     names = set()
     for item in tar:
         name = item.name.removeprefix('./').rstrip('/')
-        assert name == 'AdGuardHome' or name in {'AdGuardHome/' + n for n in (
-            'AdGuardHome', 'CHANGELOG.md', 'AdGuardHome.sig', 'LICENSE.txt', 'README.md')}
-        assert name not in names
+        if not (name == 'AdGuardHome' or name in {'AdGuardHome/' + n for n in (
+            'AdGuardHome', 'CHANGELOG.md', 'AdGuardHome.sig', 'LICENSE.txt', 'README.md')}):
+            raise ValueError('Invalid AGH unexpected release archive member')
+        if not (name not in names):
+            raise ValueError('Invalid AGH duplicate release archive entry')
         names.add(name)
-        assert item.isdir() if name == 'AdGuardHome' else item.isfile()
-    assert 'AdGuardHome/AdGuardHome' in names
+        if not (item.isdir() if name == 'AdGuardHome' else item.isfile()):
+            raise ValueError('Invalid AGH release archive member type')
+    if not ('AdGuardHome/AdGuardHome' in names):
+        raise ValueError('Invalid AGH required release binary')
     tar.extractall(sys.argv[2], filter='data')
 PY
     [[ $? == 0 ]] || return 1
@@ -1663,7 +1717,8 @@ try:
             tcp.close(); udp.close(); continue
         sockets.extend([tcp, udp]); print(port)
         if len(sockets) == 4: break
-    assert len(sockets) == 4
+    if not (len(sockets) == 4):
+        raise ValueError('Invalid AGH allocation of two TCP/UDP ports')
 finally:
     for s in sockets: s.close()
 PY
@@ -1725,7 +1780,7 @@ PY
     install -o root -g root -m 0600 "$AGH_TEMP/candidate" /etc/nginx/snippets/x-ui-auto-optional/adguard.conf || return 1
     nginx -t || return 1
     AGH_NGINX_RELOAD_ATTEMPTED=1
-    systemctl reload nginx && agh_health && check_installation
+    systemctl reload nginx && agh_health && adguard_admin_probe && check_installation
 }
 
 install_adguard() {

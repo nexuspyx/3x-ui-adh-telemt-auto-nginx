@@ -7,7 +7,7 @@ from pathlib import Path
 import tarfile
 import unittest
 from certificate_fixtures import relocate
-from test_adguard import BINARY, HELPER
+from test_adguard import BINARY, HELPER, OFFICIAL_AMD64_SHA, FIXTURE_BINARY_SHA
 
 
 class AdGuardBackup(unittest.TestCase):
@@ -18,6 +18,8 @@ class AdGuardBackup(unittest.TestCase):
         self.addCleanup(self.fixture.doCleanups)
         self.root=self.fixture.root
         self.fixture.env.update(ROOT=str(self.root), CALLS=str(self.root/'binary-calls'))
+        # Private trusted fixture digest; actual sha256sum remains unstubbed.
+        self.fixture.script.write_text(self.fixture.script.read_text().replace(OFFICIAL_AMD64_SHA, FIXTURE_BINARY_SHA))
 
     def install_fixture(self, active=True):
         f=self.fixture
@@ -42,7 +44,7 @@ schema_version: 34
 ''',0o600)
         f.write('/opt/AdGuardHome/managed.json',json.dumps(dict(version='v0.107.79',arch='amd64',domain='example.com',path='adg-ABCDEFGHIJKL',web_port=18081,dns_port=18082)),0o600)
         f.write('/opt/AdGuardHome/data/querylog.json','persistent query state')
-        f.write('/usr/local/lib/3x-ui-pro/managed-adguard.sh',relocate(HELPER,self.root),0o600)
+        f.write('/usr/local/lib/3x-ui-pro/managed-adguard.sh',relocate(HELPER,self.root).replace(OFFICIAL_AMD64_SHA, FIXTURE_BINARY_SHA),0o600)
         # Generate the exact snippet from the same managed helper.
         import subprocess
         r=subprocess.run(['bash','-c','source "$1"; AGH_WEB_PORT=18081; AGH_PATH=adg-ABCDEFGHIJKL; agh_snippet','fixture',str(f.path('/usr/local/lib/3x-ui-pro/managed-adguard.sh'))],capture_output=True,text=True)
@@ -151,6 +153,7 @@ schema_version: 34
         calls = f.commands()
         for service in ('AdGuardHome', 'nginx', 'x-ui', 'mtr-backend', 'certbot.timer'):
             self.assertNotIn(['systemctl', 'stop', service], calls)
+        return r
 
     def trace_mutation_boundaries(self):
         # Execution trace, rather than only asserting source ordering.
@@ -208,11 +211,67 @@ schema_version: 34
             start = source.index(name + '() {')
             end = source.index('\nEOFNG\n}', start) + len('\nEOFNG\n}') if name == 'agh_snippet' else source.index('\n}\n', start) + 2
             return source[start:end]
-        for name in ('agh_binary', 'agh_config', 'agh_snippet'):
+        for name in ('agh_binary_hash', 'agh_verify_binary', 'agh_binary', 'agh_config', 'agh_snippet'):
             self.assertEqual(function(SOURCE, name), function(HELPER, name))
         preflight = SOURCE[SOURCE.index('preflight_staged_adguard()'):SOURCE.index('cmd_restore()')]
         self.assertNotIn('source ', preflight)
         self.assertNotIn('managed-adguard.sh', preflight)
+
+    def test_optimized_staged_public_bind_and_low_ports_preserve_target(self):
+        f = self.fixture
+        self.install_fixture()
+        archive = f.backup()
+        self.trace_mutation_boundaries()
+        yaml = f.path('/opt/AdGuardHome/AdGuardHome.yaml').read_text()
+        metadata = json.loads(f.path('/opt/AdGuardHome/managed.json').read_text())
+        variants = [
+            {f.member('/opt/AdGuardHome/AdGuardHome.yaml'): (yaml.replace('address: 127.0.0.1:', 'address: 0.0.0.0:'), None)},
+            {f.member('/opt/AdGuardHome/AdGuardHome.yaml'): (yaml.replace('    - 127.0.0.1\n', '    - 0.0.0.0\n'), None)},
+        ]
+        for key, value in (('web_port', 443), ('dns_port', 53)):
+            variants.append({f.member('/opt/AdGuardHome/managed.json'): (json.dumps({**metadata, key: value}), None)})
+        for invalid in variants:
+            with self.subTest(invalid=invalid):
+                r = self.assert_staged_rejection_preserves_target(archive, invalid, PYTHONOPTIMIZE='1')
+                self.assertIn('configuration/binary contract is invalid', r.stderr)
+
+    def test_staged_malicious_binary_is_not_executed_before_hash_check(self):
+        f = self.fixture
+        self.install_fixture()
+        archive = f.backup()
+        self.trace_mutation_boundaries()
+        malicious = '#!/bin/bash\ntouch "$ROOT/binary-mutation"\necho "AdGuard Home, version v0.107.79"\n'
+        for optimize in ('', '1'):
+            with self.subTest(optimize=optimize):
+                r = self.assert_staged_rejection_preserves_target(archive, {
+                    f.member('/opt/AdGuardHome/AdGuardHome'): (malicious, 0o755)}, PYTHONOPTIMIZE=optimize)
+                self.assertIn('executable SHA256 mismatch', r.stderr)
+                self.assertFalse((self.root/'binary-mutation').exists())
+        # No metadata/helper digest override is accepted by production restore code.
+        from test_personal_backup import SOURCE
+        preflight = SOURCE[SOURCE.index('preflight_staged_adguard()'):SOURCE.index('cmd_restore()')]
+        self.assertLess(preflight.index('agh_verify_binary "$ARCH"'), preflight.index('agh_config'))
+
+    def test_verified_fixture_restore_optimized_and_optional_directory_mode(self):
+        f = self.fixture
+        self.install_fixture()
+        archive = f.backup()
+        directory = f.path('/etc/nginx/snippets/x-ui-auto-optional')
+        directory.chmod(0o700)
+        self.trace_mutation_boundaries()
+        r = f.run_tool('restore', archive, PYTHONOPTIMIZE='1')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('Restore completed successfully.', r.stdout)
+        self.assertEqual((self.root/'mutation-trace').read_text().splitlines(),
+                         ['pause_certbot_timer', 'cleanup_adguard', 'replace_managed_state'])
+        self.assertEqual(directory.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(directory.stat().st_uid, os.geteuid())
+        if os.geteuid() == 0:
+            self.assertEqual(directory.stat().st_gid, 0)
+        else:
+            self.assertIn(['install', '-d', '-o', 'root', '-g', 'root', '-m', '0755', str(directory)], f.commands())
+        self.assertIn('--check-config', (self.root/'binary-calls').read_text())
+        self.assertTrue(any(c[0] == 'curl' and '--resolve' in c for c in f.commands()))
 
     def test_present_restore_recreates_service_and_requires_health(self):
         f=self.fixture;self.install_fixture();archive=f.backup()

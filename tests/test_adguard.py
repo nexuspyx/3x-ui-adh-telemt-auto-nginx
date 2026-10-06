@@ -1,4 +1,5 @@
 """Execute integrated AGH paths only on private fixtures; no live installation."""
+import hashlib
 import io
 import json
 import os
@@ -16,6 +17,7 @@ from certificate_fixtures import function, relocate
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = (ROOT / 'assets/adguard/managed.sh').read_text()
+OFFICIAL_AMD64_SHA = '7e247573e63ce771a5925d16ca4ca9344e6e888673244289dc302f0fdfdfbf4e'
 INSTALLER = (ROOT / 'x-ui-latest.sh').read_text()
 
 MOCK = r'''
@@ -51,7 +53,9 @@ python3() {
 }
 sha256sum() {
     [[ "${FAIL:-}" != checksum ]] || { echo wrong; return; }
-    echo "c48f4a43000665484c5ec28177de11a004759b620dae8f77b2aabefc9ef3687f  $1"
+    if [[ "$1" == *archive ]]; then
+        echo "c48f4a43000665484c5ec28177de11a004759b620dae8f77b2aabefc9ef3687f  $1"
+    else command sha256sum "$@"; fi
 }
 systemctl() {
     echo "systemctl $*" >> "$CALLS"
@@ -76,21 +80,41 @@ nginx() {
     [[ "${FAIL:-}" != nginx || ! -e "$ROOT/etc/nginx/snippets/x-ui-auto-optional/adguard.conf" ]]
 }
 ss() {
-    echo "tcp LISTEN 0 128 127.0.0.1:${AGH_WEB_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=12345,fd=5))"
-    echo "udp UNCONN 0 0 127.0.0.1:${AGH_DNS_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=12345,fd=6))"
+    echo "tcp LISTEN 0 128 ${LISTEN_WEB:-127.0.0.1}:${AGH_WEB_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=5))"
+    echo "${DNS_PROTOCOL:-udp} UNCONN 0 0 ${LISTEN_DNS:-127.0.0.1}:${AGH_DNS_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=6))"
 }
 curl() {
     echo "curl $*" >> "$CALLS"
-    local arg prev='' output='' headers='' url="${!#}"
+    local arg prev='' output='' headers='' cookies='' payload='' url="${!#}"
     for arg in "$@"; do
         [[ "$prev" != -o ]] || output=$arg
         [[ "$prev" != -D ]] || headers=$arg
+        [[ "$prev" != -c ]] || cookies=$arg
+        [[ "$prev" != --data-binary ]] || payload=${arg#@}
         prev=$arg
     done
     if [[ "$*" == *assets/adguard/managed.sh* ]]; then cp "$HELPER_FIXTURE" "$output"; return; fi
     if [[ "$*" == *AdGuardHome_linux_* ]]; then
         [[ "${FAIL:-}" != download ]] || return 1
         cp "$ARCHIVE_FIXTURE" "$output"; return
+    fi
+    if [[ "$url" == */control/login ]]; then
+        [[ "${FAIL:-}" != login ]] || return 1
+        [[ "$(stat -c '%a' "$payload")" == 600 && "$(stat -c '%a' "${payload%/*}")" == 700 ]] || return 1
+        python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); sys.exit(0 if p == {"name":"admin","password":"A"*32} else 1)' "$payload" || return 1
+        if [[ "${FAIL:-}" == login-status ]]; then printf 403; return; fi
+        [[ "${FAIL:-}" != cookie ]] || { printf 200; return; }
+        printf '# Netscape HTTP Cookie File\n%s\tFALSE\t/%s/\tFALSE\t9999999999\tagh_session\tfixture-session\n' "$domain" "$AGH_PATH" > "$cookies"
+        [[ "${FAIL:-}" != cookie-path ]] || sed -i "s#/${AGH_PATH}/#/wrong/#" "$cookies"
+        printf 200; return
+    fi
+    if [[ "$url" == */control/status ]]; then
+        [[ "${FAIL:-}" != auth-status ]] || return 1
+        if [[ "${FAIL:-}" == auth-http ]]; then printf 401; return; fi
+        if [[ "${FAIL:-}" == auth-json ]]; then printf invalid > "$output";
+        elif [[ "${FAIL:-}" == auth-response ]]; then printf '{}' > "$output";
+        else printf '{"version":"v0.107.79","running":true,"http_port":%s,"dns_port":%s}' "$AGH_WEB_PORT" "$AGH_DNS_PORT" > "$output"; fi
+        printf 200; return
     fi
     if [[ "$url" == *login.html ]]; then
         [[ "${FAIL:-}" != admin ]] || return 1
@@ -101,6 +125,8 @@ curl() {
     else [[ "${FAIL:-}" != public ]] || return 1; fi
     printf 'Content-Type: application/dns-message\r\n' > "$headers"
     printf '\000\000\200\000\000\001\000\001\000\000\000\000' > "$output"
+    [[ "${FAIL:-}" != dns-body ]] || printf corrupt > "$output"
+    [[ "${FAIL:-}" != dns-failed ]] || printf '\000\000\200\002\000\001\000\001\000\000\000\000' > "$output"
     printf 200
 }
 '''
@@ -121,6 +147,9 @@ else exit 1; fi
 '''
 
 
+FIXTURE_BINARY_SHA = hashlib.sha256(BINARY.encode()).hexdigest()
+
+
 class AdGuardInstaller(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='agh-')
@@ -130,7 +159,8 @@ class AdGuardInstaller(unittest.TestCase):
         for directory in ('opt', 'usr/local/lib/3x-ui-pro', 'etc/nginx/snippets/x-ui-auto-optional'):
             (self.root / directory).mkdir(parents=True)
         self.helper = self.root / 'helper'
-        self.helper.write_text(relocate(HELPER, self.root))
+        # Change only the trusted expected digest in the private test copy, not sha256 execution.
+        self.helper.write_text(relocate(HELPER, self.root).replace(OFFICIAL_AMD64_SHA, FIXTURE_BINARY_SHA))
         self.certificate_state = self.root / 'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx'
         self.certificate_state.parent.mkdir(parents=True)
         self.certificate_state.write_bytes(b'frozen renewal hook fixture')
@@ -143,6 +173,8 @@ class AdGuardInstaller(unittest.TestCase):
                     'domain': 'example.com', 'INSTALL_AGH': 'n'}
 
     def run_shell(self, names, body, input=None, **env):
+        if 'adguard_stage' in names:
+            names = (*names, 'adguard_admin_probe')
         source = MOCK + '\n' + '\n'.join(relocate(function(n), self.root) for n in names)
         return subprocess.run(['bash', '-eu', '-c', source + '\n' + body], input=input, text=True,
                               capture_output=True, env={**self.env, **env})
@@ -272,6 +304,128 @@ class AdGuardInstaller(unittest.TestCase):
         unit.write_text(unit.read_text().replace('--no-check-update',''))
         r=subprocess.run(['bash','-c',MOCK+'\nsource "$HELPER_FIXTURE"; agh_unit'],text=True,capture_output=True,env=self.env)
         self.assertNotEqual(r.returncode,0)
+
+    def test_optimization_preserves_archive_and_port_allocation_checks(self):
+        original = self.archive.read_bytes()
+        for kind in ('unexpected', 'symlink', 'duplicate', 'wrong-directory-type', 'missing-binary'):
+            with self.subTest(kind=kind):
+                with tarfile.open(self.archive, 'w:gz') as tar:
+                    directory = tarfile.TarInfo('AdGuardHome')
+                    directory.type = tarfile.REGTYPE if kind == 'wrong-directory-type' else tarfile.DIRTYPE
+                    tar.addfile(directory, io.BytesIO(b'') if directory.isfile() else None)
+                    binary = tarfile.TarInfo('AdGuardHome/AdGuardHome')
+                    binary.mode = 0o755
+                    binary.size = len(BINARY.encode())
+                    if kind == 'symlink':
+                        binary.type = tarfile.SYMTYPE; binary.linkname = '/tmp/escape'; binary.size = 0
+                    if kind != 'missing-binary':
+                        tar.addfile(binary, io.BytesIO(BINARY.encode()) if binary.isfile() else None)
+                    if kind == 'duplicate': tar.addfile(binary, io.BytesIO(BINARY.encode()))
+                    if kind == 'unexpected': tar.addfile(tarfile.TarInfo('AdGuardHome/unknown'))
+                self.calls.write_text('')
+                r = self.run_shell(('cleanup_adguard', 'adguard_stage', 'install_adguard'),
+                                   'install_adguard; echo Installation-Complete', PYTHONOPTIMIZE='1')
+                self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertNotIn('Installation-Complete', r.stdout)
+                self.assertNotIn('binary ', self.calls.read_text())
+                self.assertFalse((self.root/'opt/AdGuardHome').exists())
+        self.archive.write_bytes(original)
+        allocator = re.search(r"ports=\$\(python3 - <<'PY'\n(.*?)\nPY", function('adguard_stage'), re.S)[1]
+        blocked = ('import socket\nclass Busy:\n def __init__(self,*args): pass\n'
+                   ' def bind(self,*args): raise OSError("port busy")\n def close(self): pass\n'
+                   'socket.socket=Busy\n')
+        r = subprocess.run(['python3', '-c', blocked + allocator], capture_output=True, text=True,
+                           env={**os.environ, 'PYTHONOPTIMIZE': '1'})
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('allocation of two TCP/UDP ports', r.stderr)
+
+    def test_optimization_preserves_config_unit_listener_and_dns_checks(self):
+        r = self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'), 'install_adguard', PYTHONOPTIMIZE='1')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        yaml = self.root/'opt/AdGuardHome/AdGuardHome.yaml'
+        metadata = self.root/'opt/AdGuardHome/managed.json'
+        unit = self.root/'etc/systemd/system/AdGuardHome.service'
+        original_yaml, original_meta, original_unit = yaml.read_text(), metadata.read_text(), unit.read_text()
+        def call(operation, **env):
+            return subprocess.run(['bash', '-eu', '-c', MOCK + '\nsource "$HELPER_FIXTURE"; ' + operation],
+                                  env={**self.env, 'PYTHONOPTIMIZE': '1', **env}, capture_output=True, text=True)
+        self.assertEqual(call('agh_health').returncode, 0)
+        variants = [original_yaml.replace('address: 127.0.0.1:', 'address: 0.0.0.0:'),
+                    original_yaml.replace('    - 127.0.0.1\n', '    - 0.0.0.0\n'),
+                    original_yaml.replace('    - 127.0.0.1\n', '    - 127.0.0.2\n'),
+                    original_yaml.replace('schema_version: 34', 'schema_version: 33'),
+                    original_yaml.replace('  enabled: false', '  enabled: true'),
+                    original_yaml.replace('insecure_enabled: true', 'insecure_enabled: false'),
+                    original_yaml + 'querylog:\n  dir_path: /tmp/unmanaged\n']
+        for invalid in variants:
+            with self.subTest(config=invalid):
+                yaml.write_text(invalid)
+                self.assertNotEqual(call('agh_config').returncode, 0)
+        yaml.write_text(original_yaml)
+        m = json.loads(original_meta)
+        for key, value in (('web_port', 443), ('dns_port', 53), ('dns_port', m['web_port']),
+                           ('web_port', '18081'), ('version', 'bad'), ('arch', 'bad'),
+                           ('path', 'bad'), ('domain', 'bad..domain')):
+            with self.subTest(key=key, value=value):
+                metadata.write_text(json.dumps({**m, key: value}))
+                self.assertNotEqual(call('agh_config').returncode, 0)
+        metadata.write_text('invalid JSON')
+        self.assertNotEqual(call('agh_config').returncode, 0)
+        metadata.write_text(original_meta)
+        for invalid in (original_unit.replace('--no-check-update', ''),
+                        original_unit.replace('-s run', '-s install'),
+                        original_unit.replace(' -w ', ' --wrong-flag ')):
+            with self.subTest(unit=invalid):
+                unit.write_text(invalid)
+                self.assertNotEqual(call('agh_unit').returncode, 0)
+        unit.write_text(original_unit)
+        for env in ({'LISTEN_WEB': '0.0.0.0'}, {'LISTEN_DNS': '0.0.0.0'}, {'LISTEN_DNS': '127.0.0.2'},
+                    {'LISTEN_PID': '7777'}, {'DNS_PROTOCOL': 'tcp'}):
+            self.assertNotEqual(call('agh_config && agh_listeners', **env).returncode, 0)
+        for failure in ('dns-body', 'dns-failed'):
+            self.assertNotEqual(call('agh_config && agh_doh_probe "http://127.0.0.1:$AGH_WEB_PORT/dns-query"', FAIL=failure).returncode, 0)
+
+    def test_authenticated_admin_probe_rolls_back_and_cleans_private_secrets(self):
+        for failure in ('', 'login', 'login-status', 'cookie', 'cookie-path',
+                        'auth-status', 'auth-http', 'auth-json', 'auth-response'):
+            with self.subTest(failure=failure):
+                self.calls.write_text('')
+                r = self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'),
+                                   'install_adguard; echo Installation-Complete', FAIL=failure, PYTHONOPTIMIZE='1')
+                log = self.calls.read_text()
+                self.assertNotIn('A'*32, log + r.stdout + r.stderr)
+                self.assertIn('--resolve example.com:443:127.0.0.1', log)
+                payload = re.search(r'--data-binary @([^ ]+)/login.json', log)[1]
+                self.assertFalse(Path(payload).exists(), 'private login payload/cookies leaked')
+                if failure:
+                    self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+                    self.assertNotIn('Installation-Complete', r.stdout)
+                    self.assertFalse((self.root/'opt/AdGuardHome').exists())
+                    self.assertIn('Core 3x-ui stack remains operational.', r.stdout)
+                else:
+                    self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                    self.assertIn('/control/status', log)
+                    self.assertIn(' -b ', log)
+                    r = self.run_shell(('cleanup_adguard',), 'cleanup_adguard')
+                    self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('AGH_PASSWORD', HELPER)
+        self.assertNotIn('adguard_admin_probe', HELPER)
+
+    def test_production_python_has_no_assert_and_optional_directory_is_owned(self):
+        import ast
+        for name in ('x-ui-latest.sh', 'assets/adguard/managed.sh', 'assets/backup/x-ui-backup.sh'):
+            source = (ROOT/name).read_text()
+            for code in re.findall(r"<<'PY'\n(.*?)^PY$", source, re.M | re.S):
+                self.assertFalse(any(isinstance(node, ast.Assert) for node in ast.walk(ast.parse(code))), name)
+        self.assertIn('install -d -o root -g root -m 0755', function('configure_nginx'))
+        self.assertNotIn('mkdir -p /etc/nginx/snippets/x-ui-auto-optional', INSTALLER)
+        # Execute the actual directory-creation line under a restrictive umask.
+        directory = self.root/'etc/nginx/snippets/x-ui-auto-optional'
+        directory.chmod(0o700)
+        line = next(l.strip() for l in function('configure_nginx').splitlines() if 'install -d' in l and 'x-ui-auto-optional' in l)
+        r = self.run_shell((), 'umask 077; ' + relocate(line, self.root))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(directory.stat().st_mode & 0o777, 0o755)
 
     def test_real_nginx_optional_include_and_exact_routes(self):
         nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')

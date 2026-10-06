@@ -12,8 +12,25 @@ agh_release() {
     esac
 }
 
-agh_binary() {
+# SHA256 of executables extracted from the audited v0.107.79 release archives.
+agh_binary_hash() {
+    case "$1" in
+        amd64|x86_64) printf '%s\n' 7e247573e63ce771a5925d16ca4ca9344e6e888673244289dc302f0fdfdfbf4e ;;
+        arm64|aarch64) printf '%s\n' 64a9b6fc6269247f1973cddbf285aa6ce866d11bd29546b0f4135ba31d2283c8 ;;
+        *) return 1 ;;
+    esac
+}
+
+agh_verify_binary() {
+    local expected actual
     [[ -f "$AGH_DIR/AdGuardHome" && ! -L "$AGH_DIR/AdGuardHome" && -x "$AGH_DIR/AdGuardHome" ]] || return 1
+    expected=$(agh_binary_hash "$1") || return 1
+    actual=$(sha256sum "$AGH_DIR/AdGuardHome") || return 1
+    [[ "${actual%% *}" == "$expected" ]]
+}
+
+agh_binary() {
+    agh_verify_binary "${AGH_ARCH:-$(uname -m)}" || return 1
     [[ "$("$AGH_DIR/AdGuardHome" --version)" == "AdGuard Home, version $AGH_VERSION" ]]
 }
 
@@ -26,38 +43,54 @@ import json, pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
 data_root = pathlib.Path(sys.argv[2])
 m = json.loads((root / 'managed.json').read_text())
-assert m['version'] == 'v0.107.79' and m['arch'] in ('amd64', 'arm64')
-assert re.fullmatch(r'adg-[A-Za-z0-9]{12}', m['path'])
+if not (m['version'] == 'v0.107.79' and m['arch'] in ('amd64', 'arm64')):
+    raise ValueError('Invalid AGH version/architecture')
+if not (re.fullmatch(r'adg-[A-Za-z0-9]{12}', m['path'])):
+    raise ValueError('Invalid AGH admin prefix')
 domain = m['domain']
-assert isinstance(domain, str) and len(domain) <= 253 and '.' in domain
-assert all(re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label) for label in domain.split('.'))
-assert type(m['web_port']) is int and type(m['dns_port']) is int
-assert 10000 <= m['web_port'] <= 65535 and 10000 <= m['dns_port'] <= 65535
-assert m['web_port'] != m['dns_port']
+if not (isinstance(domain, str) and len(domain) <= 253 and '.' in domain):
+    raise ValueError('Invalid AGH domain')
+if not (all(re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label) for label in domain.split('.'))):
+    raise ValueError('Invalid AGH domain labels')
+if not (type(m['web_port']) is int and type(m['dns_port']) is int):
+    raise ValueError('Invalid AGH integer ports')
+if not (10000 <= m['web_port'] <= 65535 and 10000 <= m['dns_port'] <= 65535):
+    raise ValueError('Invalid AGH high ports')
+if not (m['web_port'] != m['dns_port']):
+    raise ValueError('Invalid AGH distinct ports')
 # Read only managed scalar/list fields in the canonical YAML written by AGH.
 # Unrecognized representations fail closed; native --check-config handles YAML.
 s = (root / 'AdGuardHome.yaml').read_text()
 def section(name):
     match = re.search(r'^' + name + r':\s*\n((?:[ \t].*\n|\n)*)', s, re.M)
-    assert match, name
+    if not (match):
+        raise ValueError('Invalid AGH required YAML section')
     return match[1]
 def scalar(text, key):
     matches = re.findall(r'^  ' + key + r':\s*(.*?)\s*$', text, re.M)
-    assert len(matches) == 1, key
+    if not (len(matches) == 1):
+        raise ValueError('Invalid AGH unique YAML field')
     return matches[0].strip('"\'')
-assert re.search(r'^schema_version: 34\s*$', s, re.M)
+if not (re.search(r'^schema_version: 34\s*$', s, re.M)):
+    raise ValueError('Invalid AGH schema 34')
 http, dns, tls = section('http'), section('dns'), section('tls')
-assert scalar(http, 'address') == '127.0.0.1:' + str(m['web_port'])
-assert scalar(dns, 'port') == str(m['dns_port'])
+if not (scalar(http, 'address') == '127.0.0.1:' + str(m['web_port'])):
+    raise ValueError('Invalid AGH loopback HTTP address')
+if not (scalar(dns, 'port') == str(m['dns_port'])):
+    raise ValueError('Invalid AGH DNS port')
 hosts = re.search(r'^  bind_hosts:\s*\n((?:    - .*\n)+)', dns, re.M)
-assert hosts and [x.strip().strip('"\'') for x in re.findall(r'^    - (.*)$', hosts[1], re.M)] == ['127.0.0.1']
-assert scalar(tls, 'enabled') == 'false'
-assert re.search(r'^    insecure_enabled: true\s*$', http, re.M)
+if not (hosts and [x.strip().strip('"\'') for x in re.findall(r'^    - (.*)$', hosts[1], re.M)] == ['127.0.0.1']):
+    raise ValueError('Invalid AGH loopback DNS bind')
+if not (scalar(tls, 'enabled') == 'false'):
+    raise ValueError('Invalid AGH native TLS disabled')
+if not (re.search(r'^    insecure_enabled: true\s*$', http, re.M)):
+    raise ValueError('Invalid AGH DoH insecure bridge')
 for part in ('querylog', 'statistics'):
     p = section(part) if re.search(r'^' + part + ':', s, re.M) else ''
     if p and re.search(r'^  dir_path:', p, re.M):
         directory = scalar(p, 'dir_path')
-        assert not directory or pathlib.Path(directory).resolve().is_relative_to(data_root.resolve())
+        if not (not directory or pathlib.Path(directory).resolve().is_relative_to(data_root.resolve())):
+            raise ValueError('Invalid AGH managed data directory')
 for k in ('web_port', 'dns_port', 'path', 'domain', 'arch'):
     print(m[k])
 PY
@@ -76,18 +109,25 @@ agh_unit() {
 import shlex, sys
 root, unit = sys.argv[1:]
 lines = [l for l in unit.splitlines() if l.startswith('ExecStart=')]
-assert len(lines) == 1
+if not (len(lines) == 1):
+    raise ValueError('Invalid AGH unique ExecStart')
 args = shlex.split(lines[0].split('=', 1)[1])
-assert args[0] == root + '/AdGuardHome'
+if not (args[0] == root + '/AdGuardHome'):
+    raise ValueError('Invalid AGH service executable')
 # Upstream service serializer uses long names and adds -s/--service run.
 def value(short, long):
     key = long if long in args else short
     return args[args.index(key) + 1]
-assert value('-c', '--config') == root + '/AdGuardHome.yaml'
-assert value('-w', '--work-dir') == root
-assert '--no-check-update' in args
-assert value('-s', '--service') == 'run'
-assert len(args) == 8, args
+if not (value('-c', '--config') == root + '/AdGuardHome.yaml'):
+    raise ValueError('Invalid AGH explicit config file')
+if not (value('-w', '--work-dir') == root):
+    raise ValueError('Invalid AGH explicit work directory')
+if not ('--no-check-update' in args):
+    raise ValueError('Invalid AGH disabled update check')
+if not (value('-s', '--service') == 'run'):
+    raise ValueError('Invalid AGH service run action')
+if not (len(args) == 8):
+    raise ValueError('Invalid AGH ExecStart arguments')
 PY
 }
 
@@ -145,11 +185,16 @@ agh_listeners() {
 import sys
 pid, web, dns, listing = sys.argv[1:]
 owned = [l.split() for l in listing.splitlines() if 'pid=' + pid + ',' in l]
-assert owned
-assert all(l[4].startswith('127.0.0.1:') for l in owned)
-assert {l[4] for l in owned} == {'127.0.0.1:' + web, '127.0.0.1:' + dns}
-assert any(l[0] == 'tcp' and l[4].endswith(':' + web) for l in owned)
-assert any(l[0] == 'udp' and l[4].endswith(':' + dns) for l in owned)
+if not (owned):
+    raise ValueError('Invalid AGH owned listeners')
+if not (all(l[4].startswith('127.0.0.1:') for l in owned)):
+    raise ValueError('Invalid AGH loopback listeners')
+if not ({l[4] for l in owned} == {'127.0.0.1:' + web, '127.0.0.1:' + dns}):
+    raise ValueError('Invalid AGH listener endpoints')
+if not (any(l[0] == 'tcp' and l[4].endswith(':' + web) for l in owned)):
+    raise ValueError('Invalid AGH TCP web socket')
+if not (any(l[0] == 'udp' and l[4].endswith(':' + dns) for l in owned)):
+    raise ValueError('Invalid AGH UDP DNS socket')
 PY
 }
 
@@ -165,9 +210,11 @@ agh_doh_probe() {
         python3 - "$directory/body" <<'PY'
 import pathlib, struct, sys
 packet = pathlib.Path(sys.argv[1]).read_bytes()
-assert len(packet) >= 12
+if not (len(packet) >= 12):
+    raise ValueError('Invalid AGH DNS response length')
 _, flags, questions, answers, _, _ = struct.unpack('!6H', packet[:12])
-assert flags & 0x8000 and not flags & 15 and questions == 1 and answers > 0
+if not (flags & 0x8000 and not flags & 15 and questions == 1 and answers > 0):
+    raise ValueError('Invalid AGH successful DNS response')
 PY
     result=$?
     rm -rf "$directory"

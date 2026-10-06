@@ -675,8 +675,24 @@ check_health() {
 
 # Trusted static AGH contract, synchronized with assets/adguard/managed.sh by tests.
 # Embedded so restore never sources an archive-provided shell helper for preflight.
-agh_binary() {
+agh_binary_hash() {
+    case "$1" in
+        amd64|x86_64) printf '%s\n' 7e247573e63ce771a5925d16ca4ca9344e6e888673244289dc302f0fdfdfbf4e ;;
+        arm64|aarch64) printf '%s\n' 64a9b6fc6269247f1973cddbf285aa6ce866d11bd29546b0f4135ba31d2283c8 ;;
+        *) return 1 ;;
+    esac
+}
+
+agh_verify_binary() {
+    local expected actual
     [[ -f "$AGH_DIR/AdGuardHome" && ! -L "$AGH_DIR/AdGuardHome" && -x "$AGH_DIR/AdGuardHome" ]] || return 1
+    expected=$(agh_binary_hash "$1") || return 1
+    actual=$(sha256sum "$AGH_DIR/AdGuardHome") || return 1
+    [[ "${actual%% *}" == "$expected" ]]
+}
+
+agh_binary() {
+    agh_verify_binary "${AGH_ARCH:-$(uname -m)}" || return 1
     [[ "$("$AGH_DIR/AdGuardHome" --version)" == "AdGuard Home, version $AGH_VERSION" ]]
 }
 
@@ -689,38 +705,54 @@ import json, pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
 data_root = pathlib.Path(sys.argv[2])
 m = json.loads((root / 'managed.json').read_text())
-assert m['version'] == 'v0.107.79' and m['arch'] in ('amd64', 'arm64')
-assert re.fullmatch(r'adg-[A-Za-z0-9]{12}', m['path'])
+if not (m['version'] == 'v0.107.79' and m['arch'] in ('amd64', 'arm64')):
+    raise ValueError('Invalid AGH version/architecture')
+if not (re.fullmatch(r'adg-[A-Za-z0-9]{12}', m['path'])):
+    raise ValueError('Invalid AGH admin prefix')
 domain = m['domain']
-assert isinstance(domain, str) and len(domain) <= 253 and '.' in domain
-assert all(re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label) for label in domain.split('.'))
-assert type(m['web_port']) is int and type(m['dns_port']) is int
-assert 10000 <= m['web_port'] <= 65535 and 10000 <= m['dns_port'] <= 65535
-assert m['web_port'] != m['dns_port']
+if not (isinstance(domain, str) and len(domain) <= 253 and '.' in domain):
+    raise ValueError('Invalid AGH domain')
+if not (all(re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label) for label in domain.split('.'))):
+    raise ValueError('Invalid AGH domain labels')
+if not (type(m['web_port']) is int and type(m['dns_port']) is int):
+    raise ValueError('Invalid AGH integer ports')
+if not (10000 <= m['web_port'] <= 65535 and 10000 <= m['dns_port'] <= 65535):
+    raise ValueError('Invalid AGH high ports')
+if not (m['web_port'] != m['dns_port']):
+    raise ValueError('Invalid AGH distinct ports')
 # Read only managed scalar/list fields in the canonical YAML written by AGH.
 # Unrecognized representations fail closed; native --check-config handles YAML.
 s = (root / 'AdGuardHome.yaml').read_text()
 def section(name):
     match = re.search(r'^' + name + r':\s*\n((?:[ \t].*\n|\n)*)', s, re.M)
-    assert match, name
+    if not (match):
+        raise ValueError('Invalid AGH required YAML section')
     return match[1]
 def scalar(text, key):
     matches = re.findall(r'^  ' + key + r':\s*(.*?)\s*$', text, re.M)
-    assert len(matches) == 1, key
+    if not (len(matches) == 1):
+        raise ValueError('Invalid AGH unique YAML field')
     return matches[0].strip('"\'')
-assert re.search(r'^schema_version: 34\s*$', s, re.M)
+if not (re.search(r'^schema_version: 34\s*$', s, re.M)):
+    raise ValueError('Invalid AGH schema 34')
 http, dns, tls = section('http'), section('dns'), section('tls')
-assert scalar(http, 'address') == '127.0.0.1:' + str(m['web_port'])
-assert scalar(dns, 'port') == str(m['dns_port'])
+if not (scalar(http, 'address') == '127.0.0.1:' + str(m['web_port'])):
+    raise ValueError('Invalid AGH loopback HTTP address')
+if not (scalar(dns, 'port') == str(m['dns_port'])):
+    raise ValueError('Invalid AGH DNS port')
 hosts = re.search(r'^  bind_hosts:\s*\n((?:    - .*\n)+)', dns, re.M)
-assert hosts and [x.strip().strip('"\'') for x in re.findall(r'^    - (.*)$', hosts[1], re.M)] == ['127.0.0.1']
-assert scalar(tls, 'enabled') == 'false'
-assert re.search(r'^    insecure_enabled: true\s*$', http, re.M)
+if not (hosts and [x.strip().strip('"\'') for x in re.findall(r'^    - (.*)$', hosts[1], re.M)] == ['127.0.0.1']):
+    raise ValueError('Invalid AGH loopback DNS bind')
+if not (scalar(tls, 'enabled') == 'false'):
+    raise ValueError('Invalid AGH native TLS disabled')
+if not (re.search(r'^    insecure_enabled: true\s*$', http, re.M)):
+    raise ValueError('Invalid AGH DoH insecure bridge')
 for part in ('querylog', 'statistics'):
     p = section(part) if re.search(r'^' + part + ':', s, re.M) else ''
     if p and re.search(r'^  dir_path:', p, re.M):
         directory = scalar(p, 'dir_path')
-        assert not directory or pathlib.Path(directory).resolve().is_relative_to(data_root.resolve())
+        if not (not directory or pathlib.Path(directory).resolve().is_relative_to(data_root.resolve())):
+            raise ValueError('Invalid AGH managed data directory')
 for k in ('web_port', 'dns_port', 'path', 'domain', 'arch'):
     print(m[k])
 PY
@@ -766,6 +798,9 @@ preflight_staged_adguard() (
     local AGH_VERSION=v0.107.79 AGH_DIR="$STAGING/files/opt/AdGuardHome"
     local AGH_DATA_ROOT=/opt/AdGuardHome
     local snippet="$STAGING/files/etc/nginx/snippets/x-ui-auto-optional/adguard.conf"
+    # Authenticate using trusted host-architecture hashes before ANY staged execution.
+    agh_verify_binary "$ARCH" ||
+        die 'Staged AdGuard Home executable SHA256 mismatch; target state was not changed.'
     agh_config && [[ "$AGH_ARCH" == "$ARCH" ]] ||
         die 'Staged AdGuard Home configuration/binary contract is invalid; target state was not changed.'
     [[ -f "$snippet" && ! -L "$snippet" ]] && cmp -s "$snippet" <(agh_snippet) ||
@@ -805,6 +840,7 @@ cmd_restore() {
         fi
     done
     replace_managed_state
+    install -d -o root -g root -m 0755 /etc/nginx/snippets/x-ui-auto-optional || die 'Cannot prepare optional nginx include directory.'
     if [[ "$ADGUARD_HOME" == true ]]; then
         chown -R root:root /opt/AdGuardHome
         chmod 0700 /opt/AdGuardHome
