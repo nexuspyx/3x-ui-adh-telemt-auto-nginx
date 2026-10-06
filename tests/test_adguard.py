@@ -85,11 +85,12 @@ ss() {
 }
 curl() {
     echo "curl $*" >> "$CALLS"
-    local arg prev='' output='' headers='' cookies='' payload='' url="${!#}"
+    local arg prev='' output='' headers='' cookies='' session='' payload='' url="${!#}"
     for arg in "$@"; do
         [[ "$prev" != -o ]] || output=$arg
         [[ "$prev" != -D ]] || headers=$arg
         [[ "$prev" != -c ]] || cookies=$arg
+        [[ "$prev" != -b ]] || session=$arg
         [[ "$prev" != --data-binary ]] || payload=${arg#@}
         prev=$arg
     done
@@ -106,12 +107,13 @@ curl() {
         [[ "${FAIL:-}" != cookie ]] || { printf 200; return; }
         printf '# Netscape HTTP Cookie File\n%s\tFALSE\t/%s/\tTRUE\t9999999999\tagh_session\tfixture-session\n' "$domain" "$AGH_PATH" > "$cookies"
         [[ "${FAIL:-}" != cookie-insecure ]] || sed -i 's/\tTRUE\t/\tFALSE\t/' "$cookies"
-        [[ "${FAIL:-}" != cookie-path ]] || sed -i "s#/${AGH_PATH}/#/wrong/#" "$cookies"
+        [[ "${FAIL:-}" != cookie-representation ]] || sed -i "s#${domain}#.${domain}#" "$cookies"
         printf 200; return
     fi
     if [[ "$url" == */control/status ]]; then
         [[ "${FAIL:-}" != auth-status ]] || return 1
-        if [[ "${FAIL:-}" == auth-http ]]; then printf 401; return; fi
+        # Model the backend requiring a usable curl session, not cookie serialization fields.
+        if [[ ! -s "$session" || "${FAIL:-}" == cookie-unusable || "${FAIL:-}" == auth-http ]]; then printf 401; return; fi
         if [[ "${FAIL:-}" == auth-json ]]; then printf invalid > "$output";
         elif [[ "${FAIL:-}" == auth-response ]]; then printf '{}' > "$output";
         else printf '{"version":"v0.107.79","running":true,"http_port":%s,"dns_port":%s}' "$AGH_WEB_PORT" "$AGH_DNS_PORT" > "$output"; fi
@@ -294,7 +296,7 @@ class AdGuardInstaller(unittest.TestCase):
 
     def test_optional_summary_and_unit_contract(self):
         for choice in ('n','y'):
-            r=self.run_shell(('show_results',), 'AGH_PATH=adg-ABCDEFGHIJKL; AGH_PASSWORD=single-secret; panel_path=panel; config_username=user; config_password=panel-pass; reality_domain=cover.example; ufw() { echo "Status: active"; }; show_results',INSTALL_AGH=choice)
+            r=self.run_shell(('show_results',), ('AGH_RESULT=installed; ' if choice=='y' else 'AGH_RESULT=not_requested; ') + 'AGH_PATH=adg-ABCDEFGHIJKL; AGH_PASSWORD=single-secret; panel_path=panel; config_username=user; config_password=panel-pass; reality_domain=cover.example; ufw() { echo "Status: active"; }; show_results',INSTALL_AGH=choice)
             self.assertEqual(r.returncode,0,r.stderr)
             self.assertEqual('AdGuard Home:' in r.stdout,choice=='y')
             self.assertEqual(r.stdout.count('single-secret'),1 if choice=='y' else 0)
@@ -387,7 +389,7 @@ class AdGuardInstaller(unittest.TestCase):
             self.assertNotEqual(call('agh_config && agh_doh_probe "http://127.0.0.1:$AGH_WEB_PORT/dns-query"', FAIL=failure).returncode, 0)
 
     def test_authenticated_admin_probe_rolls_back_and_cleans_private_secrets(self):
-        for failure in ('', 'login', 'login-status', 'cookie', 'cookie-path', 'cookie-insecure',
+        for failure in ('', 'login', 'login-status', 'cookie', 'cookie-unusable',
                         'auth-status', 'auth-http', 'auth-json', 'auth-response'):
             with self.subTest(failure=failure):
                 self.calls.write_text('')
@@ -412,26 +414,126 @@ class AdGuardInstaller(unittest.TestCase):
         self.assertNotIn('AGH_PASSWORD', HELPER)
         self.assertNotIn('adguard_admin_probe', HELPER)
 
-    def test_insecure_session_cookie_rolls_back_before_authenticated_status(self):
+    def test_authenticated_admin_uses_curl_session_without_metadata_gate(self):
+        probe = function('adguard_admin_probe')
+        self.assertNotIn('Missing usable Secure AGH session cookie', probe)
+        self.assertNotIn('Netscape', probe)
+        self.assertNotIn('read_text().splitlines()', probe)
+        # Representations rejected by the old parser can still yield authenticated status.
+        # Secure/Path policy is independently enforced by the real nginx test below.
         for optimize in ('', '1'):
-            with self.subTest(optimize=optimize):
-                self.calls.write_text('')
-                r = self.run_shell(('cleanup_adguard', 'adguard_stage', 'install_adguard'),
-                                   'install_adguard; echo Installation-Complete',
-                                   FAIL='cookie-insecure', PYTHONOPTIMIZE=optimize)
-                self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
-                self.assertIn('Missing usable Secure AGH session cookie', r.stderr)
-                self.assertNotIn('Installation-Complete', r.stdout)
-                self.assertIn('Core 3x-ui stack remains operational.', r.stdout)
-                self.assertFalse((self.root/'opt/AdGuardHome').exists())
-                self.assertFalse((self.root/'etc/systemd/system/AdGuardHome.service').exists())
-                self.assertFalse((self.root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf').exists())
-                log = self.calls.read_text()
-                self.assertIn('/adg-' + 'A'*12 + '/control/login', log)
-                self.assertNotIn('/control/status', log)
-                self.assertNotIn('A'*32, log + r.stdout + r.stderr)
-                private = re.search(r'--data-binary @([^ ]+)/login.json', log)[1]
-                self.assertFalse(Path(private).exists())
+            for representation in ('cookie-representation', 'cookie-insecure'):
+                with self.subTest(optimize=optimize, representation=representation):
+                    self.calls.write_text('')
+                    r = self.run_shell(('cleanup_adguard', 'adguard_stage', 'install_adguard'),
+                                       'install_adguard; echo authenticated-success',
+                                       FAIL=representation, PYTHONOPTIMIZE=optimize)
+                    self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                    self.assertIn('authenticated-success', r.stdout)
+                    log = self.calls.read_text()
+                    self.assertIn('/control/status', log)
+                    self.assertIn(' -b ', log)
+                    self.assertNotIn('A'*32, log + r.stdout + r.stderr)
+                    private = re.search(r'--data-binary @([^ ]+)/login.json', log)[1]
+                    self.assertFalse(Path(private).exists())
+                    self.assertEqual(self.run_shell(('cleanup_adguard',), 'cleanup_adguard').returncode, 0)
+
+    def final_result(self, requested, failure='', unverified=False):
+        # Exercise the actual main, optional install/rollback and summary on private state.
+        operations = ('confirm_destructive_reinstall', 'validate_domains', 'clean_previous_install',
+                      'install_packages', 'setup_firewall', 'get_server_ip', 'setup_acme_http',
+                      'get_ssl_certs', 'install_panel', 'configure_nginx', 'configure_xui_db',
+                      'install_clash_sub', 'install_fake_site', 'install_diagnostics', 'tune_system',
+                      'install_backup_tool', 'setup_certificate_renewal')
+        stubs = '\n'.join(n + '() { :; }' for n in operations)
+        for name in ('var/www/diagnostics/index.html', 'var/www/diagnostics/speedtest.js',
+                     'var/www/diagnostics/speedtest_worker.js', 'usr/local/lib/3x-ui-pro/mtr-backend.py',
+                     'usr/local/bin/x-ui-backup', 'etc/letsencrypt/live/example.com/fullchain.pem',
+                     'etc/letsencrypt/live/example.com/privkey.pem', 'etc/letsencrypt/live/cover.example/fullchain.pem',
+                     'etc/letsencrypt/live/cover.example/privkey.pem', 'root/cert/example.com/fullchain.pem',
+                     'root/cert/example.com/privkey.pem'):
+            path = self.root/name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('fixture')
+            path.chmod(0o755)
+        body = stubs + r'''
+select_adguard() { :; }
+x-ui() { :; }
+ufw() { echo 'Status: active'; }
+CORE_CHECKS=0
+check_installation() {
+    CORE_CHECKS=$((CORE_CHECKS+1))
+    echo "core-health $CORE_CHECKS" >> "$CALLS"
+    [[ "$CORE_CHECKS" == 1 || "$UNVERIFIED" != 1 ]]
+}
+panel_path=panel
+config_username=panel-user
+config_password=generated-panel-secret
+reality_domain=cover.example
+main
+'''
+        return self.run_shell(('cleanup_adguard', 'adguard_stage', 'install_adguard', 'show_results', 'main'),
+                              body, INSTALL_AGH='y' if requested else 'n', FAIL=failure,
+                              UNVERIFIED='1' if unverified else '0', PYTHONOPTIMIZE='1')
+
+    def assert_core_credentials(self, result):
+        self.assertIn('3x-ui Auto Nginx — Installation Result', result.stdout)
+        self.assertIn('https://example.com/panel/', result.stdout)
+        self.assertIn('Username: panel-user', result.stdout)
+        self.assertEqual(result.stdout.count('Password: generated-panel-secret'), 1)
+        self.assertIn('Save these credentials', result.stdout)
+        self.assertIn('core-health 1', self.calls.read_text())
+
+    def test_final_result_agh_success_keeps_both_credentials(self):
+        r = self.final_result(True)
+        self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
+        self.assert_core_credentials(r)
+        self.assertIn('[✓] AdGuard Home           Running (v0.107.79)', r.stdout)
+        self.assertIn('[✓] DNS-over-HTTPS         Ready', r.stdout)
+        self.assertIn('AdGuard Home: https://example.com/adg-'+'A'*12+'/', r.stdout)
+        self.assertEqual(r.stdout.count('Password: '+'A'*32), 1)
+        self.assertNotIn('A'*32, self.calls.read_text())
+
+    def test_final_result_opt_out_keeps_only_core_credentials(self):
+        r = self.final_result(False)
+        self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
+        self.assert_core_credentials(r)
+        self.assertNotIn('AdGuard Home:', r.stdout)
+        self.assertNotIn('Login: admin', r.stdout)
+        self.assertNotIn('A'*32, r.stdout)
+        self.assertNotIn('control/login', self.calls.read_text())
+
+    def test_final_result_verified_rollback_keeps_core_credentials_and_fails(self):
+        r = self.final_result(True, 'cookie-unusable')
+        self.assertEqual(r.returncode, 1, r.stdout+r.stderr)
+        self.assert_core_credentials(r)
+        self.assertIn('[✓] 3x-ui / Xray           Running', r.stdout)
+        self.assertIn('[!] AdGuard Home           Failed — rolled back', r.stdout)
+        self.assertIn('[!] DNS-over-HTTPS         Not installed', r.stdout)
+        self.assertIn('The core 3x-ui stack remains operational.', r.stdout)
+        self.assert_no_agh_credentials_or_success(r)
+        self.assertIn('core-health 2', self.calls.read_text())
+        self.assertFalse((self.root/'opt/AdGuardHome').exists())
+
+    def test_final_result_unverified_rollback_keeps_credentials_without_false_health(self):
+        r = self.final_result(True, 'auth-http', unverified=True)
+        self.assertEqual(r.returncode, 1, r.stdout+r.stderr)
+        self.assert_core_credentials(r)
+        self.assertIn('Post-rollback core health could not be verified.', r.stdout)
+        self.assertIn('[!] AdGuard Home           Failed — rollback not verified', r.stdout)
+        for label in ('3x-ui / Xray', 'nginx', 'XHTTP', 'Diagnostics', 'Certificate renewal'):
+            line = next(l for l in r.stdout.splitlines() if label in l and '[!]' in l)
+            self.assertIn('Post-rollback health not verified', line)
+            self.assertNotIn('[✓] '+label, r.stdout)
+        self.assert_no_agh_credentials_or_success(r)
+        self.assertIn('core-health 2', self.calls.read_text())
+
+    def assert_no_agh_credentials_or_success(self, result):
+        self.assertNotIn('AdGuard Home: https://', result.stdout)
+        self.assertNotIn('Login: admin', result.stdout)
+        self.assertNotIn('A'*32, result.stdout + result.stderr + self.calls.read_text())
+        self.assertNotIn('[✓] AdGuard Home', result.stdout)
+        self.assertNotIn('[✓] DNS-over-HTTPS', result.stdout)
 
     def test_production_python_has_no_assert_and_optional_directory_is_owned(self):
         import ast

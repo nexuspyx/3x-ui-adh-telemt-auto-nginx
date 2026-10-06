@@ -1625,23 +1625,6 @@ adguard_admin_probe() {
             -o "$directory/login-response" -w '%{http_code}' \
             "https://${domain}/${AGH_PATH}/control/login") || exit 1
         [[ "$result" == 200 ]] || exit 1
-        # Require nginx's cookie-path rewrite, not merely a successful login HTTP code.
-        python3 - "$directory/cookies" "$domain" "/${AGH_PATH}/" <<'PY'
-import pathlib, sys
-cookie_file, domain, path = sys.argv[1:]
-cookies = []
-for line in pathlib.Path(cookie_file).read_text().splitlines():
-    if line.startswith('#HttpOnly_'):
-        line = line[len('#HttpOnly_'):]
-    elif line.startswith('#'):
-        continue
-    fields = line.split('\t')
-    if len(fields) == 7:
-        cookies.append(fields)
-if not any(c[0].lower() == domain.lower() and c[2] == path and c[3] == 'TRUE' and c[5] == 'agh_session' and c[6] for c in cookies):
-    raise ValueError('Missing usable Secure AGH session cookie at the managed admin prefix')
-PY
-        [[ $? == 0 ]] || exit 1
         result=$(curl --noproxy '*' -fsS --connect-timeout 5 --max-time 15 \
             --resolve "${domain}:443:127.0.0.1" -b "$directory/cookies" \
             -o "$directory/status.json" -w '%{http_code}' \
@@ -1785,6 +1768,7 @@ PY
 
 install_adguard() {
     local AGH_TEMP had_snippet=0 result=0 AGH_NGINX_RELOAD_ATTEMPTED=0
+    AGH_RESULT=failed_unverified
     AGH_TEMP=$(mktemp -d) || return 1
     chmod 0700 "$AGH_TEMP" || { rm -rf "$AGH_TEMP"; return 1; }
     if [[ -e /etc/nginx/snippets/x-ui-auto-optional/adguard.conf ]]; then
@@ -1801,12 +1785,17 @@ install_adguard() {
         if (( AGH_NGINX_RELOAD_ATTEMPTED )); then systemctl reload nginx || result=1; fi
         check_installation || result=1
         AGH_PASSWORD=''
-        if (( result == 0 )); then msg_warn 'Core 3x-ui stack remains operational.';
-        else msg_err 'Rollback could not be verified. Inspect nginx and core services.'; fi
+        if (( result == 0 )); then
+            AGH_RESULT=failed_rolled_back
+            msg_warn 'Core 3x-ui stack remains operational.'
+        else
+            msg_err 'Rollback could not be verified. Inspect nginx and core services.'
+        fi
         rm -rf "$AGH_TEMP"
         return 1
     fi
-    rm -rf "$AGH_TEMP"
+    rm -rf "$AGH_TEMP" || return 1
+    AGH_RESULT=installed
 }
 
 show_results() {
@@ -1816,16 +1805,24 @@ show_results() {
 
     echo
     msg_inf '============================================================'
-    msg_inf '  3x-ui Auto Nginx — Installation Complete'
+    msg_inf '  3x-ui Auto Nginx — Installation Result'
     msg_inf '============================================================'
-    # main() has already passed check_installation for services, nginx and certificate renewal.
-    msg_ok " [✓] 3x-ui / Xray           Running${version_label}"
+    # The core passed its initial gate; optional rollback may leave its current health unverified.
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+        msg_warn ' [!] 3x-ui / Xray           Post-rollback health not verified'
+    else
+        msg_ok " [✓] 3x-ui / Xray           Running${version_label}"
+    fi
     case "${CPU_SUPPORT_LEVEL:-info}" in
         ok)   msg_ok " [✓] CPU support             ${CPU_SUPPORT_TEXT}" ;;
         warn) msg_warn " [!] CPU support             ${CPU_SUPPORT_TEXT}" ;;
         *)    msg_inf " [i] CPU support             ${CPU_SUPPORT_TEXT:-Compatible (acceleration not assessed)}" ;;
     esac
-    msg_ok ' [✓] nginx                  Running'
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+        msg_warn ' [!] nginx                  Post-rollback health not verified'
+    else
+        msg_ok ' [✓] nginx                  Running'
+    fi
     if [[ -s "/etc/letsencrypt/live/${domain}/fullchain.pem" && -s "/etc/letsencrypt/live/${domain}/privkey.pem" &&
           -s "/etc/letsencrypt/live/${reality_domain}/fullchain.pem" && -s "/etc/letsencrypt/live/${reality_domain}/privkey.pem" &&
           -s "/root/cert/${domain}/fullchain.pem" && -s "/root/cert/${domain}/privkey.pem" ]]; then
@@ -1833,8 +1830,14 @@ show_results() {
     else
         msg_warn ' [!] TLS certificates       Check certificate files'
     fi
-    msg_ok ' [✓] XHTTP                  Ready'
-    if [[ -s /var/www/diagnostics/index.html && -s /var/www/diagnostics/speedtest.js &&
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+        msg_warn ' [!] XHTTP                  Post-rollback health not verified'
+    else
+        msg_ok ' [✓] XHTTP                  Ready'
+    fi
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+        msg_warn ' [!] Diagnostics            Post-rollback health not verified'
+    elif [[ -s /var/www/diagnostics/index.html && -s /var/www/diagnostics/speedtest.js &&
           -s /var/www/diagnostics/speedtest_worker.js && -s /usr/local/lib/3x-ui-pro/mtr-backend.py ]]; then
         msg_ok ' [✓] Diagnostics            Ready'
     else
@@ -1845,11 +1848,22 @@ show_results() {
     else
         msg_warn ' [!] Backup / Restore       Backup utility unavailable'
     fi
-    if [[ "${INSTALL_AGH:-n}" == y ]]; then
-        msg_ok ' [✓] AdGuard Home           Running (v0.107.79)'
-        msg_ok ' [✓] DNS-over-HTTPS         Ready'
+    case "${AGH_RESULT:-not_requested}" in
+        installed)
+            msg_ok ' [✓] AdGuard Home           Running (v0.107.79)'
+            msg_ok ' [✓] DNS-over-HTTPS         Ready' ;;
+        failed_rolled_back)
+            msg_warn ' [!] AdGuard Home           Failed — rolled back'
+            msg_warn ' [!] DNS-over-HTTPS         Not installed' ;;
+        failed_unverified)
+            msg_warn ' [!] AdGuard Home           Failed — rollback not verified'
+            msg_warn ' [!] DNS-over-HTTPS         State not verified' ;;
+    esac
+    if [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+        msg_warn ' [!] Certificate renewal    Post-rollback health not verified'
+    else
+        msg_ok ' [✓] Certificate renewal    Webroot + systemd timer'
     fi
-    msg_ok ' [✓] Certificate renewal    Webroot + systemd timer'
     firewall=$(LC_ALL=C ufw status 2>/dev/null) || firewall=""
     case "$firewall" in
         "Status: active"*)   msg_ok ' [✓] Firewall / UFW         Active' ;;
@@ -1865,10 +1879,14 @@ show_results() {
     printf '\n Username: %s\n Password: %s\n' "$config_username" "$config_password"
     msg_inf "\n Backup:"
     printf ' x-ui-backup backup\n\n'
-    if [[ "${INSTALL_AGH:-n}" == y ]]; then
+    if [[ "${AGH_RESULT:-not_requested}" == installed ]]; then
         msg_inf " AdGuard Home: https://${domain}/${AGH_PATH}/"
         printf ' Login: admin\n Password: %s\n DoH: https://%s/dns-query\n\n' "$AGH_PASSWORD" "$domain"
         AGH_PASSWORD=''
+    elif [[ "${AGH_RESULT:-not_requested}" == failed_rolled_back ]]; then
+        msg_warn ' AdGuard Home was not installed. The core 3x-ui stack remains operational.'
+    elif [[ "${AGH_RESULT:-not_requested}" == failed_unverified ]]; then
+        msg_warn ' Post-rollback core health could not be verified. Inspect nginx and core services.'
     fi
     msg_inf '============================================================'
     msg_inf ' Save these credentials before closing the terminal.'
@@ -1907,8 +1925,13 @@ main() {
     x-ui restart || exit 1
     check_installation || { msg_err "Installation failed mandatory health checks."; exit 1; }
 
-    if [[ "$INSTALL_AGH" == y ]]; then install_adguard || exit 1; fi
+    local install_result=0
+    AGH_RESULT=not_requested
+    if [[ "$INSTALL_AGH" == y ]]; then
+        install_adguard || install_result=1
+    fi
     show_results
+    return "$install_result"
 }
 
 main

@@ -270,12 +270,12 @@ echo 'x-ui 3.9.0'
                 calls = log.read_text().splitlines()
                 self.assertEqual(calls[:3], ["systemctl is-enabled --quiet x-ui", "x-ui restart", "health-gate"])
                 if failed_gate:
-                    self.assertNotIn("Installation Complete", text)
+                    self.assertNotIn("Installation Result", text)
                     self.assertNotIn("fixture-password", text)
                     self.assertEqual(len(calls), 3)
                     continue
                 self.assertEqual(calls[3:], ["binary -v", "ufw status"])
-                for item in ("3x-ui Auto Nginx — Installation Complete", "Panel:", "Diagnostics", "Username: fixture-user",
+                for item in ("3x-ui Auto Nginx — Installation Result", "Panel:", "Diagnostics", "Username: fixture-user",
                              "Password: fixture-password", "Backup:", "x-ui-backup backup", "Certificate renewal",
                              "https://deploy.example/panel/", "https://deploy.example/panel/diag",
                              "Enabled by default: REALITY · XHTTP · Hysteria2", "Optional profiles: WS · Trojan gRPC"):
