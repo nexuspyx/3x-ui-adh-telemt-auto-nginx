@@ -104,7 +104,8 @@ curl() {
         python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); sys.exit(0 if p == {"name":"admin","password":"A"*32} else 1)' "$payload" || return 1
         if [[ "${FAIL:-}" == login-status ]]; then printf 403; return; fi
         [[ "${FAIL:-}" != cookie ]] || { printf 200; return; }
-        printf '# Netscape HTTP Cookie File\n%s\tFALSE\t/%s/\tFALSE\t9999999999\tagh_session\tfixture-session\n' "$domain" "$AGH_PATH" > "$cookies"
+        printf '# Netscape HTTP Cookie File\n%s\tFALSE\t/%s/\tTRUE\t9999999999\tagh_session\tfixture-session\n' "$domain" "$AGH_PATH" > "$cookies"
+        [[ "${FAIL:-}" != cookie-insecure ]] || sed -i 's/\tTRUE\t/\tFALSE\t/' "$cookies"
         [[ "${FAIL:-}" != cookie-path ]] || sed -i "s#/${AGH_PATH}/#/wrong/#" "$cookies"
         printf 200; return
     fi
@@ -386,7 +387,7 @@ class AdGuardInstaller(unittest.TestCase):
             self.assertNotEqual(call('agh_config && agh_doh_probe "http://127.0.0.1:$AGH_WEB_PORT/dns-query"', FAIL=failure).returncode, 0)
 
     def test_authenticated_admin_probe_rolls_back_and_cleans_private_secrets(self):
-        for failure in ('', 'login', 'login-status', 'cookie', 'cookie-path',
+        for failure in ('', 'login', 'login-status', 'cookie', 'cookie-path', 'cookie-insecure',
                         'auth-status', 'auth-http', 'auth-json', 'auth-response'):
             with self.subTest(failure=failure):
                 self.calls.write_text('')
@@ -410,6 +411,27 @@ class AdGuardInstaller(unittest.TestCase):
                     self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn('AGH_PASSWORD', HELPER)
         self.assertNotIn('adguard_admin_probe', HELPER)
+
+    def test_insecure_session_cookie_rolls_back_before_authenticated_status(self):
+        for optimize in ('', '1'):
+            with self.subTest(optimize=optimize):
+                self.calls.write_text('')
+                r = self.run_shell(('cleanup_adguard', 'adguard_stage', 'install_adguard'),
+                                   'install_adguard; echo Installation-Complete',
+                                   FAIL='cookie-insecure', PYTHONOPTIMIZE=optimize)
+                self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn('Missing usable Secure AGH session cookie', r.stderr)
+                self.assertNotIn('Installation-Complete', r.stdout)
+                self.assertIn('Core 3x-ui stack remains operational.', r.stdout)
+                self.assertFalse((self.root/'opt/AdGuardHome').exists())
+                self.assertFalse((self.root/'etc/systemd/system/AdGuardHome.service').exists())
+                self.assertFalse((self.root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf').exists())
+                log = self.calls.read_text()
+                self.assertIn('/adg-' + 'A'*12 + '/control/login', log)
+                self.assertNotIn('/control/status', log)
+                self.assertNotIn('A'*32, log + r.stdout + r.stderr)
+                private = re.search(r'--data-binary @([^ ]+)/login.json', log)[1]
+                self.assertFalse(Path(private).exists())
 
     def test_production_python_has_no_assert_and_optional_directory_is_owned(self):
         import ast
@@ -435,7 +457,9 @@ class AdGuardInstaller(unittest.TestCase):
             def do_GET(self):
                 hits.append(('GET',self.path));self.send_response(200);self.end_headers();self.wfile.write(b'backend')
             def do_POST(self):
-                hits.append(('POST',self.path));self.send_response(200);self.end_headers();self.wfile.write(b'backend')
+                hits.append(('POST',self.path));self.send_response(200)
+                self.send_header('Set-Cookie', 'agh_session=fixture; Path=/; HttpOnly; SameSite=Lax')
+                self.end_headers();self.wfile.write(b'backend')
             def log_message(self,*args):pass
         server=ThreadingHTTPServer(('127.0.0.1',0),Backend)
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
@@ -463,6 +487,25 @@ class AdGuardInstaller(unittest.TestCase):
                     r=subprocess.run(['curl','--noproxy','*','-s','-o','/dev/null','-w','%{http_code}','-X',method,url],text=True,capture_output=True)
                     self.assertEqual(r.stdout,str(status),(path,method,r.stderr))
                 if enabled:
+                    response = subprocess.run(['curl', '--noproxy', '*', '-fsS', '-D', '-', '-o', '/dev/null',
+                                               '-X', 'POST', f'http://127.0.0.1:{port}/adg-ABCDEFGHIJKL/control/login'],
+                                              text=True, capture_output=True)
+                    self.assertEqual(response.returncode, 0, response.stderr)
+                    cookie = next(line for line in response.stdout.splitlines() if line.lower().startswith('set-cookie:'))
+                    parts = [part.strip() for part in cookie.split(':', 1)[1].split(';')]
+                    self.assertIn('agh_session=fixture', parts)
+                    self.assertIn('Path=/adg-ABCDEFGHIJKL/', parts)
+                    self.assertIn('secure', [part.lower() for part in parts])
+                    self.assertIn('httponly', [part.lower() for part in parts])
+                    self.assertIn('samesite=lax', [part.lower() for part in parts])
+                    # The Secure policy is local to the admin prefix, not DoH.
+                    doh = subprocess.run(['curl', '--noproxy', '*', '-fsS', '-D', '-', '-o', '/dev/null',
+                                          '-X', 'POST', f'http://127.0.0.1:{port}/dns-query'],
+                                         text=True, capture_output=True)
+                    self.assertEqual(doh.returncode, 0, doh.stderr)
+                    doh_cookie = next(line for line in doh.stdout.splitlines() if line.lower().startswith('set-cookie:'))
+                    self.assertNotIn('secure', [part.strip().lower() for part in doh_cookie.split(';')[1:]])
+                    self.assertIn(('POST','/control/login'),hits)
                     self.assertIn(('GET','/dns-query'),hits);self.assertIn(('POST','/dns-query'),hits)
                     self.assertIn(('GET','/control/status'),hits)
                     self.assertFalse(any('3000' in p or '/extra' in p for _,p in hits))

@@ -1638,8 +1638,8 @@ for line in pathlib.Path(cookie_file).read_text().splitlines():
     fields = line.split('\t')
     if len(fields) == 7:
         cookies.append(fields)
-if not any(c[0].lower() == domain.lower() and c[2] == path and c[5] == 'agh_session' and c[6] for c in cookies):
-    raise ValueError('Missing usable AGH session cookie at the managed admin prefix')
+if not any(c[0].lower() == domain.lower() and c[2] == path and c[3] == 'TRUE' and c[5] == 'agh_session' and c[6] for c in cookies):
+    raise ValueError('Missing usable Secure AGH session cookie at the managed admin prefix')
 PY
         [[ $? == 0 ]] || exit 1
         result=$(curl --noproxy '*' -fsS --connect-timeout 5 --max-time 15 \
