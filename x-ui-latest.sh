@@ -37,16 +37,31 @@ check_os() {
 }
 
 check_cpu() {
-    local cpu_model
-    cpu_model=$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2-)
+    local cpuinfo="${1:-/proc/cpuinfo}" arch feature_field cpu_model cpu_flags
+    CPU_SUPPORT_LEVEL="info"
+    CPU_SUPPORT_TEXT="Compatible (acceleration not assessed)"
+    arch=$(uname -m 2>/dev/null) || return 0
+    case "$arch" in
+        x86_64|i386|i486|i586|i686) feature_field="flags" ;;
+        aarch64|arm64) feature_field="Features" ;;
+        *) return 0 ;;
+    esac
+    cpu_model=$(grep -m1 -E '^[[:space:]]*model name[[:space:]]*:' "$cpuinfo" 2>/dev/null) || cpu_model=""
+    cpu_flags=$(grep -m1 -E "^[[:space:]]*${feature_field}[[:space:]]*:" "$cpuinfo" 2>/dev/null) || return 0
+    cpu_flags="${cpu_flags#*:}"
+    [[ -n "${cpu_flags//[[:space:]]/}" ]] || return 0
 
-    if echo "$cpu_model" | grep -qi 'QEMU'; then
-        msg_err "QEMU virtual CPU detected!"
-        echo -e "\nYour VPS is running with an emulated QEMU processor."
-        echo -e "Please contact your hosting provider and ask them to switch the CPU type"
-        echo -e "to \e[1;33mhost-passthrough\e[0m (expose real CPU model to the VM)."
-        echo -e "\nThis is required for correct operation of the Xray core."
-        exit 1
+    if [[ " $cpu_flags " =~ [[:space:]]aes[[:space:]] ]]; then
+        CPU_SUPPORT_LEVEL="ok"
+        CPU_SUPPORT_TEXT="Compatible (hardware AES available)"
+    else
+        CPU_SUPPORT_LEVEL="warn"
+        CPU_SUPPORT_TEXT="Compatible — hardware AES unavailable"
+        msg_warn "Hardware AES unavailable. Xray can run, but cryptographic performance may be lower."
+        if [[ "${cpu_model,,}" == *qemu* ]]; then
+            msg_warn "Generic QEMU/KVM CPU detected: host-passthrough / AES exposure is recommended when available."
+        fi
+        msg_warn "Continuing installation."
     fi
 }
 
@@ -1355,6 +1370,11 @@ show_results() {
     msg_inf '============================================================'
     # main() has already passed check_installation for services, nginx and cron.
     msg_ok " [✓] 3x-ui / Xray           Running${version_label}"
+    case "${CPU_SUPPORT_LEVEL:-info}" in
+        ok)   msg_ok " [✓] CPU support             ${CPU_SUPPORT_TEXT}" ;;
+        warn) msg_warn " [!] CPU support             ${CPU_SUPPORT_TEXT}" ;;
+        *)    msg_inf " [i] CPU support             ${CPU_SUPPORT_TEXT:-Compatible (acceleration not assessed)}" ;;
+    esac
     msg_ok ' [✓] nginx                  Running'
     if [[ -s "/etc/letsencrypt/live/${domain}/fullchain.pem" && -s "/etc/letsencrypt/live/${domain}/privkey.pem" &&
           -s "/etc/letsencrypt/live/${reality_domain}/fullchain.pem" && -s "/etc/letsencrypt/live/${reality_domain}/privkey.pem" &&

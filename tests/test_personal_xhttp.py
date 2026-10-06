@@ -129,6 +129,63 @@ class PersonalXHTTP(unittest.TestCase):
                 for prompt in ("3x-ui panel domain (panel.example.com):", "REALITY domain (reality.example.com):"):
                     self.assertEqual(prompt in result.stdout, not provided)
 
+    def test_cpu_capabilities_are_advisory_and_fixture_driven(self):
+        cpu = function("check_cpu")
+        self.assertNotIn("This is required for correct operation of the Xray core.", SOURCE)
+        self.assertNotRegex(cpu, r"\b(?:exit|read|sleep|msg_err)\b")
+        self.assertNotRegex(SOURCE, r"(?<!-)-(?:ignore_qemu|force_cpu|force)\b")
+        helpers = '\n'.join(re.findall(r'^msg_\w+\(\).*$', SOURCE, re.M))
+        cases = (
+            ("qemu-aes", "x86_64", "model name : QEMU Virtual CPU\nflags : fpu\taes\tsse\n", "ok", False),
+            ("qemu-no-aes", "x86_64", "model name : QEMU Virtual CPU\nflags : fpu sse\n", "warn", True),
+            ("intel-aes", "x86_64", "model name : Intel CPU\nflags : fpu aes\n", "ok", False),
+            ("amd-no-aes", "x86_64", "model name : AMD CPU\nflags : fpu sse\n", "warn", False),
+            ("arm-aes", "aarch64", "Features : fp asimd aes pmull\n", "ok", False),
+            ("arm-no-aes", "aarch64", "Features : fp asimd\n", "warn", False),
+            ("no-model", "i686", "flags : aes\n", "ok", False),
+            ("no-flags", "x86_64", "model name : QEMU Virtual CPU\n", "info", False),
+            ("empty-flags", "x86_64", "flags :  \t\n", "info", False),
+            ("no-features", "arm64", "model name : ARM CPU\n", "info", False),
+            ("missing-file", "x86_64", None, "info", False),
+            ("unreadable-file", "x86_64", "directory", "info", False),
+            ("aes-substrings", "x86_64", "flags : vaes aesni not_aes\n", "warn", False),
+            ("wrong-field", "aarch64", "flags : aes\n", "info", False),
+            ("unassessed-arch", "riscv64", "Features : aes\n", "info", False),
+        )
+        for name, arch, content, level, qemu_advice in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "cpuinfo"
+                if content == "directory":
+                    path.mkdir()
+                elif content is not None:
+                    path.write_text(content)
+                script = helpers + '\n' + cpu + r'''
+uname() { [[ "$*" == -m ]] && printf '%s\n' "$CPU_ARCH"; }
+check_cpu "$CPUINFO"
+printf 'CPU_STATE|%s|%s\n' "$CPU_SUPPORT_LEVEL" "$CPU_SUPPORT_TEXT"
+'''
+                result = subprocess.run(["bash", "-euo", "pipefail", "-c", script], capture_output=True, text=True,
+                                        env={**os.environ, "CPU_ARCH": arch, "CPUINFO": str(path)})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr, "")
+                lines = result.stdout.splitlines()
+                marker = next(line for line in lines if line.startswith("CPU_STATE|"))
+                actual_level, text = marker.split("|", 2)[1:]
+                self.assertEqual(actual_level, level)
+                expected_text = {"ok": "Compatible (hardware AES available)",
+                                 "warn": "Compatible — hardware AES unavailable",
+                                 "info": "Compatible (acceleration not assessed)"}
+                self.assertEqual(text, expected_text[level])
+                self.assertEqual("host-passthrough" in result.stdout, qemu_advice)
+                warnings = [line for line in lines if not line.startswith("CPU_STATE|")]
+                if level == "warn":
+                    self.assertTrue(warnings)
+                    self.assertTrue(all("\x1b[1;33m" in line for line in warnings))
+                    self.assertIn("Xray can run", result.stdout)
+                    self.assertIn("Continuing installation.", result.stdout)
+                else:
+                    self.assertEqual(warnings, [])
+
     def test_final_summary_is_honest_and_only_follows_health_gate(self):
         summary = function("show_results")
         self.assertNotIn("/root/cert/${reality_domain}", summary)
@@ -160,8 +217,10 @@ check_installation() { echo health-gate >> "$SUMMARY_LOG"; [[ "$FAIL_GATE" == 0 
                      ("unknown", False, False, False, None), ("active", True, False, False, None),
                      ("active", False, True, False, None), ("active", False, False, True, None))
         scenarios += tuple(("active", False, False, False, path) for path in certificates)
-        for state, missing_assets, failed_version, failed_gate, missing_certificate in scenarios:
-            with self.subTest(ufw=state, missing_assets=missing_assets, version_failure=failed_version, gate_failure=failed_gate, missing_certificate=missing_certificate), tempfile.TemporaryDirectory() as tmp:
+        scenarios = tuple((*scenario, "ok") for scenario in scenarios)
+        scenarios += (("active", False, False, False, None, "warn"), ("active", False, False, False, None, "info"))
+        for state, missing_assets, failed_version, failed_gate, missing_certificate, cpu_level in scenarios:
+            with self.subTest(ufw=state, missing_assets=missing_assets, version_failure=failed_version, gate_failure=failed_gate, missing_certificate=missing_certificate, cpu=cpu_level), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 relocated = summary
                 for path in ("/etc/letsencrypt/live", "/root/cert", "/var/www/diagnostics", "/usr/local/lib/3x-ui-pro",
@@ -195,10 +254,15 @@ echo 'x-ui 3.9.0'
                         path.write_text("fixture file")
                         path.chmod(0o755)
                 log = root / "calls"
-                script = helpers + '\n' + mocks + '\n' + relocated + '\n' + function("main") + '\nmain\n'
+                cpuinfo = root / "cpuinfo"
+                cpuinfo.write_text("model name : QEMU Virtual CPU\n" +
+                                   {"ok": "flags : aes\n", "warn": "flags : fpu\n", "info": ""}[cpu_level])
+                script = (helpers + '\n' + mocks + '\nuname() { echo x86_64; }\n' + function("check_cpu") +
+                          '\ncheck_cpu "$CPUINFO"\n' + relocated + '\n' + function("main") + '\nmain\n')
                 result = subprocess.run(["bash", "-euo", "pipefail", "-c", script], capture_output=True, text=True, env={
                     **os.environ, **FIXTURE, "SUMMARY_LOG": str(log), "UFW_STATE": state,
                     "FAIL_GATE": "1" if failed_gate else "0", "FAIL_VERSION": "1" if failed_version else "0",
+                    "CPUINFO": str(cpuinfo),
                     "config_username": "fixture-user", "config_password": "fixture-password",
                 })
                 self.assertEqual(result.returncode, 1 if failed_gate else 0, result.stderr)
@@ -217,6 +281,15 @@ echo 'x-ui 3.9.0'
                              "Enabled by default: REALITY · XHTTP · Hysteria2", "Optional profiles: WS · Trojan gRPC"):
                     self.assertIn(item, text)
                 self.assertEqual("(3x-ui 3.9.0)" in text, not failed_version)
+                cpu_line = next(line for line in result.stdout.splitlines() if "CPU support" in line)
+                self.assertIn({"ok": "\x1b[1;32m", "warn": "\x1b[1;33m", "info": "\x1b[1;34m"}[cpu_level], cpu_line)
+                self.assertIn({"ok": "[✓]", "warn": "[!]", "info": "[i]"}[cpu_level], cpu_line)
+                self.assertIn("Compatible", cpu_line)
+                self.assertIn({"ok": "hardware AES available", "warn": "hardware AES unavailable",
+                               "info": "acceleration not assessed"}[cpu_level], cpu_line)
+                self.assertNotRegex(cpu_line, r"Unsupported|Failed|Unsafe")
+                self.assertLess(text.index("3x-ui / Xray"), text.index("CPU support"))
+                self.assertLess(text.index("CPU support"), text.index("nginx"))
                 firewall_line = next(line for line in result.stdout.splitlines() if "Firewall / UFW" in line)
                 self.assertIn("\x1b[1;32m" if state == "active" else "\x1b[1;33m", firewall_line)
                 self.assertIn("[✓]" if state == "active" else "[!]", firewall_line)
