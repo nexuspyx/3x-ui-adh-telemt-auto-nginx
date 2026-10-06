@@ -769,12 +769,76 @@ die() { echo "$*" >&2; exit 1; }
     def test_stack_runtime_source(self):
         for name in ("x-ui-latest.sh", "x-ui-patch.sh"):
             source = (ROOT / name).read_text()
-            self.assertEqual(re.findall(r'^GITHUB_RAW="(.*)"$', source, re.M), [
-                "https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main",
+            ref = '${PROJECT_REF}' if name == 'x-ui-latest.sh' else 'main'
+            self.assertEqual(re.findall(r'^\s*GITHUB_RAW="(.*)"$', source, re.M), [
+                "https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/" + ref,
             ])
+            if name == 'x-ui-latest.sh':
+                self.assertIn('PROJECT_REF="${XUI_AUTO_REF:-main}"', source)
             for line in source.splitlines():
                 if "raw.githubusercontent.com/mozaroc/3x-ui-pro" in line:
                     self.assertTrue(line.lstrip().startswith("#"), "Unexpected upstream runtime source")
+
+    def test_project_asset_ref_validation_precedes_downloads(self):
+        initialization = SOURCE[SOURCE.index('PROJECT_REF='):SOURCE.index('FAKE_SITE_COUNT=')]
+        accepted = (None, '', 'main', 'a1' * 20, 'AB' * 20, 'v1.4.1', 'v0.0.0')
+        rejected = ('personal', 'feature/path', 'v1.2', 'v1.2.3-rc.1', 'v01.2.3', 'a' * 39,
+                    'g' * 40, 'main/../other', ' main', 'main\n', '$(touch forbidden)')
+        for ref in (*accepted, *rejected):
+            with self.subTest(ref=ref):
+                env = {k:v for k,v in os.environ.items() if k != 'XUI_AUTO_REF'}
+                if ref is not None: env['XUI_AUTO_REF'] = ref
+                script = 'msg_err() { echo "$*" >&2; }\ncurl() { echo downloaded; }\n' + initialization
+                script += '\ncurl "$GITHUB_RAW/assets/backup/x-ui-backup.sh"\nprintf "REF|%s|%s\\n" "$PROJECT_REF" "$GITHUB_RAW"\n'
+                result = subprocess.run(['bash','-eu','-c',script],env=env,text=True,capture_output=True)
+                valid = ref in accepted
+                self.assertEqual(result.returncode, 0 if valid else 1, result.stderr)
+                self.assertEqual('downloaded' in result.stdout, valid)
+                if valid:
+                    selected = ref or 'main'
+                    self.assertIn(f'REF|{selected}|https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/{selected}', result.stdout)
+                else: self.assertIn('Invalid XUI_AUTO_REF', result.stderr)
+        self.assertLess(SOURCE.index('configure_project_source || exit 1'), SOURCE.index('clean_previous_install()'))
+
+    def test_all_project_assets_follow_selected_ref(self):
+        from certificate_fixtures import relocate
+        mock = r'''
+msg_err() { echo "$*" >&2; }
+msg_ok() { :; }
+chown() { :; }
+setcap() { :; }
+id() { return 0; }
+systemctl() { :; }
+dd() { local arg; for arg in "$@"; do [[ "$arg" != of=* ]] || : > "${arg#of=}"; done; return 0; }
+curl() {
+    local url='' output='' previous='' arg
+    for arg in "$@"; do
+        [[ "$arg" != https://* ]] || url=$arg
+        [[ "$previous" != -o ]] || output=$arg
+        previous=$arg
+    done
+    printf '%s\n' "$url" >> "$ASSET_LOG"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$output"
+}
+'''
+        initialization = SOURCE[SOURCE.index('PROJECT_REF='):SOURCE.index('FAKE_SITE_COUNT=')]
+        names = ('install_clash_sub','install_fake_site','install_diagnostics','install_backup_tool')
+        expected = {'assets/clash/clash.yaml','assets/fake-sites/site-01/index.html',
+                    'assets/diagnostics/index.html','assets/diagnostics/librespeed/speedtest.js',
+                    'assets/diagnostics/librespeed/speedtest_worker.js','assets/diagnostics/mtr-backend.py',
+                    'assets/backup/x-ui-backup.sh'}
+        for ref in ('main','a1' * 20,'v1.4.1'):
+            with self.subTest(ref=ref), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); (root/'etc/systemd/system').mkdir(parents=True)
+                script = mock + initialization + '\nFAKE_SITE_COUNT=1\n'
+                script += '\n'.join(relocate(function(name),root) for name in names)
+                script += '\n' + '\n'.join(names)
+                log = root/'urls'
+                result = subprocess.run(['bash','-eu','-c',script],text=True,capture_output=True,env={
+                    **os.environ, **FIXTURE,'XUI_AUTO_REF':ref,'ASSET_LOG':str(log),'IP4':'192.0.2.10'})
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertCountEqual(log.read_text().splitlines(),[
+                    f'https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/{ref}/{path}' for path in expected])
 
     def test_panel_bootstrap_uses_final_random_config_without_starting_services(self):
         self.assertNotIn("asdfasdf", SOURCE)

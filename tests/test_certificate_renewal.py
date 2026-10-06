@@ -172,22 +172,45 @@ dpkg-query() { [[ "${NGINX_PACKAGE:-0}" == 1 ]] && echo 'install ok installed'; 
         unrelated=self.root/'etc/letsencrypt/live/unrelated.example/fullchain.pem'
         unrelated.parent.mkdir(parents=True);unrelated.write_text('unrelated certificate')
         other_hook=hook.parent/'administrator';other_hook.write_text('unrelated hook')
+        package_cron=self.root/'etc/cron.d/certbot'
+        package_cron.parent.mkdir(parents=True);package_cron.write_text('package-owned fallback\n')
+        unrelated_cron='# administrator\n@daily /opt/x-ui-job\n@weekly certbot certificates\n@hourly cloudflareips\n\n'
+        (self.root/'cron').write_text(unrelated_cron+LEGACY+'\n'+LEGACY+'\n')
         mock=MOCK+'''\nx-ui() { echo "x-ui $*" >> "$CALLS"; }
 apt() { echo "apt $*" >> "$CALLS"; }
 dpkg-query() { return 1; }
 '''
         branch=re.search(r'^if \[\[ \$\{UNINSTALL\}.*?^fi',INSTALLER,re.M|re.S).group()
-        names=('detect_existing_installation','confirm_destructive_reinstall','uninstall_xui')
-        for answer in ('no\n','YES\n'):
+        self.assertLess(INSTALLER.index('remove_legacy_certbot_cron()'),INSTALLER.index(branch))
+        names=('detect_existing_installation','confirm_destructive_reinstall','remove_legacy_certbot_cron','uninstall_xui')
+        for answer in ('no\n','','YES\n'):
             self.calls.unlink(missing_ok=True)
             result=self.run_functions(names,'UNINSTALL=y\nPak=apt\n'+branch,mock=mock,input=answer)
             self.assertEqual(result.returncode,0 if answer=='YES\n' else 1,result.stderr)
             self.assertEqual(hook.exists(),answer!='YES\n')
             self.assertEqual(unrelated.read_text(),'unrelated certificate')
             self.assertEqual(other_hook.read_text(),'unrelated hook')
+            self.assertEqual(package_cron.read_text(),'package-owned fallback\n')
+            self.assertEqual((self.root/'cron').read_text(),unrelated_cron if answer=='YES\n' else unrelated_cron+LEGACY+'\n'+LEGACY+'\n')
             calls=self.calls.read_text()
             self.assertNotRegex(calls,r'systemctl (stop|disable).*certbot')
             self.assertNotIn('python3-certbot-nginx',calls)
+            self.assertNotIn('autoremove',calls)
+            self.assertNotRegex(calls,r'apt .* (?:remove|purge).*\bcertbot\b')
+            self.assertEqual('crontab-write' in calls,answer=='YES\n')
+        for failure in ('cron-read','cron-write'):
+            certificates(self.root)
+            (self.root/'cron').write_text(unrelated_cron+LEGACY+'\n')
+            self.calls.unlink(missing_ok=True)
+            result=self.run_functions(names,'UNINSTALL=y\nPak=apt\n'+branch,mock=mock,input='YES\n',FAIL_CERT=failure)
+            self.assertNotEqual(result.returncode,0)
+            self.assertNotIn('completely uninstalled',result.stdout)
+            self.assertIn('Cannot remove the exact legacy',result.stderr)
+            self.assertEqual((self.root/'cron').read_text(),unrelated_cron+LEGACY+'\n')
+            self.assertTrue(hook.exists())
+            self.assertEqual(unrelated.read_text(),'unrelated certificate')
+            self.assertEqual(package_cron.read_text(),'package-owned fallback\n')
+            self.assertNotRegex(self.calls.read_text(),r'apt |x-ui uninstall|systemctl (stop|disable)')
 
     def test_webroot_issuance_and_exact_lineage_reconfigure(self):
         template = self.root/'template'; template.mkdir(); certificates(template)

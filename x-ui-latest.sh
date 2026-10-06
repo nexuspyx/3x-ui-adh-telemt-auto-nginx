@@ -70,7 +70,16 @@ check_cpu
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 XUIDB="/etc/x-ui/x-ui.db"
-GITHUB_RAW="https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main"
+PROJECT_REF="${XUI_AUTO_REF:-main}"
+configure_project_source() {
+    if [[ "$PROJECT_REF" != main && ! "$PROJECT_REF" =~ ^[a-fA-F0-9]{40}$ &&
+          ! "$PROJECT_REF" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+        msg_err 'Invalid XUI_AUTO_REF: use main, an exact 40-hex commit SHA, or a stable vMAJOR.MINOR.PATCH tag.'
+        return 1
+    fi
+    GITHUB_RAW="https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/${PROJECT_REF}"
+}
+configure_project_source || exit 1
 FAKE_SITE_COUNT=50
 LEGACY_CERTBOT_CRON='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
 
@@ -225,14 +234,30 @@ confirm_destructive_reinstall() {
     fi
 }
 
+remove_legacy_certbot_cron() {
+    command -v crontab >/dev/null || return 0
+    local directory
+    directory=$(mktemp -d) || return 1
+    if ! LC_ALL=C crontab -l > "$directory/current" 2> "$directory/error"; then
+        if grep -qi 'no crontab for' "$directory/error"; then rm -rf "$directory"; return 0; fi
+        rm -rf "$directory"; return 1
+    fi
+    if grep -Fxq -- "$LEGACY_CERTBOT_CRON" "$directory/current"; then
+        awk -v legacy="$LEGACY_CERTBOT_CRON" '$0 != legacy' "$directory/current" > "$directory/new" || { rm -rf "$directory"; return 1; }
+        crontab - < "$directory/new" && crontab -l > "$directory/verified" &&
+            cmp -s "$directory/new" "$directory/verified" || { rm -rf "$directory"; return 1; }
+    fi
+    rm -rf "$directory"
+}
+
 uninstall_xui() {
+    remove_legacy_certbot_cron || { msg_err "Cannot remove the exact legacy certificate renewal job."; return 1; }
     rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx || return 1
     printf 'y\n' | x-ui uninstall 2>/dev/null || true
     rm -rf /etc/x-ui/ /usr/local/x-ui/
     rm -f  /usr/bin/x-ui
     $Pak -y remove nginx nginx-common nginx-core nginx-full
     $Pak -y purge  nginx nginx-common nginx-core nginx-full
-    $Pak -y autoremove
     $Pak -y autoclean
     rm -rf /var/www/html/ /var/www/diagnostics/ /var/www/subpage/ /etc/nginx/ /usr/share/nginx/
     systemctl stop mtr-backend 2>/dev/null || true
@@ -1339,21 +1364,6 @@ install_backup_tool() {
 # ─────────────────────────────────────────────────────────────────────────────
 # CERTIFICATE RENEWAL
 # ─────────────────────────────────────────────────────────────────────────────
-remove_legacy_certbot_cron() {
-    command -v crontab >/dev/null || return 0
-    local directory
-    directory=$(mktemp -d) || return 1
-    if ! LC_ALL=C crontab -l > "$directory/current" 2> "$directory/error"; then
-        if grep -qi 'no crontab for' "$directory/error"; then rm -rf "$directory"; return 0; fi
-        rm -rf "$directory"; return 1
-    fi
-    if grep -Fxq -- "$LEGACY_CERTBOT_CRON" "$directory/current"; then
-        awk -v legacy="$LEGACY_CERTBOT_CRON" '$0 != legacy' "$directory/current" > "$directory/new" || { rm -rf "$directory"; return 1; }
-        crontab - < "$directory/new" && crontab -l > "$directory/verified" &&
-            cmp -s "$directory/new" "$directory/verified" || { rm -rf "$directory"; return 1; }
-    fi
-    rm -rf "$directory"
-}
 
 check_no_legacy_certbot_cron() {
     command -v crontab >/dev/null || return 0
