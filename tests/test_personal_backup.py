@@ -18,6 +18,8 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from configobj import ConfigObj
+from certificate_fixtures import certificates
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "assets/backup/x-ui-backup.sh").read_text()
@@ -64,38 +66,46 @@ if name == 'systemctl':
     enabled_path = root / 'enabled.json'
     enabled = json.loads(enabled_path.read_text()) if enabled_path.exists() else {}
     if command == 'enable':
-        if service == 'cron' and os.environ.get('FAIL_CRON_ENABLE'):
+        if service == 'certbot.timer' and os.environ.get('FAIL_CERTBOT_ENABLE'):
             sys.exit(1)
         enabled[service] = True
         enabled_path.write_text(json.dumps(enabled))
         if '--now' in args:
             services[service] = 'active'
             path.write_text(json.dumps(services))
+        if service == 'certbot.timer' and '--now' in args:
+            broken = os.environ.get('BREAK_FINAL_RENEWAL')
+            if broken == 'active':
+                services[service] = 'inactive'
+                path.write_text(json.dumps(services))
+            elif broken == 'enabled':
+                enabled[service] = False
+                enabled_path.write_text(json.dumps(enabled))
+            elif broken == 'hook':
+                (root / 'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx').unlink(missing_ok=True)
+            elif broken == 'authenticator':
+                conf = root / 'etc/letsencrypt/renewal/example.com.conf'
+                conf.write_text(conf.read_text().replace('authenticator = webroot', 'authenticator = standalone'))
+            elif broken == 'legacy':
+                with open(root / 'crontab', 'a') as out:
+                    out.write('@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1\n')
     if command == 'is-enabled':
         sys.exit(0 if enabled.get(service) else 1)
     if command == 'is-active':
-        active = services.get(service) == 'active'
+        state = services.get(service, 'inactive')
+        active = state == 'active'
         if '--quiet' in args and os.environ.get('FAIL_HEALTH_SERVICE') == service:
             active = False
         if '--quiet' not in args:
-            print('active' if active else 'inactive')
+            print(state)
         sys.exit(0 if active else 3)
     if command == 'cat':
         sys.exit(0 if (root / ('etc/systemd/system/' + service + '.service')).exists() or service == 'nginx' else 1)
     if command in ('start', 'stop'):
+        if service == 'certbot.timer' and os.environ.get('FAIL_TIMER_OPERATION') == command:
+            sys.exit(1)
         services[service] = 'active' if command == 'start' else 'inactive'
         path.write_text(json.dumps(services))
-        if command == 'start' and service == 'nginx':
-            broken = os.environ.get('BREAK_FINAL_CRON')
-            if broken == 'active':
-                services['cron'] = 'inactive'
-                path.write_text(json.dumps(services))
-            elif broken == 'enabled':
-                enabled['cron'] = False
-                enabled_path.write_text(json.dumps(enabled))
-            elif broken in ('missing', 'duplicate'):
-                cron = root / 'crontab'
-                cron.write_text('' if broken == 'missing' else cron.read_text() * 2)
         if command == 'start' and service == 'x-ui':
             sock = root / 'dev/shm/uds2023.sock'
             sock.parent.mkdir(parents=True, exist_ok=True)
@@ -124,7 +134,17 @@ elif name == 'ip':
         sys.exit(1)
     print('8.8.8.8 via 192.0.2.1 src ' + os.environ.get('TEST_IPV4', '192.0.2.10'))
 elif name == 'curl':
-    sys.exit(1)
+    if os.environ.get('FAIL_ACME'):
+        sys.exit(1)
+    url = args[-1]
+    if url.startswith('http://127.0.0.1/'):
+        if '/.well-known/acme-challenge/' in url:
+            print((root / 'var/www/acme/.well-known/acme-challenge' / url.rsplit('/', 1)[1]).read_text(), end='')
+        else:
+            host = next(a[6:] for a in args if a.startswith('Host: '))
+            print('301 https://' + host + '/', end='')
+    else:
+        sys.exit(1)
 elif name == 'dpkg-query':
     if args[-1] in os.environ.get('MISSING_PACKAGES', '').split() and args[-1] not in installed:
         sys.exit(1)
@@ -136,6 +156,8 @@ elif name == 'apt-get':
         installed.update(arg for arg in args[1:] if not arg.startswith('-'))
         installed_path.write_text('\n'.join(sorted(installed)))
 elif name in ('python3', 'gzip'):
+    if name == 'python3' and args == ['-c', 'import configobj, cryptography'] and os.environ.get('FAIL_PYTHON_IMPORT'):
+        sys.exit(1)
     sys.exit(subprocess.call([os.environ['REAL_' + name.upper()], *args]))
 elif name == 'ufw':
     if args == ['status']:
@@ -187,7 +209,7 @@ class PersonalBackup(unittest.TestCase):
         self.bin = Path(self.temp.name) / "mock-bin"
         self.bin.mkdir()
         commands = ['systemctl', 'crontab', 'ip', 'curl', 'dpkg-query', 'apt-get',
-                    'ufw', 'nginx', 'cp', 'dd', 'tar', 'id', 'useradd', 'setcap', 'sysctl', 'mtr', 'mtr-packet']
+                    'ufw', 'nginx', 'cp', 'dd', 'tar', 'python3', 'id', 'useradd', 'setcap', 'sysctl', 'mtr', 'mtr-packet']
         if os.geteuid() != 0:
             commands += ['chown', 'install']
         for name in commands:
@@ -202,6 +224,7 @@ class PersonalBackup(unittest.TestCase):
         self.script.write_text(relocated(SOURCE, self.root))
         self.env = {**os.environ, 'PATH': str(self.bin) + ':' + os.environ['PATH'],
                     'FIXTURE_ROOT': str(self.root), 'REAL_CP': shutil.which('cp'),
+                    'REAL_PYTHON3': sys.executable,
                     'REAL_DD': shutil.which('dd'), 'REAL_INSTALL': shutil.which('install'), 'REAL_TAR': shutil.which('tar')}
         self.write('/etc/os-release', Path('/etc/os-release').read_text())
         self.write('/etc/nginx/nginx.conf', f'pid {self.root}/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{}}\n')
@@ -225,6 +248,7 @@ class PersonalBackup(unittest.TestCase):
         for name in ('fullchain.pem', 'privkey.pem'):
             self.write('/etc/letsencrypt/live/example.com/' + name, 'fixture-cert\n', 0o600)
             self.path('/root/cert/example.com/' + name).symlink_to(self.path('/etc/letsencrypt/live/example.com/' + name))
+        certificates(self.root)
         self.write('/var/www/html/index.html', '192.0.2.10 unchanged')
         self.write('/var/www/subpage/clash.yaml', '192.0.2.10 unchanged')
         self.write('/var/www/diagnostics/index.html',
@@ -243,8 +267,10 @@ class PersonalBackup(unittest.TestCase):
         self.write('/etc/ssh/sshd_config', 'bootstrap preserved\n')
         self.write('/etc/ufw/user.rules', 'SSH preserved\n')
         self.write('/etc/cron.d/unrelated', 'unrelated preserved\n')
-        (self.root / 'crontab').write_text(CRON + '\n@hourly /opt/unrelated\n')
-        (self.root / 'services.json').write_text(json.dumps({'x-ui': 'active', 'nginx': 'active', 'mtr-backend': 'active'}))
+        (self.root / 'crontab').write_text('@hourly /opt/unrelated\n')
+        (self.root / 'services.json').write_text(json.dumps({'x-ui': 'active', 'nginx': 'active', 'mtr-backend': 'active',
+                                                          'certbot.timer': 'active', 'certbot.service': 'inactive'}))
+        (self.root / 'enabled.json').write_text(json.dumps({'certbot.timer': True}))
 
     def path(self, absolute):
         return self.root / absolute.lstrip('/')
@@ -276,7 +302,7 @@ class PersonalBackup(unittest.TestCase):
     def member(self, path):
         return 'files/' + str(self.path(path)).lstrip('/')
 
-    def changed_archive(self, archive, metadata=None, extra=None, db=None, omit=None, managed_cron=None):
+    def changed_archive(self, archive, metadata=None, extra=None, db=None, omit=None):
         fd, target = tempfile.mkstemp(dir=self.temp.name, suffix='.tar.gz')
         os.close(fd)
         target = Path(target)
@@ -291,8 +317,6 @@ class PersonalBackup(unittest.TestCase):
                     data = json.dumps(meta).encode()
                 if item.name == self.member('/etc/x-ui/x-ui.db') and db is not None:
                     data = db
-                if item.name == 'managed-root-cron' and managed_cron is not None:
-                    data = managed_cron
                 item = copy.copy(item)
                 if data is not None:
                     item.size = len(data)
@@ -351,8 +375,10 @@ class PersonalBackup(unittest.TestCase):
                 self.assertIn(self.member(path), names)
             self.assertFalse(any('testfiles' in n or '/etc/ufw' in n or '/etc/cron.d' in n or '/etc/ssh' in n
                                  or '99-proms-network' in n for n in names))
-            self.assertEqual(tar.extractfile('managed-root-cron').read().decode(), CRON + '\n')
-            self.assertEqual(json.load(tar.extractfile('meta.json'))['format_version'], 2)
+            self.assertNotIn('managed-root-cron', names)
+            self.assertIn(self.member('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx'), names)
+            self.assertFalse(any('/var/www/acme/' in n for n in names))
+            self.assertEqual(json.load(tar.extractfile('meta.json'))['format_version'], 3)
         calls = self.commands()
         stop = calls.index(['systemctl', 'stop', 'x-ui'])
         start = calls.index(['systemctl', 'start', 'x-ui'])
@@ -364,7 +390,7 @@ class PersonalBackup(unittest.TestCase):
 
     def test_inactive_service_is_not_started(self):
         state = self.root / 'services.json'
-        state.write_text(json.dumps({'x-ui': 'inactive'}))
+        services=json.loads(state.read_text());services['x-ui']='inactive';state.write_text(json.dumps(services))
         self.backup()
         self.assertNotIn(['systemctl', 'start', 'x-ui'], self.commands())
         self.assertNotIn(['systemctl', 'stop', 'x-ui'], self.commands())
@@ -393,7 +419,7 @@ class PersonalBackup(unittest.TestCase):
         archive = self.backup()
         corrupt = Path(self.temp.name) / 'corrupt.tar.gz'
         corrupt.write_bytes(b'not gzip')
-        cases = [(corrupt, {}), (archive, {'format_version': 1}), (archive, {'os_id': 'other'}),
+        cases = [(corrupt, {}), (archive, {'format_version': 1}), (archive, {'format_version': 2}), (archive, {'os_id': 'other'}),
                  (archive, {'os_version': '99'}), (archive, {'arch': 'other'})]
         cases.append((self.changed_archive(archive, omit=self.member('/usr/local/x-ui/bin/xray-linux-amd64')), {}))
         unsafe_location = self.path('/etc/nginx/input.tar.gz')
@@ -416,7 +442,7 @@ class PersonalBackup(unittest.TestCase):
 
     def test_archive_paths_and_links_are_validated(self):
         archive = self.backup()
-        for name, target in (('../escape', None), ('files/etc/ssh/injected', None),
+        for name, target in (('../escape', None), ('managed-root-cron', None), ('files/etc/ssh/injected', None),
                              (self.member('/etc/nginx/evil'), '/etc/ssh')):
             with self.subTest(name=name):
                 extra = tarfile.TarInfo(name)
@@ -430,6 +456,7 @@ class PersonalBackup(unittest.TestCase):
                 self.assertNotIn('Restore completed successfully.', result.stdout)
 
     def test_round_trip_cron_firewall_diagnostics_and_sysctl(self):
+        self.write('/var/www/acme/.well-known/acme-challenge/stale', 'stale challenge must not be archived')
         archive = self.backup()
         self.write('/var/www/html/index.html', 'modified')
         self.write('/etc/nginx/stale', 'stale')
@@ -447,7 +474,9 @@ class PersonalBackup(unittest.TestCase):
         self.assertEqual(self.path('/var/www/subpage/clash.yaml').read_text(), '192.0.2.10 unchanged')
         for path, content in preserved.items():
             self.assertEqual(self.path(path).read_bytes(), content)
-        self.assertEqual((self.root / 'crontab').read_text(), '@hourly /opt/current-unrelated\n' + CRON + '\n')
+        self.assertEqual((self.root / 'crontab').read_text(), '@hourly /opt/current-unrelated\n')
+        self.assertTrue(self.path('/var/www/acme/.well-known/acme-challenge').is_dir())
+        self.assertEqual(list(self.path('/var/www/acme/.well-known/acme-challenge').iterdir()), [])
         html = self.path('/var/www/diagnostics/index.html').read_text()
         self.assertIn('id="server-ip">198.51.100.20<', html)
         self.assertIn('id="server-ip-step">198.51.100.20<', html)
@@ -505,30 +534,27 @@ class PersonalBackup(unittest.TestCase):
         self.assertTrue(self.path('/root/cert/example.com/privkey.pem').exists())
         self.assertIn('192.0.2.10', self.path('/var/www/diagnostics/index.html').read_text())
         self.assertIn('Cannot detect current IPv4', result.stderr)
-        self.assertEqual((self.root / 'crontab').read_text(), CRON + '\n')
+        self.assertFalse((self.root / 'crontab').exists())
 
-    def test_restore_dependencies_and_cron_service_contract(self):
+    def test_restore_dependencies_and_timer_contract(self):
         archive = self.backup()
-        missing = 'cron procps iproute2 tar gzip tzdata'
+        missing = 'certbot python3-configobj python3-cryptography procps iproute2 tar gzip tzdata'
         (self.root / 'commands').write_text('')
-        # Even archives from an install with no managed renewal job must recover it.
-        archive = self.changed_archive(archive, managed_cron=b'')
         (self.root / 'crontab').write_text('@hourly /opt/unrelated\n' + CRON + '\n' + CRON + '\n')
         result = self.run_tool('restore', archive, MISSING_PACKAGES=missing)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         calls = self.commands()
         packages = [package for c in calls if c[:2] == ['apt-get', 'install'] for package in c[4:]]
         self.assertCountEqual(packages, missing.split())
-        activation = calls.index(['systemctl', 'enable', '--now', 'cron'])
-        self.assertLess(activation, calls.index(['systemctl', 'stop', 'x-ui']))
+        self.assertNotIn('cron', packages)
+        self.assertNotIn('python3-certbot-nginx', packages)
+        activation = calls.index(['systemctl', 'enable', '--now', 'certbot.timer'])
+        self.assertGreater(activation, calls.index(['systemctl', 'start', 'nginx']))
         for command in ('is-active', 'is-enabled'):
-            self.assertIn(['systemctl', command, '--quiet', 'cron'], calls)
-            # Checks occur after writing cron and again at the final health gate.
-            self.assertGreater(calls.index(['systemctl', command, '--quiet', 'cron'],
-                                          calls.index(['systemctl', 'start', 'nginx'])), activation)
-        self.assertEqual((self.root / 'crontab').read_text(), '@hourly /opt/unrelated\n' + CRON + '\n')
-        self.assertEqual(json.loads((self.root / 'services.json').read_text())['cron'], 'active')
-        self.assertTrue(json.loads((self.root / 'enabled.json').read_text())['cron'])
+            self.assertIn(['systemctl', command, '--quiet', 'certbot.timer'], calls)
+        self.assertEqual((self.root / 'crontab').read_text(), '@hourly /opt/unrelated\n')
+        self.assertEqual(json.loads((self.root / 'services.json').read_text())['certbot.timer'], 'active')
+        self.assertTrue(json.loads((self.root / 'enabled.json').read_text())['certbot.timer'])
 
     def test_restore_bootstraps_archive_tools_before_first_use(self):
         archive = self.backup()
@@ -562,18 +588,142 @@ class PersonalBackup(unittest.TestCase):
                     self.assertLess(gzip_test, validation)
                     self.assertLess(validation, extraction)
 
-    def test_restore_cron_failures_never_report_success(self):
+    def test_restore_renewal_failures_never_report_success(self):
         archive = self.backup()
-        for env in ({'FAIL_CRON_ENABLE': '1'}, {'FAIL_CRON_WRITE': '1'}, {'FAIL_HEALTH_SERVICE': 'cron'},
-                    *({'BREAK_FINAL_CRON': state} for state in ('active', 'enabled', 'missing', 'duplicate'))):
+        for env in ({'FAIL_CERTBOT_ENABLE': '1'}, {'FAIL_CRON_WRITE': '1'}, {'FAIL_HEALTH_SERVICE': 'certbot.timer'},
+                    *({'BREAK_FINAL_RENEWAL': state} for state in ('active', 'enabled', 'hook', 'authenticator', 'legacy'))):
             with self.subTest(failure=env):
                 (self.root / 'commands').write_text('')
+                (self.root / 'crontab').write_text(CRON + '\n@daily unrelated\n')
                 result = self.run_tool('restore', archive, **env)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn('Restore completed successfully.', result.stdout)
-                if 'BREAK_FINAL_CRON' in env:
-                    self.assertIn(['systemctl', 'start', 'nginx'], self.commands())
-                    self.assertIn('[FAIL]', result.stderr)
+                self.assertIn('[FAIL]', result.stderr)
+
+    def test_v2_is_explicitly_rejected_without_extraction(self):
+        archive = self.changed_archive(self.backup(), metadata={'format_version': 2})
+        (self.root / 'commands').write_text('')
+        self.write('/etc/x-ui/marker', 'unchanged')
+        result = self.run_tool('restore', archive)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Legacy backup format 2 is not supported', result.stderr)
+        self.assertIn('matching older x-ui-backup version', result.stderr)
+        self.assertEqual(self.path('/etc/x-ui/marker').read_text(), 'unchanged')
+        self.assertFalse(any(c[:2] == ['tar', '-xzf'] or c[:2] == ['systemctl', 'stop'] for c in self.commands()))
+
+    def test_backup_host_support_matrix(self):
+        for os_id,version,accepted in (('ubuntu','24.04',True),('ubuntu','26.04',True),('debian','13',True),('debian','12',False),('ubuntu','22.04',False)):
+            with self.subTest(os_id=os_id,version=version):
+                self.write('/etc/os-release', f'ID={os_id}\nVERSION_ID="{version}"\n')
+                result = subprocess.run(['bash','-c','source "$1"; host_identity; echo accepted','fixture',str(self.script)],
+                                        env=self.env,text=True,capture_output=True)
+                self.assertEqual(result.returncode,0 if accepted else 1,result.stderr)
+                self.assertEqual('accepted' in result.stdout,accepted)
+
+    def test_backup_renewal_preflight_rejects_broken_state_before_snapshot(self):
+        states=('lineage','authenticator','webroot','missing-hook','bad-hook','timer-disabled',
+                'timer-inactive','legacy-cron','acme','python-import')
+        for broken in states:
+            with self.subTest(broken=broken):
+                certificates(self.root)
+                services=json.loads((self.root/'services.json').read_text())
+                services['certbot.timer']='inactive' if broken=='timer-inactive' else 'active'
+                (self.root/'services.json').write_text(json.dumps(services))
+                (self.root/'enabled.json').write_text(json.dumps({'certbot.timer':broken!='timer-disabled'}))
+                (self.root/'crontab').write_text((CRON+'\n' if broken=='legacy-cron' else '')+'@hourly /opt/unrelated\n')
+                if broken=='lineage':shutil.rmtree(self.path('/etc/letsencrypt/live/example.com'))
+                if broken in ('authenticator','webroot'):
+                    cfg=ConfigObj(str(self.path('/etc/letsencrypt/renewal/example.com.conf')))
+                    if broken=='authenticator':cfg['renewalparams']['authenticator']='standalone'
+                    else:cfg['renewalparams']['webroot_map']['example.com']='/wrong'
+                    cfg.write()
+                hook=self.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx')
+                if broken=='missing-hook':hook.unlink()
+                if broken=='bad-hook':hook.write_text('if broken')
+                (self.root/'commands').write_text('')
+                result=self.run_tool('backup',FAIL_ACME='1' if broken=='acme' else '',
+                                     FAIL_PYTHON_IMPORT='1' if broken=='python-import' else '')
+                self.assertNotEqual(result.returncode,0)
+                self.assertNotIn('Backup completed successfully.',result.stdout)
+                self.assertFalse(self.path('/var/backups/x-ui').exists())
+                self.assertFalse(any(c[0]=='cp' or c[:2]==['systemctl','stop'] for c in self.commands()))
+
+    def test_backup_pauses_certbot_before_collection_and_resumes_on_success(self):
+        self.backup()
+        calls=self.commands()
+        pause=calls.index(['systemctl','stop','certbot.timer'])
+        idle=calls.index(['systemctl','is-active','certbot.service'])
+        collection=next(i for i,c in enumerate(calls) if c[0]=='cp' and str(self.path('/etc/letsencrypt')) in c)
+        resume=calls.index(['systemctl','start','certbot.timer'])
+        self.assertLess(pause,idle);self.assertLess(idle,collection);self.assertLess(collection,resume)
+        self.assertEqual(json.loads((self.root/'services.json').read_text())['certbot.timer'],'active')
+        self.assertTrue(json.loads((self.root/'enabled.json').read_text())['certbot.timer'])
+        self.assertNotIn(['systemctl','stop','certbot.service'],calls)
+
+    def test_active_certbot_prevents_backup_and_restore_without_killing_it(self):
+        archive=self.backup()
+        for operation in ('backup','restore'):
+            states=(('active','active'),('activating','active'))
+            if operation=='restore':states+=(('active','inactive'),)
+            for running,timer_state in states:
+                with self.subTest(operation=operation,running=running,timer_state=timer_state):
+                    services=json.loads((self.root/'services.json').read_text())
+                    services['certbot.service']=running
+                    services['certbot.timer']=timer_state
+                    (self.root/'services.json').write_text(json.dumps(services))
+                    self.write('/etc/x-ui/marker','unchanged')
+                    (self.root/'commands').write_text('')
+                    args=('backup',) if operation=='backup' else ('restore',archive)
+                    result=self.run_tool(*args)
+                    self.assertNotEqual(result.returncode,0)
+                    self.assertIn('retry after it finishes',result.stderr)
+                    self.assertNotIn('completed successfully.',result.stdout)
+                    self.assertEqual(self.path('/etc/x-ui/marker').read_text(),'unchanged')
+                    calls=self.commands()
+                    self.assertFalse(any(c[0]=='cp' for c in calls))
+                    self.assertNotIn(['systemctl','stop','certbot.service'],calls)
+                    state=json.loads((self.root/'services.json').read_text())
+                    self.assertEqual(state['certbot.service'],running)
+                    self.assertEqual(state['certbot.timer'],timer_state)
+                    self.assertEqual(list(self.path('/var/backups/x-ui').glob('*.tar.gz')),[archive])
+
+    def test_backup_failure_restores_timer_and_resume_failure_is_fatal(self):
+        for failure in ({'FAIL_COPY':'1'},{'CORRUPT_ARCHIVE':'1'},{'FAIL_TIMER_OPERATION':'stop'},
+                        {'FAIL_TIMER_OPERATION':'start'}):
+            with self.subTest(failure=failure):
+                services=json.loads((self.root/'services.json').read_text());services['certbot.timer']='active'
+                (self.root/'services.json').write_text(json.dumps(services))
+                (self.root/'commands').write_text('')
+                result=self.run_tool('backup',**failure)
+                self.assertNotEqual(result.returncode,0)
+                self.assertNotIn('Backup completed successfully.',result.stdout)
+                self.assertIn(['systemctl','start','certbot.timer'],self.commands())
+                if failure.get('FAIL_TIMER_OPERATION')!='start':
+                    self.assertEqual(json.loads((self.root/'services.json').read_text())['certbot.timer'],'active')
+                else:self.assertIn('Cannot restore certbot.timer',result.stderr)
+                self.assertFalse(list(self.path('/var/backups/x-ui').glob('*.tar.gz')))
+
+    def test_restore_pauses_certbot_before_replacement_and_validates_after_activation(self):
+        archive=self.backup()
+        (self.root/'commands').write_text('')
+        result=self.run_tool('restore',archive)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        calls=self.commands()
+        pause=calls.index(['systemctl','stop','certbot.timer'])
+        idle=calls.index(['systemctl','is-active','certbot.service'])
+        replacement=next(i for i,c in enumerate(calls) if c[0]=='cp' and c[-1]==str(self.path('/etc/letsencrypt')))
+        activation=calls.index(['systemctl','enable','--now','certbot.timer'])
+        health=calls.index(['systemctl','is-enabled','--quiet','certbot.timer'])
+        self.assertLess(pause,idle);self.assertLess(idle,replacement)
+        self.assertLess(replacement,activation);self.assertLess(activation,health)
+        for failure in ({'FAIL_TIMER_OPERATION':'stop'},{'FAIL_PYTHON_IMPORT':'1'}):
+            self.write('/etc/x-ui/marker','unchanged')
+            (self.root/'commands').write_text('')
+            result=self.run_tool('restore',archive,**failure)
+            self.assertNotEqual(result.returncode,0)
+            self.assertNotIn('Restore completed successfully.',result.stdout)
+            self.assertEqual(self.path('/etc/x-ui/marker').read_text(),'unchanged')
+            self.assertFalse(any(c[0]=='cp' for c in self.commands()))
 
     def test_setcap_failure_is_best_effort_but_service_health_is_required(self):
         archive = self.backup()

@@ -19,7 +19,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install nginx for configuration syntax validation
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nginx
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nginx certbot
       - name: Shell syntax
         run: |
           bash -n x-ui-latest.sh

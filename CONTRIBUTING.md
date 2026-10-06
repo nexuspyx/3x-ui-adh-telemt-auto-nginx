@@ -19,7 +19,7 @@ Reproduce the full suites on a disposable Ubuntu 24.04 test environment:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y --no-install-recommends nginx sqlite3
+sudo apt-get install -y --no-install-recommends nginx sqlite3 certbot
 bash -n x-ui-latest.sh
 bash -n x-ui-patch.sh
 bash -n x-ui-adguard.sh
