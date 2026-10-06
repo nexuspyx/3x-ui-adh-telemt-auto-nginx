@@ -212,7 +212,7 @@ mkdir -p /etc/nginx/stream-enabled /etc/nginx/snippets \
          /etc/nginx/sites-available /etc/nginx/sites-enabled
 
 # nginx >= 1.25.1 deprecates "listen ... http2" in favor of "http2 on;";
-# older versions (Debian 12 / Ubuntu 24.04) don't know the new directive
+# versions before nginx 1.25.1 don't know the new directive
 http2_listen="" ; http2_on=""
 ngx_ver=$(nginx -v 2>&1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' || echo 0)
 if [[ "$(printf '%s\n' 1.25.1 "$ngx_ver" | sort -V | head -1)" == "1.25.1" ]]; then

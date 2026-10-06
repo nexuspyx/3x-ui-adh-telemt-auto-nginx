@@ -36,7 +36,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 Нужны входящие TCP 80/443 и UDP 443; для получения сертификатов DNS доменов должен указывать на этот сервер.
 
-> **⚠️ Только для чистой установки или полной переустановки.** `x-ui-latest.sh` удаляет существующую установку 3x-ui на сервере, включая базу панели и конфигурацию nginx. **Не используйте его как обычное обновление рабочего VPS.** Если сервер уже настроен, сначала сохраните резервную копию вне VPS.
+> **⚠️ Только для чистой установки или полной переустановки.** `x-ui-latest.sh` удаляет существующую установку 3x-ui на сервере, включая базу панели и конфигурацию nginx. **Не используйте его как обычное обновление рабочего VPS.** При обнаружении 3x-ui/nginx/TLS требуется точное `YES` до удаления файлов, включая uninstall. Если сервер уже настроен, сначала сохраните резервную копию вне VPS.
 
 ## 🌐 Два домена → готовый сервер
 
@@ -90,6 +90,8 @@ x-ui-backup backup
 x-ui-backup list
 ```
 
+Текущий backup format — **v3**. Архивы v2 новым tool не поддерживаются: восстановите их утилитой из matching older release.
+
 Архивы сохраняются в `/var/backups/x-ui/` с доступом только для root. Внутри — состояние клиентов/базы, сертификаты/private keys и runtime secrets. **Обязательно скопируйте архив с VPS** на ПК, NAS или в другое безопасное хранилище.
 
 Для отката на текущем VPS:
@@ -122,9 +124,9 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 
 4. Если IP изменился, переключите DNS существующих доменов на новый VPS. После восстановления используйте прежние конфигурации панели и клиентов.
 
-Restore сам устанавливает отсутствующие application dependencies и восстанавливает panel/runtime, nginx, сертификаты, web/diagnostics, project systemd units, managed sysctl и managed Certbot cron. SSH, `authorized_keys`, fail2ban, базовая UFW policy и OS/bootstrap state остаются ответственностью администратора. Restore добавляет правила 80/tcp, 443/tcp и 443/udp, но никогда не включает UFW; посторонние cron jobs сохраняются.
+Restore сам устанавливает отсутствующие application dependencies и восстанавливает panel/runtime, nginx, сертификаты, web/diagnostics, project systemd units, managed sysctl и webroot renewal через `certbot.timer`. SSH, `authorized_keys`, fail2ban, базовая UFW policy и OS/bootstrap state остаются ответственностью администратора. Restore добавляет правила 80/tcp, 443/tcp и 443/udp, но никогда не включает UFW; посторонние cron jobs сохраняются.
 
-Backup/Restore v2 проверен на реальном Ubuntu 26.04 amd64 VPS: same-host rollback, clean-host recovery после bootstrap без installer, работа после reboot и подключения к панели/реальных клиентов (3x-ui 3.9.0, Xray 26.9.30, nginx 1.28.3).
+Предыдущий Backup/Restore v2 был проверен на реальном Ubuntu 26.04 amd64 VPS: same-host rollback, clean-host recovery после bootstrap без installer, работа после reboot и подключения к панели/реальных клиентов (3x-ui 3.9.0, Xray 26.9.30, nginx 1.28.3).
 
 </details>
 
@@ -133,12 +135,13 @@ Backup/Restore v2 проверен на реальном Ubuntu 26.04 amd64 VPS:
 <details>
 <summary>Платформы, маршрутизация, firewall и optional tools</summary>
 
-- **Платформы:** Ubuntu 26.04 amd64 проверен на реальном VPS; Ubuntu 24.04 используется в CI. Debian 12/13 допускаются OS checks без аналогичной live-проверки. Не все архитектуры протестированы. CPU с моделью QEMU отклоняется; VPS должен показывать реальную модель CPU.
+- **Платформы:** Ubuntu 26.04 amd64 проверен на реальном VPS; Ubuntu 24.04 используется в CI. Debian 13 допускается OS checks без аналогичной live-проверки; Debian 12 не поддерживается. Не все архитектуры протестированы. QEMU CPU не блокирует installation; отсутствие hardware AES даёт performance advisory.
 - **Маршрутизация:** nginx принимает TCP 443 и направляет по SNI в REALITY/Xray на 8443 либо TLS vhost панели на 7443. Camouflage target REALITY использует 9443. XHTTP работает через Unix socket; WS/gRPC имеют фиксированные paths/backends. Hysteria2 независимо принимает UDP 443.
 - **UFW:** активный UFW получает только правила 80/tcp, 443/tcp и 443/udp. Неактивный включается только после определения и разрешения SSH ports; иначе остаётся выключенным с warning. Существующие rules/default policy сохраняются, жёстко заданного SSH port 22 нет.
 - **Версии:** по умолчанию выбирается latest stable 3x-ui. `-version <tag>` позволяет выбрать релиз панели; binary и CLI берутся из одного tag.
 - **Diagnostics/subscriptions:** MTR/LibreSpeed с авторизацией через панель, JSON и Clash/Mihomo subscriptions. Новые пользовательские WS/gRPC inbounds требуют явных nginx routes; generic proxy к произвольному localhost port отсутствует.
 - **Optional tools:** `x-ui-adguard.sh` сохранён для опциональной интеграции AdGuard Home и дальнейшего развития; основной installer его не запускает. `x-ui-patch.sh` — дополнительная maintenance utility, а не миграция базы или универсальный updater.
+- **TLS renewal:** webroot `/var/www/acme` + distro `certbot.timer`. Nginx остаётся online и graceful reload применяется после renewal; x-ui перезапускается только при обновлении сертификата панели. Release acceptance включает `certbot renew --dry-run` для обоих сертификатов.
 - **Совместимость:** `/usr/local/lib/3x-ui-pro` и `/etc/sysctl.d/99-3x-ui-pro.conf` намеренно сохранены для Backup/Restore.
 
 </details>
@@ -146,7 +149,7 @@ Backup/Restore v2 проверен на реальном Ubuntu 26.04 amd64 VPS:
 <details>
 <summary>Проверки, разработка и релизы</summary>
 
-CI проверяет transport/Host-профили, nginx syntax, отрицательный тест arbitrary localhost-port access, firewall, version pinning, cron и canonical sources. Backup/Restore tests используют изолированные fixtures с настоящими tar/gzip, SQLite и nginx. Bash syntax проверяется для installer, patch, AdGuard и backup scripts. CI не заменяет live acceptance с реальным клиентом.
+CI проверяет transport/Host-профили, nginx syntax, отрицательный тест arbitrary localhost-port access, firewall, version pinning, destructive guard, webroot/timer renewal и canonical sources. Backup/Restore tests используют изолированные fixtures с настоящими tar/gzip, SQLite и nginx. Bash syntax проверяется для installer, patch, AdGuard и backup scripts. CI не заменяет live acceptance с реальным клиентом.
 
 Разработка ведётся через PR в `main`; см. [CONTRIBUTING.md](CONTRIBUTING.md). Имена обязательных jobs остаются `Stack XHTTP and security` и `Stack Backup and restore` для совместимости branch protection.
 

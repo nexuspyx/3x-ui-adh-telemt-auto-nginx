@@ -9,9 +9,9 @@ DB=/etc/x-ui/x-ui.db
 XRAY_DIR=/usr/local/x-ui/bin
 SYSCTL_FILE=/etc/sysctl.d/99-3x-ui-pro.conf
 XHTTP_SOCKET=/dev/shm/uds2023.sock
-MANAGED_CRON='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
-PACKAGES=(nginx-full certbot python3-certbot-nginx sqlite3 curl wget jq ufw
-          netcat-openbsd mtr python3 libcap2-bin ca-certificates cron procps iproute2 tar gzip tzdata)
+LEGACY_CERTBOT_CRON='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
+PACKAGES=(nginx-full certbot sqlite3 curl wget jq ufw
+          netcat-openbsd mtr python3 libcap2-bin ca-certificates openssl procps iproute2 tar gzip tzdata)
 RUNTIME_PATHS=(/etc/x-ui /usr/local/x-ui /usr/bin/x-ui)
 TREE_PATHS=(/etc/nginx /etc/letsencrypt /root/cert /usr/local/lib/3x-ui-pro
             /var/www/html /var/www/subpage)
@@ -19,7 +19,7 @@ EXTRA_PATHS=(/etc/systemd/system/x-ui.service /etc/systemd/system/mtr-backend.se
              /var/www/diagnostics/index.html /var/www/diagnostics/speedtest.js
              /var/www/diagnostics/speedtest_worker.js "$SYSCTL_FILE")
 REQUIRED_PATHS=("$DB" /usr/local/x-ui/x-ui /usr/bin/x-ui /etc/nginx/nginx.conf
-                /etc/letsencrypt /usr/local/lib/3x-ui-pro/mtr-backend.py
+                /etc/letsencrypt /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx /usr/local/lib/3x-ui-pro/mtr-backend.py
                 /var/www/html /var/www/subpage "${EXTRA_PATHS[@]:0:5}")
 STAGING= OUTPUT= STAGE=preflight
 BACKUP_FINISHED=0 RESUME_XUI=0 APT_UPDATED=0
@@ -64,8 +64,8 @@ host_identity() {
     OS_ID=$ID OS_VERSION=$VERSION_ID
     ARCH=$(dpkg --print-architecture)
     case "$OS_ID:$OS_VERSION" in
-        ubuntu:24.04|ubuntu:26.04|debian:12|debian:13) ;;
-        *) die 'Supported OS: Ubuntu 24.04/26.04 or Debian 12/13.' ;;
+        ubuntu:24.04|ubuntu:26.04|debian:13) ;;
+        *) die 'Supported OS: Ubuntu 24.04/26.04 or Debian 13.' ;;
     esac
 }
 
@@ -98,12 +98,12 @@ quick_check() {
 # accepted; links cannot redirect extraction or target arbitrary OS/security files.
 validate_archive() {
     gzip -t -- "$1" || die 'Archive gzip integrity check failed.'
-    python3 - "$1" "$MANAGED_CRON" "$DB" "$XRAY_DIR" "${REQUIRED_PATHS[@]}" -- \
+    python3 - "$1" "$DB" "$XRAY_DIR" "${REQUIRED_PATHS[@]}" -- \
         "${RUNTIME_PATHS[@]:0:2}" "${TREE_PATHS[@]}" -- \
         /usr/bin/x-ui "${EXTRA_PATHS[@]}" <<'PY'
 import ipaddress, json, posixpath, sys, tarfile
 from pathlib import PurePosixPath
-archive, cron, db, xray_dir, *paths = sys.argv[1:]
+archive, db, xray_dir, *paths = sys.argv[1:]
 split = paths.index('--')
 required, paths = paths[:split], paths[split + 1:]
 split = paths.index('--')
@@ -125,7 +125,7 @@ def clean(name):
 def managed(path):
     return path in files or any(path == p or path.startswith(p + '/') for p in trees)
 def permitted(name, directory):
-    if name in ('meta.json', 'managed-root-cron'):
+    if name == 'meta.json':
         return not directory
     if name == 'files':
         return directory
@@ -135,6 +135,12 @@ def permitted(name, directory):
     return managed(path) or (directory and any(p.startswith(path + '/') for p in allowed))
 try:
     with tarfile.open(archive, 'r:gz') as tar:
+        metadata = tar.getmember('meta.json')
+        if not metadata.isfile() or metadata.size > 16384:
+            fail('Invalid metadata file')
+        meta = json.load(tar.extractfile(metadata))
+        if isinstance(meta, dict) and type(meta.get('format_version')) is int and meta['format_version'] == 2:
+            fail('Legacy backup format 2 is not supported by this release. Restore it with the matching older x-ui-backup version.')
         members = {}
         for member in tar:
             name = clean(member.name)
@@ -165,35 +171,32 @@ try:
                 target = members.get(clean(member.linkname))
                 if not target or not target.isfile():
                     fail('Invalid hard link')
-        for name in ['meta.json', 'managed-root-cron', *required]:
+        for name in ['meta.json', *required]:
             if name not in members:
                 fail('Archive is missing required managed state')
             if name in required and not (members[name].isdir() if name[6:] in trees else members[name].isfile()):
                 fail('Required managed state has the wrong file type')
-        for name in ('meta.json', 'managed-root-cron', 'files/' + db.lstrip('/')):
+        for name in ('meta.json', 'files/' + db.lstrip('/')):
             if not members[name].isfile():
-                fail('Metadata, cron and DB must be regular files')
+                fail('Metadata and DB must be regular files')
         xray_prefix = 'files/' + xray_dir.lstrip('/') + '/xray-linux-'
         if not any(name.startswith(xray_prefix) and member.isfile() and member.mode & 0o111
                    for name, member in members.items()):
             fail('Archive is missing the Xray executable')
-        if members['meta.json'].size > 16384 or members['managed-root-cron'].size > 4096:
+        if members['meta.json'].size > 16384:
             fail('Unexpected metadata size')
         meta = json.load(tar.extractfile(members['meta.json']))
         if not isinstance(meta, dict):
             fail('Metadata must be an object')
         keys = ('created', 'hostname', 'os_id', 'os_version', 'arch', 'x_ui_version', 'xray_version', 'source_ipv4')
-        if type(meta.get('format_version')) is not int or meta['format_version'] != 2:
-            fail('Unsupported backup format; expected format_version=2')
+        if type(meta.get('format_version')) is not int or meta['format_version'] != 3:
+            fail('Unsupported backup format; expected format_version=3')
         if any(not isinstance(meta.get(k), str) for k in keys):
             fail('Incomplete backup metadata')
         if meta['source_ipv4']:
             ipaddress.IPv4Address(meta['source_ipv4'])
-        for line in tar.extractfile(members['managed-root-cron']).read().decode().splitlines():
-            if line != cron:
-                fail('Archive contains unmanaged cron commands')
-except (ValueError, OSError, tarfile.TarError, KeyError, UnicodeError):
-    print('[FAIL] Invalid or unsafe backup archive (format, members, links or metadata).', file=sys.stderr)
+except (ValueError, OSError, tarfile.TarError, KeyError, UnicodeError) as exc:
+    print('[FAIL] Invalid or unsafe backup archive: ' + str(exc), file=sys.stderr)
     sys.exit(1)
 PY
 }
@@ -210,19 +213,6 @@ current_ipv4() {
     done
     (( valid )) || return 1
     printf '%s\n' "$candidate"
-}
-
-read_cron() {
-    local error="$STAGING/crontab-error"
-    if crontab -l > "$1" 2> "$error"; then
-        return
-    fi
-    # An absent root crontab is normal on a clean VPS; other failures are fatal.
-    if grep -qi 'no crontab for' "$error"; then
-        : > "$1"
-    else
-        die 'Cannot read root crontab.'
-    fi
 }
 
 collect_path() {
@@ -247,7 +237,7 @@ write_metadata() {
 import datetime, json, socket, sys
 path, os_id, os_version, arch, x_ui, xray, ipv4 = sys.argv[1:]
 with open(path, 'w') as out:
-    json.dump(dict(format_version=2, created=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    json.dump(dict(format_version=3, created=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                    hostname=socket.gethostname(), os_id=os_id, os_version=os_version, arch=arch,
                    x_ui_version=x_ui, xray_version=xray, source_ipv4=ipv4), out, indent=2)
     out.write('\n')
@@ -291,13 +281,11 @@ cmd_backup() {
     fi
     stage 'Collecting managed configuration and web content'
     for path in "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}"; do collect_path "$path"; done
-    read_cron "$STAGING/current-root-cron"
-    awk -v managed="$MANAGED_CRON" '$0 == managed' "$STAGING/current-root-cron" > "$STAGING/managed-root-cron"
     write_metadata
     stage 'Compressing and verifying archive'
     local name="x-ui-backup-$(date -u +%Y%m%d-%H%M%S)-${STAGING##*-}.tar.gz"
     OUTPUT="$BACKUP_STORE/.$name.partial"
-    tar -czf "$OUTPUT" -C "$STAGING" meta.json managed-root-cron files
+    tar -czf "$OUTPUT" -C "$STAGING" meta.json files
     chown root:root "$OUTPUT"
     chmod 0600 "$OUTPUT"
     validate_archive "$OUTPUT"
@@ -318,7 +306,7 @@ if [meta['os_id'], meta['os_version'], meta['arch']] != sys.argv[2:]:
     print('[FAIL] Restore requires the same OS ID, VERSION_ID and architecture.', file=sys.stderr)
     sys.exit(1)
 PY
-    ok "Backup format 2; OS $OS_ID $OS_VERSION; architecture $ARCH"
+    ok "Backup format 3; OS $OS_ID $OS_VERSION; architecture $ARCH"
 }
 
 replace_managed_state() {
@@ -409,12 +397,118 @@ PY
     chown -R www-data:www-data /var/www/diagnostics /var/www/html /var/www/subpage
 }
 
-restore_cron_and_firewall() {
-    read_cron "$STAGING/current-root-cron"
-    awk -v managed="$MANAGED_CRON" '$0 != managed' "$STAGING/current-root-cron" > "$STAGING/merged-root-cron"
-    printf '%s\n' "$MANAGED_CRON" >> "$STAGING/merged-root-cron"
-    crontab - < "$STAGING/merged-root-cron"
-    check_cron
+prepare_acme_webroot() {
+    install -d -o root -g root -m 0755 /var/www/acme /var/www/acme/.well-known /var/www/acme/.well-known/acme-challenge
+}
+
+
+remove_legacy_certbot_cron() {
+    command -v crontab >/dev/null || return 0
+    local directory
+    directory=$(mktemp -d) || return 1
+    if ! LC_ALL=C crontab -l > "$directory/current" 2> "$directory/error"; then
+        if grep -qi 'no crontab for' "$directory/error"; then rm -rf "$directory"; return 0; fi
+        rm -rf "$directory"; return 1
+    fi
+    if grep -Fxq -- "$LEGACY_CERTBOT_CRON" "$directory/current"; then
+        awk -v legacy="$LEGACY_CERTBOT_CRON" '$0 != legacy' "$directory/current" > "$directory/new" || { rm -rf "$directory"; return 1; }
+        crontab - < "$directory/new" && crontab -l > "$directory/verified" &&
+            cmp -s "$directory/new" "$directory/verified" || { rm -rf "$directory"; return 1; }
+    fi
+    rm -rf "$directory"
+}
+
+check_no_legacy_certbot_cron() {
+    command -v crontab >/dev/null || return 0
+    local directory
+    directory=$(mktemp -d) || return 1
+    if ! LC_ALL=C crontab -l > "$directory/current" 2> "$directory/error"; then
+        if grep -qi 'no crontab for' "$directory/error"; then rm -rf "$directory"; return 0; fi
+        rm -rf "$directory"; return 1
+    fi
+    if grep -Fxq -- "$LEGACY_CERTBOT_CRON" "$directory/current"; then rm -rf "$directory"; return 1; fi
+    rm -rf "$directory"
+}
+
+check_webroot_lineage() {
+    python3 - "$1" <<'PY'
+import sys
+from pathlib import Path
+from configobj import ConfigObj, ConfigObjError
+from cryptography import x509
+try:
+    domain = sys.argv[1]
+    live = Path('/etc/letsencrypt/live') / domain
+    conf = Path('/etc/letsencrypt/renewal') / (domain + '.conf')
+    cfg = ConfigObj(str(conf), encoding='utf-8', file_error=True)
+    params = cfg['renewalparams']
+    if params.get('authenticator') != 'webroot':
+        raise ValueError('authenticator must be webroot')
+    for name in ('fullchain', 'privkey'):
+        path = live / (name + '.pem')
+        if cfg.get(name) != str(path) or not path.is_file() or not path.stat().st_size:
+            raise ValueError('missing or unexpected certificate/key path')
+    cert = x509.load_pem_x509_certificate((live / 'fullchain.pem').read_bytes())
+    names = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)
+    if set(names) != {domain}:
+        raise ValueError('expected a separate exact-domain lineage')
+    mapping = params.get('webroot_map', {})
+    roots = params.get('webroot_path', [])
+    if isinstance(roots, str):
+        roots = [roots]
+    effective = mapping.get(domain) if domain in mapping else (roots[-1] if roots else None)
+    if effective != '/var/www/acme':
+        raise ValueError('unexpected persisted webroot')
+    if any(params.get(key) for key in ('pre_hook', 'post_hook', 'renew_hook', 'deploy_hook')):
+        raise ValueError('unexpected per-lineage hooks; use the project deploy directory hook')
+except (OSError, ValueError, KeyError, ConfigObjError, x509.ExtensionNotFound) as exc:
+    print('[FAIL] Invalid webroot renewal lineage: ' + str(exc), file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+check_acme_http() {
+    local domain=$1 reality_domain=$2 token body code failed=0
+    token=$(openssl rand -hex 16) || return 1
+    printf '%s' "$token" > "/var/www/acme/.well-known/acme-challenge/$token" || { rm -f "/var/www/acme/.well-known/acme-challenge/$token"; return 1; }
+    chmod 0644 "/var/www/acme/.well-known/acme-challenge/$token" || { rm -f "/var/www/acme/.well-known/acme-challenge/$token"; return 1; }
+    local d
+    for d in "$domain" "$reality_domain"; do
+        body=$(curl --noproxy '*' -fsS --connect-timeout 5 --max-time 10 -H "Host: $d" \
+            "http://127.0.0.1/.well-known/acme-challenge/$token") || failed=1
+        [[ "$body" == "$token" ]] || failed=1
+        code=$(curl --noproxy '*' -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code} %{redirect_url}' \
+            -H "Host: $d" http://127.0.0.1/) || failed=1
+        [[ "$code" == "301 https://$d/" ]] || failed=1
+    done
+    rm -f "/var/www/acme/.well-known/acme-challenge/$token" || return 1
+    (( ! failed ))
+}
+
+check_certificate_renewal() {
+    local domain=$1 reality_domain=$2 hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx
+    check_webroot_lineage "$domain" && check_webroot_lineage "$reality_domain" || return 1
+    [[ -f "$hook" && ! -L "$hook" && -x "$hook" && "$(stat -c '%u:%g:%a' "$hook")" == '0:0:755' ]] || return 1
+    bash -n "$hook" || return 1
+    # Verify restored/generated hook domains without executing arbitrary hook code.
+    python3 - "$hook" "$domain" "$reality_domain" <<'PY'
+import shlex, sys
+values = {}
+for line in open(sys.argv[1]):
+    for key in ('PANEL_DOMAIN', 'REALITY_DOMAIN'):
+        if line.startswith(key + '='):
+            parts = shlex.split(line.strip())
+            if len(parts) == 1:
+                values[key] = parts[0].split('=', 1)[1]
+if [values.get('PANEL_DOMAIN'), values.get('REALITY_DOMAIN')] != sys.argv[2:]:
+    sys.exit('Deploy hook domains do not match this installation')
+PY
+    [[ $? == 0 ]] || return 1
+    systemctl is-enabled --quiet certbot.timer && systemctl is-active --quiet certbot.timer || return 1
+    check_no_legacy_certbot_cron && nginx -t && check_acme_http "$domain" "$reality_domain"
+}
+
+restore_firewall() {
     for rule in 80/tcp 443/tcp 443/udp; do ufw allow "$rule"; done
     local status
     status=$(LC_ALL=C ufw status) || die 'Cannot read UFW status.'
@@ -423,12 +517,21 @@ restore_cron_and_firewall() {
     fi
 }
 
-check_cron() {
-    systemctl is-active --quiet cron && systemctl is-enabled --quiet cron || die 'cron must be active and enabled.'
-    read_cron "$STAGING/verified-root-cron"
-    local count
-    count=$(awk -v managed="$MANAGED_CRON" '$0 == managed {n++} END {print n+0}' "$STAGING/verified-root-cron")
-    [[ "$count" == 1 ]] || die 'Managed Certbot cron must exist exactly once.'
+restored_certificate_domains() {
+    python3 - /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx <<'PYDOM'
+import shlex, sys
+values = {}
+for line in open(sys.argv[1]):
+    for key in ('PANEL_DOMAIN', 'REALITY_DOMAIN'):
+        if line.startswith(key + '='):
+            parts = shlex.split(line.strip())
+            if len(parts) == 1:
+                values[key] = parts[0].split('=', 1)[1]
+names = [values.get('PANEL_DOMAIN'), values.get('REALITY_DOMAIN')]
+if any(not name or '/' in name or any(c.isspace() for c in name) for name in names) or names[0] == names[1]:
+    sys.exit('Missing or ambiguous project domains in deploy hook')
+print('\n'.join(names))
+PYDOM
 }
 
 check_health() {
@@ -445,7 +548,11 @@ check_health() {
         if systemctl is-active --quiet "$service"; then ok "$service is active";
         else printf '[FAIL] %s is not active\n' "$service" >&2; failed=1; fi
     done
-    check_cron
+    local domains
+    domains=$(restored_certificate_domains) || die 'Cannot detect saved certificate domains.'
+    local -a names
+    mapfile -t names <<< "$domains"
+    check_certificate_renewal "${names[0]}" "${names[1]}" || die 'Certificate renewal validation failed.'
     for attempt in {1..10}; do
         [[ -S "$XHTTP_SOCKET" ]] && break
         sleep 0.5
@@ -473,7 +580,6 @@ cmd_restore() {
     tar -xzf "$archive" -C "$STAGING" --same-owner
     check_compatibility
     install_missing_packages "${PACKAGES[@]}"
-    systemctl enable --now cron || die 'Cannot enable and start cron.'
     quick_check "$STAGING/files$DB"
     stage 'Stopping services and restoring managed state'
     for service in nginx x-ui mtr-backend; do
@@ -485,7 +591,10 @@ cmd_restore() {
     repair_panel_certificates
     prepare_mtr_backend
     regenerate_diagnostics
-    restore_cron_and_firewall
+    rm -rf /var/www/acme/.well-known/acme-challenge
+    prepare_acme_webroot
+    remove_legacy_certbot_cron || die 'Cannot remove the exact legacy project renewal job.'
+    restore_firewall
     stage 'Enabling and starting services'
     systemctl daemon-reload
     nginx -t > "$STAGING/nginx-test.log" 2>&1 || die 'nginx -t failed; nginx was not started. Fix the configuration and rerun restore.'
@@ -494,6 +603,7 @@ cmd_restore() {
         systemctl enable "$service" || die "Cannot enable $service."
         systemctl start "$service" || die "Cannot start $service."
     done
+    systemctl enable --now certbot.timer || die 'Cannot enable and start certbot.timer.'
     check_health
     printf '\nRestore completed successfully.\n'
     warn 'Recovery uses the saved domains. On a new VPS, point their DNS to this VPS separately.'

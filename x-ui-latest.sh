@@ -26,12 +26,12 @@ check_os() {
             [[ "$os_version" == "24.04" || "$os_version" == "26.04" ]] && return 0
             ;;
         debian)
-            [[ "$os_version" == "12" || "$os_version" == "13" ]] && return 0
+            [[ "$os_version" == "13" ]] && return 0
             ;;
     esac
 
     msg_err "Unsupported OS: ${os_id} ${os_version}"
-    echo -e "\nThis script supports:\n  Ubuntu 24.04 / 26.04\n  Debian 12 / 13"
+    echo -e "\nThis script supports:\n  Ubuntu 24.04 / 26.04\n  Debian 13"
     echo -e "\nPlease reinstall your server with one of the supported OS versions and try again."
     exit 1
 }
@@ -72,7 +72,7 @@ check_cpu
 XUIDB="/etc/x-ui/x-ui.db"
 GITHUB_RAW="https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main"
 FAKE_SITE_COUNT=50
-MANAGED_CRON='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
+LEGACY_CERTBOT_CRON='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
 
 # ─── Default argument values ─────────────────────────────────────────────────
 domain=""
@@ -182,6 +182,49 @@ Pak=$(type apt &>/dev/null && echo "apt" || echo "yum")
 # ─────────────────────────────────────────────────────────────────────────────
 # UNINSTALL
 # ─────────────────────────────────────────────────────────────────────────────
+detect_existing_installation() {
+    EXISTING_INSTALL_CATEGORIES=()
+    if [[ -e /etc/x-ui || -e /usr/local/x-ui || -e /usr/bin/x-ui ||
+          -e /etc/systemd/system/x-ui.service || -e /lib/systemd/system/x-ui.service ]] ||
+       systemctl is-active --quiet x-ui 2>/dev/null || systemctl is-enabled --quiet x-ui 2>/dev/null; then
+        EXISTING_INSTALL_CATEGORIES+=("3x-ui installation")
+    fi
+    if [[ -e /usr/local/lib/3x-ui-pro || -e /usr/local/bin/x-ui-backup ||
+          -e /etc/systemd/system/mtr-backend.service ]] ||
+       systemctl is-active --quiet mtr-backend 2>/dev/null || systemctl is-enabled --quiet mtr-backend 2>/dev/null; then
+        EXISTING_INSTALL_CATEGORIES+=("Project runtime / diagnostics")
+    fi
+    if [[ -d /etc/nginx ]] || compgen -G '/etc/nginx/sites-enabled/*' >/dev/null ||
+       compgen -G '/etc/nginx/sites-available/*' >/dev/null || compgen -G '/etc/nginx/stream-enabled/*' >/dev/null ||
+       compgen -G '/etc/nginx/snippets/*' >/dev/null ||
+       [[ "$(dpkg-query -W -f='${Status}' nginx-common 2>/dev/null)" == 'install ok installed' ]]; then
+        EXISTING_INSTALL_CATEGORIES+=("nginx configuration / package")
+    fi
+    if [[ -d /root/cert ]] || compgen -G '/etc/letsencrypt/live/*' >/dev/null; then
+        EXISTING_INSTALL_CATEGORIES+=("TLS certificates")
+    fi
+    if command -v crontab >/dev/null && LC_ALL=C crontab -l 2>/dev/null | grep -Fxq -- "$LEGACY_CERTBOT_CRON"; then
+        EXISTING_INSTALL_CATEGORIES+=("Legacy project certificate renewal")
+    fi
+    return 0
+}
+
+confirm_destructive_reinstall() {
+    local answer category
+    detect_existing_installation
+    (( ${#EXISTING_INSTALL_CATEGORIES[@]} )) || return 0
+    msg_warn '============================================================'
+    msg_warn '  Existing installation detected'
+    msg_warn '============================================================'
+    for category in "${EXISTING_INSTALL_CATEGORIES[@]}"; do msg_warn " [!] $category"; done
+    printf '\nContinuing will remove the current 3x-ui deployment and replace\nnginx configuration. Copy a backup off-host before continuing.\n\n'
+    printf 'Type YES to remove the existing deployment and continue: '
+    if ! IFS= read -r answer || [[ "$answer" != YES ]]; then
+        msg_err 'Cancelled. Existing deployment was not changed.'
+        return 1
+    fi
+}
+
 uninstall_xui() {
     printf 'y\n' | x-ui uninstall 2>/dev/null || true
     rm -rf /etc/x-ui/ /usr/local/x-ui/
@@ -199,8 +242,10 @@ uninstall_xui() {
 }
 
 if [[ ${UNINSTALL} == *"y"* ]]; then
+    confirm_destructive_reinstall || exit 1
     uninstall_xui
-    clear && msg_ok "3x-ui Auto Nginx completely uninstalled." && exit 0
+    msg_ok "3x-ui Auto Nginx completely uninstalled."
+    exit 0
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -262,25 +307,47 @@ install_packages() {
         [[ "$version" == "20" || "$version" == "22" ]] && echo "System: Ubuntu $version"
 
         $Pak -y update || return 1
-        $Pak -y install curl wget jq bash sudo nginx-full certbot python3-certbot-nginx sqlite3 ufw netcat-openbsd mtr python3 libcap2-bin cron openssl procps psmisc iproute2 tar gzip tzdata ca-certificates || return 1
+        $Pak -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr python3 libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates || return 1
         systemctl daemon-reload && systemctl enable --now nginx || return 1
     fi
 
     apt-get install -yqq --no-install-recommends ca-certificates || return 1
     local binary
-    for binary in crontab openssl sysctl fuser ip ss tar gzip curl wget jq bash sudo nginx certbot sqlite3 ufw nc mtr python3 setcap; do
+    for binary in openssl sysctl ip ss tar gzip curl wget jq bash sudo nginx certbot sqlite3 ufw nc mtr python3 setcap; do
         command -v "$binary" >/dev/null || { msg_err "Required binary is missing: $binary"; return 1; }
     done
-    systemctl enable --now cron || return 1
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SSL CERTIFICATES
 # ─────────────────────────────────────────────────────────────────────────────
-get_ssl_certs() {
-    systemctl stop nginx 2>/dev/null || true
-    fuser -k 80/tcp 80/udp 443/tcp 443/udp 2>/dev/null || true
+prepare_acme_webroot() {
+    install -d -o root -g root -m 0755 /var/www/acme /var/www/acme/.well-known /var/www/acme/.well-known/acme-challenge
+}
 
+setup_acme_http() {
+    prepare_acme_webroot || return 1
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled || return 1
+    cat > /etc/nginx/sites-available/80.conf <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain} ${reality_domain};
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/acme;
+        default_type text/plain;
+        try_files \$uri =404;
+    }
+    location / { return 301 https://\$host\$request_uri; }
+}
+EOF
+    [[ $? == 0 ]] || return 1
+    rm -f /etc/nginx/sites-enabled/default || return 1
+    ln -sf /etc/nginx/sites-available/80.conf /etc/nginx/sites-enabled/80.conf || return 1
+    nginx -t && systemctl enable --now nginx && systemctl reload nginx && systemctl is-active --quiet nginx
+}
+
+get_ssl_certs() {
     if [[ ${AUTODOMAIN} == *"y"* ]]; then
         local resolve_ok=true
         for d in "$domain" "$reality_domain"; do
@@ -291,29 +358,32 @@ get_ssl_certs() {
                 resolve_ok=false
             fi
         done
-        [[ $resolve_ok == false ]] && exit 1
+        [[ $resolve_ok == false ]] && return 1
     fi
-
-    certbot certonly --standalone --non-interactive --agree-tos \
-        --register-unsafely-without-email -d "$domain"
-    if [[ ! -d "/etc/letsencrypt/live/${domain}/" ]]; then
-        systemctl start nginx >/dev/null 2>&1
-        msg_err "$domain SSL could not be generated! Check Domain/IP." && exit 1
-    fi
-
-    certbot certonly --standalone --non-interactive --agree-tos \
-        --register-unsafely-without-email -d "$reality_domain"
-    if [[ ! -d "/etc/letsencrypt/live/${reality_domain}/" ]]; then
-        systemctl start nginx >/dev/null 2>&1
-        msg_err "$reality_domain SSL could not be generated! Check Domain/IP." && exit 1
-    fi
-
-    mkdir -p /root/cert/${domain}
-    chmod 755 /root/cert/*
-    ln -sf /etc/letsencrypt/live/${domain}/fullchain.pem /root/cert/${domain}/fullchain.pem
-    ln -sf /etc/letsencrypt/live/${domain}/privkey.pem   /root/cert/${domain}/privkey.pem
+    # Rebuild only our hook after runtime configuration; preserve all lineages.
+    rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx || return 1
+    local d
+    for d in "$domain" "$reality_domain"; do
+        if [[ -e "/etc/letsencrypt/live/$d" || -e "/etc/letsencrypt/renewal/$d.conf" ]]; then
+            [[ -d "/etc/letsencrypt/live/$d" && -f "/etc/letsencrypt/renewal/$d.conf" ]] || {
+                msg_err "Incomplete certificate lineage: $d. Resolve it before rebuilding."; return 1;
+            }
+            check_certificate_identity "$d" || return 1
+            certbot reconfigure --cert-name "$d" --webroot --webroot-path /var/www/acme \
+                --pre-hook '' --post-hook '' --non-interactive || return 1
+        elif compgen -G "/etc/letsencrypt/live/$d-*" >/dev/null || compgen -G "/etc/letsencrypt/renewal/$d-*.conf" >/dev/null; then
+            msg_err "Ambiguous certificate lineage for $d. Resolve it before rebuilding."; return 1
+        else
+            certbot certonly --webroot --webroot-path /var/www/acme --cert-name "$d" -d "$d" \
+                --non-interactive --agree-tos --register-unsafely-without-email || return 1
+        fi
+        check_webroot_lineage "$d" || return 1
+    done
+    mkdir -p "/root/cert/${domain}" || return 1
+    chmod 755 /root/cert "/root/cert/${domain}" || return 1
+    ln -sf "/etc/letsencrypt/live/${domain}/fullchain.pem" "/root/cert/${domain}/fullchain.pem" || return 1
+    ln -sf "/etc/letsencrypt/live/${domain}/privkey.pem" "/root/cert/${domain}/privkey.pem"
 }
-
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURE NGINX
 # ─────────────────────────────────────────────────────────────────────────────
@@ -321,7 +391,7 @@ configure_nginx() {
     mkdir -p /etc/nginx/stream-enabled /etc/nginx/snippets
 
     # nginx >= 1.25.1 deprecates "listen ... http2" in favor of "http2 on;";
-    # older versions (Debian 12 / Ubuntu 24.04) don't know the new directive
+    # older versions (Ubuntu 24.04) don't know the new directive
     local ngx_ver http2_listen="" http2_on=""
     ngx_ver=$(nginx -v 2>&1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' || echo 0)
     if [[ "$(printf '%s\n' 1.25.1 "$ngx_ver" | sort -V | head -1)" == "1.25.1" ]]; then
@@ -359,15 +429,6 @@ EOF
     grep -xqFR "worker_rlimit_nofile 16384;" /etc/nginx/* \
         || echo "worker_rlimit_nofile 16384;" >> /etc/nginx/nginx.conf
     sed -i "/worker_connections/c\worker_connections 4096;" /etc/nginx/nginx.conf
-
-    # HTTP → HTTPS redirect
-    cat > /etc/nginx/sites-available/80.conf <<EOF
-server {
-    listen 80;
-    server_name ${domain} ${reality_domain};
-    return 301 https://\$host\$request_uri;
-}
-EOF
 
     # Shared proxy locations for xray inbounds (included by both vhosts)
     cat > /etc/nginx/snippets/includes.conf <<EOF
@@ -736,7 +797,7 @@ EOF
         msg_err "nginx config check failed!" && exit 1
     fi
 
-    systemctl start nginx
+    systemctl reload nginx || exit 1
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1272,33 +1333,164 @@ install_backup_tool() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CRON JOBS
+# CERTIFICATE RENEWAL
 # ─────────────────────────────────────────────────────────────────────────────
-setup_cron() {
-    local current error
-    command -v crontab >/dev/null || { msg_err "crontab is missing."; return 1; }
-    error=$(mktemp) || return 1
-    if ! current=$(LC_ALL=C crontab -l 2> "$error"); then
-        if grep -qi 'no crontab for' "$error"; then current="";
-        else rm -f "$error"; msg_err "Cannot read root crontab."; return 1; fi
+remove_legacy_certbot_cron() {
+    command -v crontab >/dev/null || return 0
+    local directory
+    directory=$(mktemp -d) || return 1
+    if ! LC_ALL=C crontab -l > "$directory/current" 2> "$directory/error"; then
+        if grep -qi 'no crontab for' "$directory/error"; then rm -rf "$directory"; return 0; fi
+        rm -rf "$directory"; return 1
     fi
-    rm -f "$error"
-    current=$(awk -v managed="$MANAGED_CRON" '$0 != managed' <<< "$current") || return 1
-    # Certs were issued with --standalone: renewal needs port 80 free,
-    # so stop nginx for the few seconds certbot runs
-    { if [[ -n "$current" ]]; then printf '%s\n' "$current"; fi
-      printf '%s\n' "$MANAGED_CRON"; } | crontab - || { msg_err "Cannot install managed Certbot cron."; return 1; }
-    check_cron
+    if grep -Fxq -- "$LEGACY_CERTBOT_CRON" "$directory/current"; then
+        awk -v legacy="$LEGACY_CERTBOT_CRON" '$0 != legacy' "$directory/current" > "$directory/new" || { rm -rf "$directory"; return 1; }
+        crontab - < "$directory/new" && crontab -l > "$directory/verified" &&
+            cmp -s "$directory/new" "$directory/verified" || { rm -rf "$directory"; return 1; }
+    fi
+    rm -rf "$directory"
 }
 
-check_cron() {
-    local current count
-    systemctl is-active --quiet cron && systemctl is-enabled --quiet cron || {
-        msg_err "cron must be active and enabled."; return 1;
-    }
-    current=$(crontab -l) || { msg_err "Cannot verify root crontab."; return 1; }
-    count=$(awk -v managed="$MANAGED_CRON" '$0 == managed {n++} END {print n+0}' <<< "$current")
-    [[ "$count" == 1 ]] || { msg_err "Managed Certbot cron must exist exactly once."; return 1; }
+check_no_legacy_certbot_cron() {
+    command -v crontab >/dev/null || return 0
+    local directory
+    directory=$(mktemp -d) || return 1
+    if ! LC_ALL=C crontab -l > "$directory/current" 2> "$directory/error"; then
+        if grep -qi 'no crontab for' "$directory/error"; then rm -rf "$directory"; return 0; fi
+        rm -rf "$directory"; return 1
+    fi
+    if grep -Fxq -- "$LEGACY_CERTBOT_CRON" "$directory/current"; then rm -rf "$directory"; return 1; fi
+    rm -rf "$directory"
+}
+
+check_certificate_identity() {
+    python3 - "$1" <<'PYIDENTITY'
+import sys
+from pathlib import Path
+from cryptography import x509
+try:
+    domain = sys.argv[1]
+    live = Path('/etc/letsencrypt/live') / domain
+    cert = x509.load_pem_x509_certificate((live / 'fullchain.pem').read_bytes())
+    names = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)
+    if set(names) != {domain} or not (live / 'privkey.pem').is_file():
+        raise ValueError('expected a separate exact-domain certificate and key')
+except (OSError, ValueError, x509.ExtensionNotFound) as exc:
+    print('[FAIL] Existing certificate identity mismatch: ' + str(exc), file=sys.stderr)
+    sys.exit(1)
+PYIDENTITY
+}
+
+check_webroot_lineage() {
+    python3 - "$1" <<'PY'
+import sys
+from pathlib import Path
+from configobj import ConfigObj, ConfigObjError
+from cryptography import x509
+try:
+    domain = sys.argv[1]
+    live = Path('/etc/letsencrypt/live') / domain
+    conf = Path('/etc/letsencrypt/renewal') / (domain + '.conf')
+    cfg = ConfigObj(str(conf), encoding='utf-8', file_error=True)
+    params = cfg['renewalparams']
+    if params.get('authenticator') != 'webroot':
+        raise ValueError('authenticator must be webroot')
+    for name in ('fullchain', 'privkey'):
+        path = live / (name + '.pem')
+        if cfg.get(name) != str(path) or not path.is_file() or not path.stat().st_size:
+            raise ValueError('missing or unexpected certificate/key path')
+    cert = x509.load_pem_x509_certificate((live / 'fullchain.pem').read_bytes())
+    names = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)
+    if set(names) != {domain}:
+        raise ValueError('expected a separate exact-domain lineage')
+    mapping = params.get('webroot_map', {})
+    roots = params.get('webroot_path', [])
+    if isinstance(roots, str):
+        roots = [roots]
+    effective = mapping.get(domain) if domain in mapping else (roots[-1] if roots else None)
+    if effective != '/var/www/acme':
+        raise ValueError('unexpected persisted webroot')
+    if any(params.get(key) for key in ('pre_hook', 'post_hook', 'renew_hook', 'deploy_hook')):
+        raise ValueError('unexpected per-lineage hooks; use the project deploy directory hook')
+except (OSError, ValueError, KeyError, ConfigObjError, x509.ExtensionNotFound) as exc:
+    print('[FAIL] Invalid webroot renewal lineage: ' + str(exc), file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+check_acme_http() {
+    local domain=$1 reality_domain=$2 token body code failed=0
+    token=$(openssl rand -hex 16) || return 1
+    printf '%s' "$token" > "/var/www/acme/.well-known/acme-challenge/$token" || { rm -f "/var/www/acme/.well-known/acme-challenge/$token"; return 1; }
+    chmod 0644 "/var/www/acme/.well-known/acme-challenge/$token" || { rm -f "/var/www/acme/.well-known/acme-challenge/$token"; return 1; }
+    local d
+    for d in "$domain" "$reality_domain"; do
+        body=$(curl --noproxy '*' -fsS --connect-timeout 5 --max-time 10 -H "Host: $d" \
+            "http://127.0.0.1/.well-known/acme-challenge/$token") || failed=1
+        [[ "$body" == "$token" ]] || failed=1
+        code=$(curl --noproxy '*' -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code} %{redirect_url}' \
+            -H "Host: $d" http://127.0.0.1/) || failed=1
+        [[ "$code" == "301 https://$d/" ]] || failed=1
+    done
+    rm -f "/var/www/acme/.well-known/acme-challenge/$token" || return 1
+    (( ! failed ))
+}
+
+check_certificate_renewal() {
+    local domain=$1 reality_domain=$2 hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx
+    check_webroot_lineage "$domain" && check_webroot_lineage "$reality_domain" || return 1
+    [[ -f "$hook" && ! -L "$hook" && -x "$hook" && "$(stat -c '%u:%g:%a' "$hook")" == '0:0:755' ]] || return 1
+    bash -n "$hook" || return 1
+    # Verify restored/generated hook domains without executing arbitrary hook code.
+    python3 - "$hook" "$domain" "$reality_domain" <<'PY'
+import shlex, sys
+values = {}
+for line in open(sys.argv[1]):
+    for key in ('PANEL_DOMAIN', 'REALITY_DOMAIN'):
+        if line.startswith(key + '='):
+            parts = shlex.split(line.strip())
+            if len(parts) == 1:
+                values[key] = parts[0].split('=', 1)[1]
+if [values.get('PANEL_DOMAIN'), values.get('REALITY_DOMAIN')] != sys.argv[2:]:
+    sys.exit('Deploy hook domains do not match this installation')
+PY
+    [[ $? == 0 ]] || return 1
+    systemctl is-enabled --quiet certbot.timer && systemctl is-active --quiet certbot.timer || return 1
+    check_no_legacy_certbot_cron && nginx -t && check_acme_http "$domain" "$reality_domain"
+}
+
+setup_certificate_renewal() {
+    local hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx
+    remove_legacy_certbot_cron || return 1
+    install -d -o root -g root -m 0755 /etc/letsencrypt/renewal-hooks/deploy || return 1
+    {
+        printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n'
+        printf 'PANEL_DOMAIN=%q\nREALITY_DOMAIN=%q\n' "$domain" "$reality_domain"
+        cat <<'HOOK'
+panel=0
+project=0
+read -r -a renewed_domains <<< "${RENEWED_DOMAINS:-}"
+for renewed in "${renewed_domains[@]}"; do
+    if [[ "$renewed" == "$PANEL_DOMAIN" ]]; then panel=1; project=1; fi
+    if [[ "$renewed" == "$REALITY_DOMAIN" ]]; then project=1; fi
+done
+case "${RENEWED_LINEAGE:-}" in
+    "/etc/letsencrypt/live/$PANEL_DOMAIN") panel=1; project=1 ;;
+    "/etc/letsencrypt/live/$REALITY_DOMAIN") project=1 ;;
+esac
+(( project )) || exit 0
+nginx -t
+systemctl reload nginx
+systemctl is-active --quiet nginx
+if (( panel )); then
+    systemctl restart x-ui
+    systemctl is-active --quiet x-ui
+fi
+HOOK
+    } > "$hook" || return 1
+    chown root:root "$hook" && chmod 0755 "$hook" && bash -n "$hook" || return 1
+    systemctl enable --now certbot.timer || return 1
+    check_certificate_renewal "$domain" "$reality_domain"
 }
 
 check_installation() {
@@ -1306,7 +1498,7 @@ check_installation() {
     for service in x-ui nginx mtr-backend; do
         systemctl is-active --quiet "$service" || { msg_err "$service is not active."; return 1; }
     done
-    check_cron || return 1
+    check_certificate_renewal "$domain" "$reality_domain" || return 1
     nginx -t || return 1
     for attempt in {1..10}; do
         [[ -S /dev/shm/uds2023.sock ]] && return 0
@@ -1368,7 +1560,7 @@ show_results() {
     msg_inf '============================================================'
     msg_inf '  3x-ui Auto Nginx — Installation Complete'
     msg_inf '============================================================'
-    # main() has already passed check_installation for services, nginx and cron.
+    # main() has already passed check_installation for services, nginx and certificate renewal.
     msg_ok " [✓] 3x-ui / Xray           Running${version_label}"
     case "${CPU_SUPPORT_LEVEL:-info}" in
         ok)   msg_ok " [✓] CPU support             ${CPU_SUPPORT_TEXT}" ;;
@@ -1395,7 +1587,7 @@ show_results() {
     else
         msg_warn ' [!] Backup / Restore       Backup utility unavailable'
     fi
-    msg_ok ' [✓] Certificate renewal    Ready'
+    msg_ok ' [✓] Certificate renewal    Webroot + systemd timer'
     firewall=$(LC_ALL=C ufw status 2>/dev/null) || firewall=""
     case "$firewall" in
         "Status: active"*)   msg_ok ' [✓] Firewall / UFW         Active' ;;
@@ -1420,12 +1612,14 @@ show_results() {
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 main() {
+    confirm_destructive_reinstall || exit 1
     validate_domains
     clean_previous_install
     install_packages || { msg_err "Dependency setup failed."; exit 1; }
     setup_firewall || { msg_err "Firewall setup failed."; exit 1; }
     get_server_ip
-    get_ssl_certs
+    setup_acme_http || { msg_err "ACME HTTP setup failed."; exit 1; }
+    get_ssl_certs || { msg_err "Webroot certificate setup failed."; exit 1; }
 
     install_panel || exit 1
 
@@ -1436,7 +1630,7 @@ main() {
     install_diagnostics
     tune_system || exit 1
     install_backup_tool || exit 1
-    setup_cron || { msg_err "Cron setup failed."; exit 1; }
+    setup_certificate_renewal || { msg_err "Certificate renewal setup failed."; exit 1; }
 
     if ! systemctl is-enabled --quiet x-ui; then
         systemctl daemon-reload && systemctl enable x-ui.service || exit 1

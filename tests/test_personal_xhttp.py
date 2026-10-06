@@ -197,7 +197,7 @@ printf 'CPU_STATE|%s|%s\n' "$CPU_SUPPORT_LEVEL" "$CPU_SUPPORT_TEXT"
         mocks = '\n'.join(name + '() { :; }' for name in (
             "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
             "get_ssl_certs", "install_panel", "configure_nginx", "configure_xui_db", "install_clash_sub",
-            "install_fake_site", "install_diagnostics", "tune_system", "install_backup_tool", "setup_cron",
+            "install_fake_site", "install_diagnostics", "tune_system", "install_backup_tool", "setup_certificate_renewal", "setup_acme_http", "confirm_destructive_reinstall",
         )) + r'''
 systemctl() { echo "systemctl $*" >> "$SUMMARY_LOG"; [[ "$*" == 'is-enabled --quiet x-ui' ]]; }
 x-ui() { echo "x-ui $*" >> "$SUMMARY_LOG"; [[ "$*" == restart ]]; }
@@ -415,75 +415,6 @@ check() {
                                                  env={**os.environ, "tag_version": tag, "archive": "/fixture/archive"})
                 self.assertEqual(result.strip(), f"https://github.com/MHSanaei/3x-ui/releases/download/{tag}/x-ui-linux-amd64.tar.gz")
 
-    def test_setup_cron_without_scheduled_restart(self):
-        functions = re.findall(r"^setup_cron\(\)\s*\{.*?^\}", SOURCE, re.M | re.S)
-        self.assertEqual(len(functions), 1, "Expected one setup_cron function")
-        monthly = (
-            '@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" '
-            '--post-hook "systemctl start nginx" > /dev/null 2>&1'
-        )
-        preserved = [
-            "@hourly /usr/local/bin/backup",
-            "0 3 * * * /opt/x-ui-metrics",
-            "@weekly certbot certificates > /root/cert-report",
-            "@daily /opt/cloudflareips",
-            "# Administrator's certbot/x-ui tasks",
-        ]
-        existing = "\n".join(preserved + [monthly, monthly]) + "\n"
-        for initial, expected in (("", [monthly]), (existing, preserved + [monthly])):
-            with self.subTest(initial=initial):
-                result, cron = self.cron_setup(initial, runs=2)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                # No replacement restart/reload job may be added, at any schedule.
-                self.assertEqual(cron.splitlines(), expected)
-
-    def cron_setup(self, initial, failure="", runs=1):
-        # Only isolated cron functions execute; no real crontab/systemd changes.
-        mock = r'''msg_err() { echo "$*" >&2; }
-command() {
-    [[ "$FAIL_CRON" == missing && "$*" == '-v crontab' ]] && return 1
-    builtin command "$@"
-}
-systemctl() { [[ "$FAIL_CRON" != "$1" ]]; }
-crontab() {
-    case "$1" in
-        -l)
-            [[ "$FAIL_CRON" == read ]] && { echo 'permission denied' >&2; return 1; }
-            [[ -f "$CRON_TEST_FILE" ]] || { echo 'no crontab for root' >&2; return 1; }
-            cat "$CRON_TEST_FILE" ;;
-        -)
-            [[ "$FAIL_CRON" == write ]] && return 1
-            cat > "$CRON_TEST_FILE"
-            [[ "$FAIL_CRON" == dropped ]] && : > "$CRON_TEST_FILE"
-            [[ "$FAIL_CRON" == duplicate ]] && printf '%s\n' "$MANAGED_CRON" >> "$CRON_TEST_FILE"
-            return 0 ;;
-        *) return 2 ;;
-    esac
-}
-'''
-        with tempfile.TemporaryDirectory() as tmp:
-            cron = Path(tmp) / "crontab"
-            if initial is not None:
-                cron.write_text(initial)
-            script = mock + function("check_cron") + "\n" + function("setup_cron")
-            script += "\n" + "setup_cron || exit 1\n" * runs + "echo cron-success\n"
-            result = subprocess.run(["bash", "-u", "-c", script], capture_output=True, text=True, env={
-                **os.environ, "MANAGED_CRON": MONTHLY, "CRON_TEST_FILE": str(cron), "FAIL_CRON": failure,
-            })
-            return result, cron.read_text() if cron.exists() else ""
-
-    def test_cron_setup_fails_closed_and_handles_absent_root_crontab(self):
-        self.assertIn("MANAGED_CRON=" + shlex.quote(MONTHLY), SOURCE)
-        self.assertRegex(function("main"), r"setup_cron\s*\|\|.*exit 1")
-        result, cron = self.cron_setup(None)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(cron, MONTHLY + "\n")
-        for failure in ("missing", "read", "write", "dropped", "duplicate", "is-active", "is-enabled"):
-            with self.subTest(failure=failure):
-                result, _ = self.cron_setup("@hourly /opt/unrelated\n", failure)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertNotIn("cron-success", result.stdout)
-
     def test_ws_host_uses_only_http11_alpn(self):
         for grouped in (False, True):
             with self.subTest(group_id=grouped):
@@ -495,18 +426,18 @@ crontab() {
                     host = next(h for h in hosts if h["inbound_id"] == rows[name]["id"])
                     self.assertEqual(json.loads(host["alpn"]), ["h2", "http/1.1"])
 
-    def test_installer_dependencies_and_cron_activation_are_required(self):
+    def test_installer_dependencies_are_required(self):
         mock = r'''msg_err() { echo "$*" >&2; }
 apt() { echo "apt $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != apt ]]; }
 apt-get() { echo "apt-get $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != apt ]]; }
-systemctl() { echo "systemctl $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != cron || "$*" != 'enable --now cron' ]]; }
+systemctl() { echo "systemctl $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != nginx || "$*" != 'enable --now nginx' ]]; }
 command() { [[ "$*" != "-v $FAIL_DEP" ]]; }
 '''
-        required = {"cron", "openssl", "procps", "psmisc", "iproute2", "tar", "gzip", "tzdata", "ca-certificates",
-                    "curl", "wget", "jq", "bash", "sudo", "nginx-full", "certbot", "python3-certbot-nginx",
+        required = {"openssl", "procps", "iproute2", "tar", "gzip", "tzdata", "ca-certificates",
+                    "curl", "wget", "jq", "bash", "sudo", "nginx-full", "certbot",
                     "sqlite3", "ufw", "netcat-openbsd", "mtr", "python3", "libcap2-bin"}
         self.assertRegex(function("main"), r"install_packages\s*\|\|.*exit 1")
-        for failure in ("", "apt", "crontab", "sysctl", "ip", "fuser", "cron"):
+        for failure in ("", "apt", "sysctl", "ip", "nginx"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
                 log = Path(tmp) / "calls"
                 result = subprocess.run(["bash", "-u", "-c", mock + function("install_packages") + "\ninstall_packages\n"],
@@ -517,7 +448,8 @@ command() { [[ "$*" != "-v $FAIL_DEP" ]]; }
                     calls = log.read_text().splitlines()
                     packages = next(c.split()[3:] for c in calls if c.startswith("apt -y install "))
                     self.assertTrue(required.issubset(packages))
-                    self.assertEqual(calls[-1], "systemctl enable --now cron")
+                    self.assertNotIn("cron", packages)
+                    self.assertNotIn("python3-certbot-nginx", packages)
 
     def test_installer_final_health_gate_precedes_success_output(self):
         main = function("main")
@@ -526,26 +458,19 @@ command() { [[ "$*" != "-v $FAIL_DEP" ]]; }
         mock = r'''msg_err() { echo "$*" >&2; }
 systemctl() { [[ "$FAIL_HEALTH" != "$1:$3" ]]; }
 nginx() { [[ "$FAIL_HEALTH" != nginx-test ]]; }
-crontab() {
-    [[ "$FAIL_HEALTH" == cron-read ]] && return 1
-    [[ "$FAIL_HEALTH" == cron-missing ]] && return 0
-    printf '%s\n' "$MANAGED_CRON"
-    [[ "$FAIL_HEALTH" == cron-duplicate ]] && printf '%s\n' "$MANAGED_CRON"
-    return 0
-}
+check_certificate_renewal() { [[ "$FAIL_HEALTH" != renewal ]]; }
 sleep() { :; }
 '''
-        failures = ("", "is-active:x-ui", "is-active:nginx", "is-active:mtr-backend", "is-active:cron",
-                    "is-enabled:cron", "nginx-test", "cron-read", "cron-missing", "cron-duplicate", "socket")
+        failures = ("", "is-active:x-ui", "is-active:nginx", "is-active:mtr-backend", "renewal", "nginx-test", "socket")
         for failure in failures:
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "xhttp.sock"
                 with socket.socket(socket.AF_UNIX) as uds:
                     if failure != "socket":
                         uds.bind(str(path))
-                    script = mock + function("check_cron") + "\n" + function("check_installation").replace("/dev/shm/uds2023.sock", str(path))
+                    script = mock + function("check_installation").replace("/dev/shm/uds2023.sock", str(path))
                     result = subprocess.run(["bash", "-u", "-c", script + "\ncheck_installation || exit 1\necho final-success\n"],
-                                            capture_output=True, text=True, env={**os.environ, "MANAGED_CRON": MONTHLY, "FAIL_HEALTH": failure})
+                                            capture_output=True, text=True, env={**os.environ, **FIXTURE, "FAIL_HEALTH": failure})
                     self.assertEqual(result.returncode, 1 if failure else 0, result.stderr)
                     self.assertEqual("final-success" in result.stdout, not bool(failure))
 
@@ -1082,6 +1007,9 @@ curl() {
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 print(f"\nnginx {'.'.join(map(str, number))}: generated HTTP vhosts syntax OK")
+
+
+from test_certificate_renewal import CertificateRenewal
 
 
 if __name__ == "__main__":

@@ -36,7 +36,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 Allow inbound TCP 80/443 and UDP 443; the domains must resolve to this server for certificate issuance.
 
-> **⚠️ Clean installation or full reinstall only.** `x-ui-latest.sh` removes an existing 3x-ui installation, including the panel database and nginx configuration. **Do not use it as a normal update command on a working VPS.** If the server is already configured, copy a backup off-server first.
+> **⚠️ Clean installation or full reinstall only.** `x-ui-latest.sh` removes an existing 3x-ui installation, including the panel database and nginx configuration. **Do not use it as a normal update command on a working VPS.** Detected 3x-ui/nginx/TLS state requires exact `YES` before file removal, including uninstall. If the server is already configured, copy a backup off-server first.
 
 ## 🌐 Two domains → ready server
 
@@ -90,6 +90,8 @@ x-ui-backup backup
 x-ui-backup list
 ```
 
+The current backup format is **v3**. This tool does not restore v2 archives; use the utility from the matching older release.
+
 Archives are saved in `/var/backups/x-ui/` with root-only permissions. They contain client/database state, certificates/private keys and runtime secrets. **Copy the archive off the VPS** to a PC, NAS or another secure store.
 
 For rollback on the current VPS:
@@ -122,9 +124,9 @@ Use **the same OS ID, VERSION_ID and architecture** as the backup, e.g. Ubuntu 2
 
 4. If the server IP changed, point the existing domains' DNS to the new VPS. Use your existing panel and client configurations after recovery.
 
-Restore installs missing application dependencies and restores panel/runtime, nginx, certificates, web/diagnostics, project systemd units, managed sysctl and managed Certbot cron. SSH, `authorized_keys`, fail2ban, base UFW policy and OS/bootstrap state remain the administrator's responsibility. Restore adds 80/tcp, 443/tcp and 443/udp rules but never enables UFW; unrelated cron jobs are preserved.
+Restore installs missing application dependencies and restores panel/runtime, nginx, certificates, web/diagnostics, project systemd units, managed sysctl and webroot renewal through `certbot.timer`. SSH, `authorized_keys`, fail2ban, base UFW policy and OS/bootstrap state remain the administrator's responsibility. Restore adds 80/tcp, 443/tcp and 443/udp rules but never enables UFW; unrelated cron jobs are preserved.
 
-Backup/Restore v2 was validated on a real Ubuntu 26.04 amd64 VPS: same-host rollback, clean-host recovery after bootstrap without the installer, reboot persistence and panel/real client connectivity (3x-ui 3.9.0, Xray 26.9.30, nginx 1.28.3).
+The previous Backup/Restore v2 was validated on a real Ubuntu 26.04 amd64 VPS: same-host rollback, clean-host recovery after bootstrap without the installer, reboot persistence and panel/real client connectivity (3x-ui 3.9.0, Xray 26.9.30, nginx 1.28.3).
 
 </details>
 
@@ -135,12 +137,13 @@ Backup/Restore v2 was validated on a real Ubuntu 26.04 amd64 VPS: same-host roll
 <details>
 <summary>Platforms, routing, firewall and optional tools</summary>
 
-- **Platforms:** Ubuntu 26.04 amd64 has live VPS validation; Ubuntu 24.04 runs in CI. Debian 12/13 are accepted by OS checks without equivalent live coverage. Not every architecture is tested. CPUs reporting a QEMU model are rejected; the VPS must expose the real CPU model.
+- **Platforms:** Ubuntu 26.04 amd64 has live VPS validation; Ubuntu 24.04 runs in CI. Debian 13 is accepted by OS checks without equivalent live coverage; Debian 12 is unsupported. Not every architecture is tested. QEMU CPUs do not block installation; missing hardware AES produces a performance advisory.
 - **Routing:** nginx owns TCP 443 and routes by SNI to REALITY/Xray on 8443 or the panel TLS vhost on 7443. The REALITY camouflage target uses 9443. XHTTP uses a Unix socket; WS/gRPC have fixed paths/backends. Hysteria2 owns UDP 443 independently.
 - **UFW:** active UFW receives only 80/tcp, 443/tcp and 443/udp rules. Inactive UFW is enabled only after detecting and allowing SSH ports; otherwise it stays inactive with a warning. Existing rules/default policy are preserved, with no hardcoded SSH port 22.
 - **Versions:** latest stable 3x-ui is selected by default. Use `-version <tag>` to select a panel release; binary and CLI come from that same tag.
 - **Diagnostics/subscriptions:** panel-authenticated MTR/LibreSpeed, JSON and Clash/Mihomo subscriptions. New custom WS/gRPC inbounds require explicit nginx routes; there is no arbitrary localhost-port proxy.
 - **Optional tools:** `x-ui-adguard.sh` is retained for optional AdGuard Home integration and future development; the main installer does not run it. `x-ui-patch.sh` is a secondary maintenance utility, not a database migration or universal updater.
+- **TLS renewal:** webroot `/var/www/acme` + distro `certbot.timer`. Nginx stays online and reloads gracefully after renewal; x-ui restarts only when the panel certificate renews. Release acceptance includes `certbot renew --dry-run` for both certificates.
 - **Compatibility:** `/usr/local/lib/3x-ui-pro` and `/etc/sysctl.d/99-3x-ui-pro.conf` are deliberately preserved for Backup/Restore compatibility.
 
 </details>
@@ -148,7 +151,7 @@ Backup/Restore v2 was validated on a real Ubuntu 26.04 amd64 VPS: same-host roll
 <details>
 <summary>Validation, development and releases</summary>
 
-CI checks all transport/Host profiles, nginx syntax, negative arbitrary-localhost-port access, firewall behavior, version pinning, cron and canonical sources. Backup/Restore tests use isolated fixtures with real tar/gzip, SQLite and nginx. Bash syntax covers installer, patch, AdGuard and backup scripts. CI does not replace live client acceptance.
+CI checks all transport/Host profiles, nginx syntax, negative arbitrary-localhost-port access, firewall behavior, version pinning, the destructive guard, webroot/timer renewal and canonical sources. Backup/Restore tests use isolated fixtures with real tar/gzip, SQLite and nginx. Bash syntax covers installer, patch, AdGuard and backup scripts. CI does not replace live client acceptance.
 
 Development uses PRs to `main`; see [CONTRIBUTING.md](CONTRIBUTING.md). Required job names remain `Stack XHTTP and security` and `Stack Backup and restore` for branch-protection compatibility.
 
