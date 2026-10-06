@@ -36,7 +36,7 @@ PARAMS = [
 
 def relocated(source, root):
     # Apply a single pass so replacements cannot recursively match themselves.
-    return re.sub(r"/(?:etc|root|var|usr/local|usr/bin/x-ui|dev/shm)(?=[/\s\"';,)]|$)",
+    return re.sub(r"/(?:opt|etc|root|var|usr/local|usr/bin/x-ui|dev/shm)(?=[/\s\"';,)]|$)",
                   lambda m: str(root) + m[0], source)
 
 
@@ -99,7 +99,13 @@ if name == 'systemctl':
         if '--quiet' not in args:
             print(state)
         sys.exit(0 if active else 3)
+    if command == 'show' and service == 'AdGuardHome':
+        print(str(root / 'etc/systemd/system/AdGuardHome.service') if 'FragmentPath' in ' '.join(args) else '12345')
+    if command == 'disable':
+        enabled[service] = False; enabled_path.write_text(json.dumps(enabled))
     if command == 'cat':
+        if service == 'AdGuardHome' and (root / 'etc/systemd/system/AdGuardHome.service').exists():
+            print((root / 'etc/systemd/system/AdGuardHome.service').read_text())
         sys.exit(0 if (root / ('etc/systemd/system/' + service + '.service')).exists() or service == 'nginx' else 1)
     if command in ('start', 'stop'):
         if service == 'certbot.timer' and os.environ.get('FAIL_TIMER_OPERATION') == command:
@@ -116,6 +122,10 @@ if name == 'systemctl':
                 s.close()
             if os.environ.get('CORRUPT_RUNNING_DB'):
                 (root / 'etc/x-ui/x-ui.db').write_bytes(b'corrupt')
+elif name == 'ss':
+    m=json.loads((root / 'opt/AdGuardHome/managed.json').read_text())
+    for protocol, key in (('tcp', 'web_port'), ('udp', 'dns_port')):
+        print(f'{protocol} LISTEN 0 128 127.0.0.1:{m[key]} 0.0.0.0:* users:(("AdGuardHome",pid=12345,fd=5))')
 elif name == 'crontab':
     path = root / 'crontab'
     if args == ['-l']:
@@ -137,6 +147,13 @@ elif name == 'curl':
     if os.environ.get('FAIL_ACME'):
         sys.exit(1)
     url = args[-1]
+    if '/dns-query?' in url:
+        if os.environ.get('FAIL_AGH_HEALTH'): sys.exit(1)
+        pathlib.Path(args[args.index('-D') + 1]).write_text('Content-Type: application/dns-message\r\n')
+        pathlib.Path(args[args.index('-o') + 1]).write_bytes(bytes.fromhex('000080000001000100000000'))
+        print('200', end=''); sys.exit(0)
+    if '/login.html' in url:
+        print('<html><script src="login.fixture.js"></script></html>'); sys.exit(0)
     if url.startswith('http://127.0.0.1/'):
         if '/.well-known/acme-challenge/' in url:
             print((root / 'var/www/acme/.well-known/acme-challenge' / url.rsplit('/', 1)[1]).read_text(), end='')
@@ -169,6 +186,8 @@ elif name == 'nginx':
         sys.exit(subprocess.call([os.environ['NGINX_BIN'], *args, '-p', str(root) + '/',
                                  '-c', str(root / 'etc/nginx/nginx.conf')]))
 elif name == 'cp':
+    if os.environ.get('FAIL_AGH_COPY') and any(a == str(root / 'opt/AdGuardHome') for a in args):
+        sys.exit(1)
     if os.environ.get('FAIL_COPY') and any(a == str(root / 'usr/local/x-ui') for a in args):
         sys.exit(1)
     sys.exit(subprocess.call([os.environ['REAL_CP'], *args]))
@@ -209,7 +228,7 @@ class PersonalBackup(unittest.TestCase):
         self.bin = Path(self.temp.name) / "mock-bin"
         self.bin.mkdir()
         commands = ['systemctl', 'crontab', 'ip', 'curl', 'dpkg-query', 'apt-get',
-                    'ufw', 'nginx', 'cp', 'dd', 'tar', 'python3', 'id', 'useradd', 'setcap', 'sysctl', 'mtr', 'mtr-packet']
+                    'ufw', 'nginx', 'ss', 'cp', 'dd', 'tar', 'python3', 'id', 'useradd', 'setcap', 'sysctl', 'mtr', 'mtr-packet']
         if os.geteuid() != 0:
             commands += ['chown', 'install']
         for name in commands:
@@ -758,6 +777,9 @@ class PersonalBackup(unittest.TestCase):
                 self.assertNotIn('Restore completed successfully.', result.stdout)
                 if 'FAIL_NGINX' in env:
                     self.assertNotIn(['systemctl', 'start', 'nginx'], self.commands())
+
+
+from test_adguard_backup import AdGuardBackup
 
 
 if __name__ == '__main__':

@@ -19,7 +19,7 @@ def function(name, source=INSTALLER):
 
 
 def relocate(source, root):
-    return re.sub(r"(?<![A-Za-z0-9_./])/(?:etc|root|var|lib|usr/local|usr/bin/x-ui|usr/share/nginx|dev/shm)(?=[/\s\"';,)]|$)",
+    return re.sub(r"(?<![A-Za-z0-9_./])/(?:opt|etc|root|var|lib|usr/local|usr/bin/x-ui|usr/share/nginx|dev/shm)(?=[/\s\"';,)]|$)",
                   lambda m: str(root) + m[0], source)
 
 

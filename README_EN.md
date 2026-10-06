@@ -142,7 +142,7 @@ The previous Backup/Restore v2 was validated on a real Ubuntu 26.04 amd64 VPS: s
 - **UFW:** active UFW receives only 80/tcp, 443/tcp and 443/udp rules. Inactive UFW is enabled only after detecting and allowing SSH ports; otherwise it stays inactive with a warning. Existing rules/default policy are preserved, with no hardcoded SSH port 22.
 - **Versions:** latest stable 3x-ui is selected by default. Use `-version <tag>` to select a panel release; binary and CLI come from that same tag.
 - **Diagnostics/subscriptions:** panel-authenticated MTR/LibreSpeed, JSON and Clash/Mihomo subscriptions. New custom WS/gRPC inbounds require explicit nginx routes; there is no arbitrary localhost-port proxy.
-- **Optional tools:** `x-ui-adguard.sh` is retained for optional AdGuard Home integration and future development; the main installer does not run it. `x-ui-patch.sh` is a secondary maintenance utility, not a database migration or universal updater.
+- **Optional AdGuard Home:** the installer offers integrated AGH (default **N**). DoH and the admin UI use the existing panel domain with nginx TLS; no separate domain or public :53. When installed, AGH is included in Backup/Restore v3. `x-ui-adguard.sh` is a retired, non-destructive stub. `x-ui-patch.sh` remains a secondary maintenance utility, not a universal updater.
 - **TLS renewal:** webroot `/var/www/acme` + distro `certbot.timer`. Nginx stays online and reloads gracefully after renewal; x-ui restarts only when the panel certificate renews. Release acceptance includes `certbot renew --dry-run` for both certificates.
 - **Compatibility:** `/usr/local/lib/3x-ui-pro` and `/etc/sysctl.d/99-3x-ui-pro.conf` are deliberately preserved for Backup/Restore compatibility.
 

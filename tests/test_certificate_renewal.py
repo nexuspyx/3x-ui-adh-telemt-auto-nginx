@@ -94,7 +94,9 @@ class CertificateRenewal(unittest.TestCase):
         indicators = ('/etc/x-ui', '/usr/local/x-ui/x-ui', '/usr/bin/x-ui', '/etc/systemd/system/x-ui.service',
                       '/usr/local/lib/3x-ui-pro', '/usr/local/bin/x-ui-backup', '/etc/systemd/system/mtr-backend.service',
                       '/etc/nginx/nginx.conf', '/etc/nginx/snippets/includes.conf', '/root/cert/example.com/fullchain.pem',
-                      '/etc/letsencrypt/live/example.com/fullchain.pem')
+                      '/etc/letsencrypt/live/example.com/fullchain.pem', '/opt/AdGuardHome/AdGuardHome',
+                      '/etc/systemd/system/AdGuardHome.service', '/etc/nginx/snippets/adguard.conf',
+                      '/etc/nginx/snippets/x-ui-auto-optional/adguard.conf')
         mock = MOCK + '''\nsystemctl() { [[ "${ACTIVE_SERVICE:-}" == "$3" ]]; }
 dpkg-query() { [[ "${NGINX_PACKAGE:-0}" == 1 ]] && echo 'install ok installed'; }
 '''
@@ -123,12 +125,12 @@ dpkg-query() { [[ "${NGINX_PACKAGE:-0}" == 1 ]] && echo 'install ok installed'; 
         (self.root / 'etc/x-ui').mkdir(parents=True)
         guard = ('detect_existing_installation','confirm_destructive_reinstall')
         mocks = MOCK + '\nsystemctl() { return 1; }\ndpkg-query() { return 1; }\n'
-        operations = ('validate_domains','clean_previous_install','install_packages','setup_firewall','get_server_ip',
+        operations = ('select_adguard','cleanup_adguard','validate_domains','clean_previous_install','install_packages','setup_firewall','get_server_ip',
                       'setup_acme_http','get_ssl_certs','install_panel','configure_nginx','configure_xui_db','install_clash_sub',
                       'install_fake_site','install_diagnostics','tune_system','install_backup_tool','setup_certificate_renewal',
                       'check_installation','show_results','uninstall_xui')
         mocks += '\n'.join(n+'() { echo '+n+' >> "$CALLS"; }' for n in operations)
-        mocks += '\nsystemctl() { echo "systemctl $*" >> "$CALLS"; [[ "$*" == "is-enabled --quiet x-ui" ]]; }\nx-ui() { echo x-ui >> "$CALLS"; }\n'
+        mocks += '\nINSTALL_AGH=n\nsystemctl() { echo "systemctl $*" >> "$CALLS"; [[ "$*" == "is-enabled --quiet x-ui" ]]; }\nx-ui() { echo x-ui >> "$CALLS"; }\n'
         # Detection must see missing service states rather than mutate them.
         for uninstall in (False,True):
             for answer in ('YES\n','yes\n','\n',''):
@@ -179,10 +181,11 @@ dpkg-query() { [[ "${NGINX_PACKAGE:-0}" == 1 ]] && echo 'install ok installed'; 
         mock=MOCK+'''\nx-ui() { echo "x-ui $*" >> "$CALLS"; }
 apt() { echo "apt $*" >> "$CALLS"; }
 dpkg-query() { return 1; }
+systemctl() { echo "systemctl $*" >> "$CALLS"; [[ "$*" != *AdGuardHome* ]]; }
 '''
         branch=re.search(r'^if \[\[ \$\{UNINSTALL\}.*?^fi',INSTALLER,re.M|re.S).group()
         self.assertLess(INSTALLER.index('remove_legacy_certbot_cron()'),INSTALLER.index(branch))
-        names=('detect_existing_installation','confirm_destructive_reinstall','remove_legacy_certbot_cron','uninstall_xui')
+        names=('detect_existing_installation','confirm_destructive_reinstall','remove_legacy_certbot_cron','cleanup_adguard','uninstall_xui')
         for answer in ('no\n','','YES\n'):
             self.calls.unlink(missing_ok=True)
             result=self.run_functions(names,'UNINSTALL=y\nPak=apt\n'+branch,mock=mock,input=answer)

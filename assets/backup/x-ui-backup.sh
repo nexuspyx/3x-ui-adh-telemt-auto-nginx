@@ -13,7 +13,7 @@ LEGACY_CERTBOT_CRON='@monthly certbot renew --non-interactive --pre-hook "system
 PACKAGES=(nginx-full certbot sqlite3 curl wget jq ufw
           netcat-openbsd mtr python3 python3-configobj python3-cryptography libcap2-bin ca-certificates openssl procps iproute2 tar gzip tzdata)
 RUNTIME_PATHS=(/etc/x-ui /usr/local/x-ui /usr/bin/x-ui)
-TREE_PATHS=(/etc/nginx /etc/letsencrypt /root/cert /usr/local/lib/3x-ui-pro
+TREE_PATHS=(/opt/AdGuardHome /etc/nginx /etc/letsencrypt /root/cert /usr/local/lib/3x-ui-pro
             /var/www/html /var/www/subpage)
 EXTRA_PATHS=(/etc/systemd/system/x-ui.service /etc/systemd/system/mtr-backend.service
              /var/www/diagnostics/index.html /var/www/diagnostics/speedtest.js
@@ -24,6 +24,7 @@ REQUIRED_PATHS=("$DB" /usr/local/x-ui/x-ui /usr/bin/x-ui /etc/nginx/nginx.conf
 STAGING= OUTPUT= STAGE=preflight
 BACKUP_FINISHED=0 RESUME_XUI=0 APT_UPDATED=0
 RESUME_CERTBOT_TIMER=0
+RESUME_AGH=0 ADGUARD_HOME=false AGH_ARCH=
 
 stage() { STAGE=$*; printf '\n==> %s\n' "$*"; }
 ok()    { printf '[OK] %s\n' "$*"; }
@@ -42,6 +43,9 @@ cleanup() {
             result=1
         fi
     fi
+    if (( RESUME_AGH )); then
+        systemctl start AdGuardHome && systemctl is-active --quiet AdGuardHome || { warn 'Cannot recover AdGuardHome; run systemctl start AdGuardHome.'; result=1; }
+    fi
     resume_certbot_timer || { warn 'Cannot restore certbot.timer; run systemctl start certbot.timer.'; result=1; }
     if [[ -n "$OUTPUT" ]] && (( ! BACKUP_FINISHED )); then
         rm -f -- "$OUTPUT" || { warn 'Cannot remove incomplete archive'; result=1; }
@@ -50,6 +54,39 @@ cleanup() {
         rm -rf -- "$STAGING" || { warn 'Cannot remove private staging directory'; result=1; }
     fi
     exit "$result"
+}
+
+cleanup_adguard() {
+    # Only the upstream-generated project unit is owned here; never run an old binary.
+    if systemctl cat AdGuardHome >/dev/null 2>&1 || systemctl is-active --quiet AdGuardHome 2>/dev/null; then
+        local fragment
+        fragment=$(systemctl show -p FragmentPath --value AdGuardHome) || return 1
+        [[ "$fragment" == /etc/systemd/system/AdGuardHome.service ]] || return 1
+        systemctl stop AdGuardHome && systemctl disable AdGuardHome || return 1
+        systemctl is-active --quiet AdGuardHome && return 1
+        rm -f /etc/systemd/system/AdGuardHome.service || return 1
+        systemctl daemon-reload || return 1
+    fi
+    rm -rf /opt/AdGuardHome || return 1
+    rm -f /etc/nginx/snippets/adguard.conf /etc/nginx/snippets/x-ui-auto-optional/adguard.conf || return 1
+    rm -f /usr/local/lib/3x-ui-pro/managed-adguard.sh
+}
+
+load_adguard_backup_state() {
+    ADGUARD_HOME=false
+    if [[ -e /opt/AdGuardHome || -e /etc/systemd/system/AdGuardHome.service ||
+          -e /etc/nginx/snippets/adguard.conf || -e /etc/nginx/snippets/x-ui-auto-optional/adguard.conf ||
+          -e /usr/local/lib/3x-ui-pro/managed-adguard.sh ]] ||
+       systemctl is-active --quiet AdGuardHome 2>/dev/null || systemctl is-enabled --quiet AdGuardHome 2>/dev/null ||
+       grep -RqE 'location.*(/adg-|/dns-query)' /etc/nginx/sites-available /etc/nginx/snippets 2>/dev/null; then
+        [[ -f /usr/local/lib/3x-ui-pro/managed-adguard.sh && ! -L /usr/local/lib/3x-ui-pro/managed-adguard.sh &&
+           -f /etc/nginx/snippets/x-ui-auto-optional/adguard.conf && ! -e /etc/nginx/snippets/adguard.conf ]] || die 'Partial AdGuard Home state.'
+        . /usr/local/lib/3x-ui-pro/managed-adguard.sh
+        agh_config && agh_unit || die 'AdGuard Home configuration/service contract is invalid.'
+        [[ "$(cat "$AGH_SNIPPET")" == "$(agh_snippet)" ]] || die 'AdGuard Home nginx state is inconsistent.'
+        [[ "$AGH_ARCH" == "$ARCH" ]] || die 'AdGuard Home architecture does not match the host.'
+        ADGUARD_HOME=true
+    fi
 }
 
 check_python_dependencies() {
@@ -169,9 +206,28 @@ try:
         meta = json.load(tar.extractfile(metadata))
         if isinstance(meta, dict) and type(meta.get('format_version')) is int and meta['format_version'] == 2:
             fail('Legacy backup format 2 is not supported by this release. Restore it with the matching older x-ui-backup version.')
+        if not isinstance(meta, dict):
+            fail('Metadata must be an object')
+        if type(meta.get('adguard_home')) is not bool:
+            fail('Missing boolean adguard_home metadata')
+        agh_tree = '/opt/AdGuardHome'.lstrip('/')
+        agh_helper = '/usr/local/lib/3x-ui-pro/managed-adguard.sh'.lstrip('/')
+        agh_snippet = '/etc/nginx/snippets/x-ui-auto-optional/adguard.conf'.lstrip('/')
+        if meta['adguard_home']:
+            if meta.get('adguard_version') != 'v0.107.79' or meta.get('adguard_arch') not in ('amd64', 'arm64') or meta['adguard_arch'] != meta.get('arch'):
+                fail('Invalid AdGuard Home release metadata')
+            required += ['files/' + p for p in (agh_tree, agh_tree + '/AdGuardHome', agh_tree + '/AdGuardHome.yaml', agh_tree + '/managed.json', agh_helper, agh_snippet)]
         members = {}
         for member in tar:
             name = clean(member.name)
+            if not meta['adguard_home'] and (name == 'files/' + agh_tree or name.startswith('files/' + agh_tree + '/') or name in ('files/' + agh_helper, 'files/' + agh_snippet)):
+                fail('AdGuard Home state prohibited when metadata is false')
+            if name.startswith('files/' + agh_tree + '/') and not (member.isfile() or member.isdir()):
+                fail('AdGuard Home tree cannot contain archive links')
+            if name in ('files/' + agh_helper, 'files/' + agh_snippet) and not member.isfile():
+                fail('AdGuard Home helper/snippet must be regular files')
+            if name == 'files/etc/systemd/system/AdGuardHome.service':
+                fail('AdGuard Home service must be recreated, not archived')
             if name in members or not permitted(name, member.isdir()):
                 fail('Unexpected or duplicate archive member')
             if name.startswith('files/') and name[6:] in files and not member.isfile():
@@ -261,13 +317,14 @@ write_metadata() {
         xray_version=$("$xray" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) || xray_version=unknown
         break
     done
-    python3 - "$STAGING/meta.json" "$OS_ID" "$OS_VERSION" "$ARCH" "$xui_version" "$xray_version" "$source_ip" <<'PY'
+    python3 - "$STAGING/meta.json" "$OS_ID" "$OS_VERSION" "$ARCH" "$xui_version" "$xray_version" "$source_ip" "$ADGUARD_HOME" "$AGH_ARCH" <<'PY'
 import datetime, json, socket, sys
-path, os_id, os_version, arch, x_ui, xray, ipv4 = sys.argv[1:]
+path, os_id, os_version, arch, x_ui, xray, ipv4, agh, agh_arch = sys.argv[1:]
 with open(path, 'w') as out:
     json.dump(dict(format_version=3, created=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                    hostname=socket.gethostname(), os_id=os_id, os_version=os_version, arch=arch,
-                   x_ui_version=x_ui, xray_version=xray, source_ipv4=ipv4), out, indent=2)
+                   x_ui_version=x_ui, xray_version=xray, source_ipv4=ipv4, adguard_home=(agh == "true"),
+                   **(dict(adguard_version="v0.107.79", adguard_arch=agh_arch) if agh == "true" else {})), out, indent=2)
     out.write('\n')
 PY
 }
@@ -285,6 +342,7 @@ cmd_backup() {
     domains=$(restored_certificate_domains) || die 'Cannot detect project certificate domains.'
     mapfile -t names <<< "$domains"
     check_certificate_renewal "${names[0]}" "${names[1]}" || die 'Certificate renewal preflight failed; no archive was created.'
+    load_adguard_backup_state
     pause_certbot_timer
     prepare_store backup
     local estimate available path initial_state existing=()
@@ -314,8 +372,21 @@ cmd_backup() {
     else
         ok 'x-ui remains inactive'
     fi
+    if [[ "$ADGUARD_HOME" == true ]]; then
+        initial_state=$(systemctl is-active AdGuardHome) || :
+        case "$initial_state" in
+            active) RESUME_AGH=1; systemctl stop AdGuardHome || die 'Cannot stop AdGuard Home for snapshot.' ;;
+            inactive|failed) ;;
+            *) die 'AdGuard Home service state is transitional or unknown.' ;;
+        esac
+        systemctl is-active --quiet AdGuardHome && die 'AdGuard Home is still running; snapshot refused.'
+    fi
     stage 'Collecting managed configuration and web content'
     for path in "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}"; do collect_path "$path"; done
+    if (( RESUME_AGH )); then
+        systemctl start AdGuardHome && systemctl is-active --quiet AdGuardHome || die 'Cannot recover AdGuard Home after snapshot.'
+        RESUME_AGH=0
+    fi
     write_metadata
     stage 'Compressing and verifying archive'
     local name="x-ui-backup-$(date -u +%Y%m%d-%H%M%S)-${STAGING##*-}.tar.gz"
@@ -595,8 +666,147 @@ check_health() {
     done
     if [[ -S "$XHTTP_SOCKET" ]]; then ok 'XHTTP Unix socket';
     else printf '[FAIL] XHTTP Unix socket is missing\n' >&2; failed=1; fi
+    if [[ "$ADGUARD_HOME" == true ]]; then
+        agh_health || die 'AdGuard Home failed mandatory health checks.'
+        ok 'AdGuard Home / HTTPS DoH; existing credentials preserved'
+    fi
     (( ! failed )) || die 'Restore failed mandatory health checks; archive is unchanged. Fix the cause and rerun restore.'
 }
+
+# Trusted static AGH contract, synchronized with assets/adguard/managed.sh by tests.
+# Embedded so restore never sources an archive-provided shell helper for preflight.
+agh_binary_hash() {
+    case "$1" in
+        amd64|x86_64) printf '%s\n' 7e247573e63ce771a5925d16ca4ca9344e6e888673244289dc302f0fdfdfbf4e ;;
+        arm64|aarch64) printf '%s\n' 64a9b6fc6269247f1973cddbf285aa6ce866d11bd29546b0f4135ba31d2283c8 ;;
+        *) return 1 ;;
+    esac
+}
+
+agh_verify_binary() {
+    local expected actual
+    [[ -f "$AGH_DIR/AdGuardHome" && ! -L "$AGH_DIR/AdGuardHome" && -x "$AGH_DIR/AdGuardHome" ]] || return 1
+    expected=$(agh_binary_hash "$1") || return 1
+    actual=$(sha256sum "$AGH_DIR/AdGuardHome") || return 1
+    [[ "${actual%% *}" == "$expected" ]]
+}
+
+agh_binary() {
+    agh_verify_binary "${AGH_ARCH:-$(uname -m)}" || return 1
+    [[ "$("$AGH_DIR/AdGuardHome" --version)" == "AdGuard Home, version $AGH_VERSION" ]]
+}
+
+agh_config() {
+    [[ -d "$AGH_DIR" && ! -L "$AGH_DIR" && -f "$AGH_DIR/AdGuardHome.yaml" && ! -L "$AGH_DIR/AdGuardHome.yaml" &&
+       -f "$AGH_DIR/managed.json" && ! -L "$AGH_DIR/managed.json" ]] || return 1
+    local values
+    values=$(python3 - "$AGH_DIR" "${AGH_DATA_ROOT:-$AGH_DIR}" <<'PY'
+import json, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+data_root = pathlib.Path(sys.argv[2])
+m = json.loads((root / 'managed.json').read_text())
+if not (m['version'] == 'v0.107.79' and m['arch'] in ('amd64', 'arm64')):
+    raise ValueError('Invalid AGH version/architecture')
+if not (re.fullmatch(r'adg-[A-Za-z0-9]{12}', m['path'])):
+    raise ValueError('Invalid AGH admin prefix')
+domain = m['domain']
+if not (isinstance(domain, str) and len(domain) <= 253 and '.' in domain):
+    raise ValueError('Invalid AGH domain')
+if not (all(re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label) for label in domain.split('.'))):
+    raise ValueError('Invalid AGH domain labels')
+if not (type(m['web_port']) is int and type(m['dns_port']) is int):
+    raise ValueError('Invalid AGH integer ports')
+if not (10000 <= m['web_port'] <= 65535 and 10000 <= m['dns_port'] <= 65535):
+    raise ValueError('Invalid AGH high ports')
+if not (m['web_port'] != m['dns_port']):
+    raise ValueError('Invalid AGH distinct ports')
+# Read only managed scalar/list fields in the canonical YAML written by AGH.
+# Unrecognized representations fail closed; native --check-config handles YAML.
+s = (root / 'AdGuardHome.yaml').read_text()
+def section(name):
+    match = re.search(r'^' + name + r':\s*\n((?:[ \t].*\n|\n)*)', s, re.M)
+    if not (match):
+        raise ValueError('Invalid AGH required YAML section')
+    return match[1]
+def scalar(text, key):
+    matches = re.findall(r'^  ' + key + r':\s*(.*?)\s*$', text, re.M)
+    if not (len(matches) == 1):
+        raise ValueError('Invalid AGH unique YAML field')
+    return matches[0].strip('"\'')
+if not (re.search(r'^schema_version: 34\s*$', s, re.M)):
+    raise ValueError('Invalid AGH schema 34')
+http, dns, tls = section('http'), section('dns'), section('tls')
+if not (scalar(http, 'address') == '127.0.0.1:' + str(m['web_port'])):
+    raise ValueError('Invalid AGH loopback HTTP address')
+if not (scalar(dns, 'port') == str(m['dns_port'])):
+    raise ValueError('Invalid AGH DNS port')
+hosts = re.search(r'^  bind_hosts:\s*\n((?:    - .*\n)+)', dns, re.M)
+if not (hosts and [x.strip().strip('"\'') for x in re.findall(r'^    - (.*)$', hosts[1], re.M)] == ['127.0.0.1']):
+    raise ValueError('Invalid AGH loopback DNS bind')
+if not (scalar(tls, 'enabled') == 'false'):
+    raise ValueError('Invalid AGH native TLS disabled')
+if not (re.search(r'^    insecure_enabled: true\s*$', http, re.M)):
+    raise ValueError('Invalid AGH DoH insecure bridge')
+for part in ('querylog', 'statistics'):
+    p = section(part) if re.search(r'^' + part + ':', s, re.M) else ''
+    if p and re.search(r'^  dir_path:', p, re.M):
+        directory = scalar(p, 'dir_path')
+        if not (not directory or pathlib.Path(directory).resolve().is_relative_to(data_root.resolve())):
+            raise ValueError('Invalid AGH managed data directory')
+for k in ('web_port', 'dns_port', 'path', 'domain', 'arch'):
+    print(m[k])
+PY
+    ) || return 1
+    local -a fields
+    mapfile -t fields <<< "$values"
+    AGH_WEB_PORT=${fields[0]} AGH_DNS_PORT=${fields[1]} AGH_PATH=${fields[2]} AGH_DOMAIN=${fields[3]} AGH_ARCH=${fields[4]}
+    agh_binary && "$AGH_DIR/AdGuardHome" -c "$AGH_DIR/AdGuardHome.yaml" -w "$AGH_DIR" --no-check-update --check-config
+}
+
+agh_snippet() {
+    cat <<EOFNG
+# Integrated AdGuard Home (project-owned).
+location = /dns-query {
+    limit_except GET POST { deny all; }
+    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_buffering off;
+    proxy_intercept_errors off;
+    access_log off;
+}
+location = /${AGH_PATH} { return 302 /${AGH_PATH}/; }
+location ^~ /${AGH_PATH}/ {
+    proxy_pass http://127.0.0.1:${AGH_WEB_PORT}/;
+    proxy_redirect / /${AGH_PATH}/;
+    proxy_cookie_path / /${AGH_PATH}/;
+    proxy_cookie_flags agh_session secure;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_intercept_errors off;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+}
+EOFNG
+}
+
+preflight_staged_adguard() (
+    local AGH_VERSION=v0.107.79 AGH_DIR="$STAGING/files/opt/AdGuardHome"
+    local AGH_DATA_ROOT=/opt/AdGuardHome
+    local snippet="$STAGING/files/etc/nginx/snippets/x-ui-auto-optional/adguard.conf"
+    # Authenticate using trusted host-architecture hashes before ANY staged execution.
+    agh_verify_binary "$ARCH" ||
+        die 'Staged AdGuard Home executable SHA256 mismatch; target state was not changed.'
+    agh_config && [[ "$AGH_ARCH" == "$ARCH" ]] ||
+        die 'Staged AdGuard Home configuration/binary contract is invalid; target state was not changed.'
+    [[ -f "$snippet" && ! -L "$snippet" ]] && cmp -s "$snippet" <(agh_snippet) ||
+        die 'Staged AdGuard Home nginx snippet is invalid; target state was not changed.'
+)
 
 cmd_restore() {
     stage 'Restore preflight'
@@ -618,7 +828,12 @@ cmd_restore() {
     install_missing_packages "${PACKAGES[@]}"
     check_python_dependencies
     quick_check "$STAGING/files$DB"
+    ADGUARD_HOME=$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["adguard_home"]).lower())' "$STAGING/meta.json")
+    if [[ "$ADGUARD_HOME" == true ]]; then
+        preflight_staged_adguard
+    fi
     pause_certbot_timer
+    cleanup_adguard || die 'Cannot clean target AdGuard Home; core state was not replaced.'
     stage 'Stopping services and restoring managed state'
     for service in nginx x-ui mtr-backend; do
         if systemctl cat "$service" >/dev/null 2>&1; then
@@ -626,6 +841,15 @@ cmd_restore() {
         fi
     done
     replace_managed_state
+    install -d -o root -g root -m 0755 /etc/nginx/snippets/x-ui-auto-optional || die 'Cannot prepare optional nginx include directory.'
+    if [[ "$ADGUARD_HOME" == true ]]; then
+        chown -R root:root /opt/AdGuardHome
+        chmod 0700 /opt/AdGuardHome
+        chmod 0755 /opt/AdGuardHome/AdGuardHome
+        chmod 0600 /opt/AdGuardHome/AdGuardHome.yaml /opt/AdGuardHome/managed.json
+        . /usr/local/lib/3x-ui-pro/managed-adguard.sh
+        agh_config && [[ "$AGH_ARCH" == "$ARCH" ]] && agh_install_service || die 'Cannot validate/recreate restored AdGuard Home service.'
+    fi
     repair_panel_certificates
     prepare_mtr_backend
     regenerate_diagnostics
