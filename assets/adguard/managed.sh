@@ -21,13 +21,16 @@ agh_config() {
     [[ -d "$AGH_DIR" && ! -L "$AGH_DIR" && -f "$AGH_DIR/AdGuardHome.yaml" && ! -L "$AGH_DIR/AdGuardHome.yaml" &&
        -f "$AGH_DIR/managed.json" && ! -L "$AGH_DIR/managed.json" ]] || return 1
     local values
-    values=$(python3 - "$AGH_DIR" <<'PY'
+    values=$(python3 - "$AGH_DIR" "${AGH_DATA_ROOT:-$AGH_DIR}" <<'PY'
 import json, pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
+data_root = pathlib.Path(sys.argv[2])
 m = json.loads((root / 'managed.json').read_text())
 assert m['version'] == 'v0.107.79' and m['arch'] in ('amd64', 'arm64')
 assert re.fullmatch(r'adg-[A-Za-z0-9]{12}', m['path'])
-assert re.fullmatch(r'[A-Za-z0-9.-]+', m['domain']) and '.' in m['domain']
+domain = m['domain']
+assert isinstance(domain, str) and len(domain) <= 253 and '.' in domain
+assert all(re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label) for label in domain.split('.'))
 assert type(m['web_port']) is int and type(m['dns_port']) is int
 assert 10000 <= m['web_port'] <= 65535 and 10000 <= m['dns_port'] <= 65535
 assert m['web_port'] != m['dns_port']
@@ -54,7 +57,7 @@ for part in ('querylog', 'statistics'):
     p = section(part) if re.search(r'^' + part + ':', s, re.M) else ''
     if p and re.search(r'^  dir_path:', p, re.M):
         directory = scalar(p, 'dir_path')
-        assert not directory or pathlib.Path(directory).resolve().is_relative_to(root.resolve())
+        assert not directory or pathlib.Path(directory).resolve().is_relative_to(data_root.resolve())
 for k in ('web_port', 'dns_port', 'path', 'domain', 'arch'):
     print(m[k])
 PY

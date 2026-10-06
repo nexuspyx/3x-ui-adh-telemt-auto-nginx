@@ -673,6 +673,105 @@ check_health() {
     (( ! failed )) || die 'Restore failed mandatory health checks; archive is unchanged. Fix the cause and rerun restore.'
 }
 
+# Trusted static AGH contract, synchronized with assets/adguard/managed.sh by tests.
+# Embedded so restore never sources an archive-provided shell helper for preflight.
+agh_binary() {
+    [[ -f "$AGH_DIR/AdGuardHome" && ! -L "$AGH_DIR/AdGuardHome" && -x "$AGH_DIR/AdGuardHome" ]] || return 1
+    [[ "$("$AGH_DIR/AdGuardHome" --version)" == "AdGuard Home, version $AGH_VERSION" ]]
+}
+
+agh_config() {
+    [[ -d "$AGH_DIR" && ! -L "$AGH_DIR" && -f "$AGH_DIR/AdGuardHome.yaml" && ! -L "$AGH_DIR/AdGuardHome.yaml" &&
+       -f "$AGH_DIR/managed.json" && ! -L "$AGH_DIR/managed.json" ]] || return 1
+    local values
+    values=$(python3 - "$AGH_DIR" "${AGH_DATA_ROOT:-$AGH_DIR}" <<'PY'
+import json, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+data_root = pathlib.Path(sys.argv[2])
+m = json.loads((root / 'managed.json').read_text())
+assert m['version'] == 'v0.107.79' and m['arch'] in ('amd64', 'arm64')
+assert re.fullmatch(r'adg-[A-Za-z0-9]{12}', m['path'])
+domain = m['domain']
+assert isinstance(domain, str) and len(domain) <= 253 and '.' in domain
+assert all(re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label) for label in domain.split('.'))
+assert type(m['web_port']) is int and type(m['dns_port']) is int
+assert 10000 <= m['web_port'] <= 65535 and 10000 <= m['dns_port'] <= 65535
+assert m['web_port'] != m['dns_port']
+# Read only managed scalar/list fields in the canonical YAML written by AGH.
+# Unrecognized representations fail closed; native --check-config handles YAML.
+s = (root / 'AdGuardHome.yaml').read_text()
+def section(name):
+    match = re.search(r'^' + name + r':\s*\n((?:[ \t].*\n|\n)*)', s, re.M)
+    assert match, name
+    return match[1]
+def scalar(text, key):
+    matches = re.findall(r'^  ' + key + r':\s*(.*?)\s*$', text, re.M)
+    assert len(matches) == 1, key
+    return matches[0].strip('"\'')
+assert re.search(r'^schema_version: 34\s*$', s, re.M)
+http, dns, tls = section('http'), section('dns'), section('tls')
+assert scalar(http, 'address') == '127.0.0.1:' + str(m['web_port'])
+assert scalar(dns, 'port') == str(m['dns_port'])
+hosts = re.search(r'^  bind_hosts:\s*\n((?:    - .*\n)+)', dns, re.M)
+assert hosts and [x.strip().strip('"\'') for x in re.findall(r'^    - (.*)$', hosts[1], re.M)] == ['127.0.0.1']
+assert scalar(tls, 'enabled') == 'false'
+assert re.search(r'^    insecure_enabled: true\s*$', http, re.M)
+for part in ('querylog', 'statistics'):
+    p = section(part) if re.search(r'^' + part + ':', s, re.M) else ''
+    if p and re.search(r'^  dir_path:', p, re.M):
+        directory = scalar(p, 'dir_path')
+        assert not directory or pathlib.Path(directory).resolve().is_relative_to(data_root.resolve())
+for k in ('web_port', 'dns_port', 'path', 'domain', 'arch'):
+    print(m[k])
+PY
+    ) || return 1
+    local -a fields
+    mapfile -t fields <<< "$values"
+    AGH_WEB_PORT=${fields[0]} AGH_DNS_PORT=${fields[1]} AGH_PATH=${fields[2]} AGH_DOMAIN=${fields[3]} AGH_ARCH=${fields[4]}
+    agh_binary && "$AGH_DIR/AdGuardHome" -c "$AGH_DIR/AdGuardHome.yaml" -w "$AGH_DIR" --no-check-update --check-config
+}
+
+agh_snippet() {
+    cat <<EOFNG
+# Integrated AdGuard Home (project-owned).
+location = /dns-query {
+    limit_except GET POST { deny all; }
+    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_buffering off;
+    proxy_intercept_errors off;
+    access_log off;
+}
+location = /${AGH_PATH} { return 302 /${AGH_PATH}/; }
+location ^~ /${AGH_PATH}/ {
+    proxy_pass http://127.0.0.1:${AGH_WEB_PORT}/;
+    proxy_redirect / /${AGH_PATH}/;
+    proxy_cookie_path / /${AGH_PATH}/;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_intercept_errors off;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+}
+EOFNG
+}
+
+preflight_staged_adguard() (
+    local AGH_VERSION=v0.107.79 AGH_DIR="$STAGING/files/opt/AdGuardHome"
+    local AGH_DATA_ROOT=/opt/AdGuardHome
+    local snippet="$STAGING/files/etc/nginx/snippets/x-ui-auto-optional/adguard.conf"
+    agh_config && [[ "$AGH_ARCH" == "$ARCH" ]] ||
+        die 'Staged AdGuard Home configuration/binary contract is invalid; target state was not changed.'
+    [[ -f "$snippet" && ! -L "$snippet" ]] && cmp -s "$snippet" <(agh_snippet) ||
+        die 'Staged AdGuard Home nginx snippet is invalid; target state was not changed.'
+)
+
 cmd_restore() {
     stage 'Restore preflight'
     local archive=${1:-} service path
@@ -694,6 +793,9 @@ cmd_restore() {
     check_python_dependencies
     quick_check "$STAGING/files$DB"
     ADGUARD_HOME=$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["adguard_home"]).lower())' "$STAGING/meta.json")
+    if [[ "$ADGUARD_HOME" == true ]]; then
+        preflight_staged_adguard
+    fi
     pause_certbot_timer
     cleanup_adguard || die 'Cannot clean target AdGuard Home; core state was not replaced.'
     stage 'Stopping services and restoring managed state'

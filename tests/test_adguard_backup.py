@@ -1,4 +1,5 @@
 """AGH snapshot/restore coverage reuses the existing private Backup fixtures."""
+import copy
 import io
 import json
 import os
@@ -105,6 +106,113 @@ schema_version: 34
         r=f.run_tool('restore',bad);self.assertNotEqual(r.returncode,0);self.assertIn('missing required',r.stderr)
         bad=f.changed_archive(archive,metadata={'adguard_home':'false'})
         r=f.run_tool('restore',bad);self.assertNotEqual(r.returncode,0);self.assertIn('boolean',r.stderr)
+
+    def staged_archive(self, archive, replacements):
+        target = self.root / 'staged-test.tar.gz'
+        with tarfile.open(archive) as src, tarfile.open(target, 'w:gz') as dst:
+            for original in src:
+                item = copy.copy(original)
+                data = src.extractfile(original).read() if original.isfile() else None
+                if item.name in replacements:
+                    data, mode = replacements[item.name]
+                    if isinstance(data, str):
+                        data = data.encode()
+                    if mode is not None:
+                        item.mode = mode
+                if data is not None:
+                    item.size = len(data)
+                dst.addfile(item, io.BytesIO(data) if data is not None else None)
+        return target
+
+    def assert_staged_rejection_preserves_target(self, archive, replacements=None, **env):
+        f = self.fixture
+        # Poison only the archived shell helper: preflight must never source it.
+        helper = f.path('/usr/local/lib/3x-ui-pro/managed-adguard.sh').read_text()
+        replacements = dict(replacements or {})
+        replacements[f.member('/usr/local/lib/3x-ui-pro/managed-adguard.sh')] = (
+            'echo untrusted-helper >> "$ROOT/mutation-trace"\n' + helper, None)
+        bad = self.staged_archive(archive, replacements)
+        protected = ('/opt/AdGuardHome', '/etc/x-ui', '/etc/nginx', '/etc/letsencrypt')
+        def snapshot():
+            return {str(p): p.read_bytes() for directory in protected
+                    for p in f.path(directory).rglob('*') if p.is_file()}
+        before = snapshot()
+        services = (self.root / 'services.json').read_bytes()
+        enabled = (self.root / 'enabled.json').read_bytes()
+        (self.root / 'commands').write_text('')
+        r = f.run_tool('restore', bad, **env)
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn('Restore completed successfully.', r.stdout)
+        self.assertFalse((self.root / 'mutation-trace').exists())
+        self.assertEqual(snapshot(), before)
+        self.assertEqual((self.root / 'services.json').read_bytes(), services)
+        self.assertEqual((self.root / 'enabled.json').read_bytes(), enabled)
+        self.assertTrue(f.path('/etc/systemd/system/AdGuardHome.service').exists())
+        calls = f.commands()
+        for service in ('AdGuardHome', 'nginx', 'x-ui', 'mtr-backend', 'certbot.timer'):
+            self.assertNotIn(['systemctl', 'stop', service], calls)
+
+    def trace_mutation_boundaries(self):
+        # Execution trace, rather than only asserting source ordering.
+        script = self.fixture.script.read_text()
+        for name in ('pause_certbot_timer', 'cleanup_adguard', 'replace_managed_state'):
+            script = script.replace(name + '() {', name + '() {\n    echo ' + name + ' >> "$ROOT/mutation-trace"')
+        self.fixture.script.write_text(script)
+
+    def test_staged_corrupt_config_is_rejected_before_target_mutation(self):
+        f = self.fixture
+        self.install_fixture()
+        archive = f.backup()
+        self.trace_mutation_boundaries()
+        yaml = f.path('/opt/AdGuardHome/AdGuardHome.yaml').read_text()
+        for config in (yaml.replace('schema_version: 34', 'schema_version: 33'),
+                       yaml.replace('address: 127.0.0.1:', 'address: 0.0.0.0:'),
+                       yaml + 'querylog:\n  dir_path: /tmp/external-querylog\n',
+                       yaml + 'statistics:\n  dir_path: /tmp/external-statistics\n'):
+            with self.subTest(config=config):
+                self.assert_staged_rejection_preserves_target(archive, {
+                    f.member('/opt/AdGuardHome/AdGuardHome.yaml'): (config, None)})
+        self.assert_staged_rejection_preserves_target(archive, FAIL='config')
+
+    def test_staged_wrong_binary_is_rejected_before_target_mutation(self):
+        f = self.fixture
+        self.install_fixture()
+        archive = f.backup()
+        self.trace_mutation_boundaries()
+        self.assert_staged_rejection_preserves_target(archive, FAIL='version')
+        for binary, mode in (('not an executable format', 0o755), (BINARY, 0o600)):
+            with self.subTest(binary=binary, mode=mode):
+                self.assert_staged_rejection_preserves_target(archive, {
+                    f.member('/opt/AdGuardHome/AdGuardHome'): (binary, mode)})
+
+    def test_staged_metadata_and_snippet_rejected_before_target_mutation(self):
+        f = self.fixture
+        self.install_fixture()
+        archive = f.backup()
+        self.trace_mutation_boundaries()
+        metadata = json.loads(f.path('/opt/AdGuardHome/managed.json').read_text())
+        for key, value in (('version', 'v0.107.78'), ('arch', 'arm64'), ('arch', 'invalid'),
+                           ('domain', 'bad..example.com'), ('path', 'adg-bad'),
+                           ('web_port', 443), ('dns_port', metadata['web_port'])):
+            with self.subTest(key=key, value=value):
+                self.assert_staged_rejection_preserves_target(archive, {
+                    f.member('/opt/AdGuardHome/managed.json'): (json.dumps({**metadata, key: value}), None)})
+        self.assert_staged_rejection_preserves_target(archive, {
+            f.member('/opt/AdGuardHome/managed.json'): ('invalid JSON', None)})
+        self.assert_staged_rejection_preserves_target(archive, {
+            f.member('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf'): ('arbitrary nginx snippet', None)})
+
+    def test_restore_uses_the_same_trusted_static_contract(self):
+        from test_personal_backup import SOURCE
+        def function(source, name):
+            start = source.index(name + '() {')
+            end = source.index('\nEOFNG\n}', start) + len('\nEOFNG\n}') if name == 'agh_snippet' else source.index('\n}\n', start) + 2
+            return source[start:end]
+        for name in ('agh_binary', 'agh_config', 'agh_snippet'):
+            self.assertEqual(function(SOURCE, name), function(HELPER, name))
+        preflight = SOURCE[SOURCE.index('preflight_staged_adguard()'):SOURCE.index('cmd_restore()')]
+        self.assertNotIn('source ', preflight)
+        self.assertNotIn('managed-adguard.sh', preflight)
 
     def test_present_restore_recreates_service_and_requires_health(self):
         f=self.fixture;self.install_fixture();archive=f.backup()
