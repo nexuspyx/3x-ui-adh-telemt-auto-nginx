@@ -167,6 +167,28 @@ dpkg-query() { [[ "${NGINX_PACKAGE:-0}" == 1 ]] && echo 'install ok installed'; 
             self.assertEqual(result.returncode,0,result.stderr)
         self.assertNotIn('/etc/cron.d/certbot',INSTALLER)
 
+    def test_confirmed_uninstall_removes_only_project_certbot_hook(self):
+        hook=certificates(self.root)
+        unrelated=self.root/'etc/letsencrypt/live/unrelated.example/fullchain.pem'
+        unrelated.parent.mkdir(parents=True);unrelated.write_text('unrelated certificate')
+        other_hook=hook.parent/'administrator';other_hook.write_text('unrelated hook')
+        mock=MOCK+'''\nx-ui() { echo "x-ui $*" >> "$CALLS"; }
+apt() { echo "apt $*" >> "$CALLS"; }
+dpkg-query() { return 1; }
+'''
+        branch=re.search(r'^if \[\[ \$\{UNINSTALL\}.*?^fi',INSTALLER,re.M|re.S).group()
+        names=('detect_existing_installation','confirm_destructive_reinstall','uninstall_xui')
+        for answer in ('no\n','YES\n'):
+            self.calls.unlink(missing_ok=True)
+            result=self.run_functions(names,'UNINSTALL=y\nPak=apt\n'+branch,mock=mock,input=answer)
+            self.assertEqual(result.returncode,0 if answer=='YES\n' else 1,result.stderr)
+            self.assertEqual(hook.exists(),answer!='YES\n')
+            self.assertEqual(unrelated.read_text(),'unrelated certificate')
+            self.assertEqual(other_hook.read_text(),'unrelated hook')
+            calls=self.calls.read_text()
+            self.assertNotRegex(calls,r'systemctl (stop|disable).*certbot')
+            self.assertNotIn('python3-certbot-nginx',calls)
+
     def test_webroot_issuance_and_exact_lineage_reconfigure(self):
         template = self.root/'template'; template.mkdir(); certificates(template)
         certbot = r'''
@@ -189,20 +211,31 @@ COPY
 }
 '''
         names=('check_certificate_identity','check_webroot_lineage','get_ssl_certs')
-        for existing in (False,True):
-            if existing: certificates(self.root)
+        for state in ('fresh','valid-webroot','legacy','wrong-webroot'):
+            if state!='fresh':
+                certificates(self.root)
+                if state in ('legacy','wrong-webroot'):
+                    for config in (self.root/'etc/letsencrypt/renewal').glob('*.conf'):
+                        cfg=ConfigObj(str(config))
+                        if state=='legacy':cfg['renewalparams']['authenticator']='standalone'
+                        else:
+                            name=config.stem
+                            cfg['renewalparams']['webroot_map'][name]='/wrong'
+                        cfg.write()
             self.calls.unlink(missing_ok=True)
             result=self.run_functions(names,'get_ssl_certs',mock=MOCK+certbot,AUTODOMAIN='n',TEMPLATE=str(template))
             self.assertEqual(result.returncode,0,result.stderr)
-            calls=self.calls.read_text().splitlines()
-            self.assertEqual(len(calls),2)
+            calls=self.calls.read_text().splitlines() if self.calls.exists() else []
+            self.assertEqual(len(calls),0 if state=='valid-webroot' else 2)
             for call,domain in zip(calls,('example.com','reality.example.com')):
-                self.assertIn('certbot reconfigure' if existing else 'certbot certonly',call)
+                self.assertIn('certbot certonly' if state=='fresh' else 'certbot reconfigure',call)
                 self.assertIn('--cert-name '+domain,call)
                 self.assertIn('--webroot --webroot-path '+str(self.root/'var/www/acme'),call)
                 self.assertNotIn('--standalone',call)
             self.assertTrue((self.root/'root/cert/example.com/fullchain.pem').is_symlink())
             self.assertFalse((self.root/'root/cert/reality.example.com').exists())
+        cfg=ConfigObj(str(self.root/'etc/letsencrypt/renewal/example.com.conf'))
+        cfg['renewalparams']['authenticator']='standalone';cfg.write()
         result=self.run_functions(names,'get_ssl_certs',mock=MOCK+certbot,AUTODOMAIN='n',TEMPLATE=str(template),FAIL_CERT='certbot')
         self.assertNotEqual(result.returncode,0)
         for state in ('numbered', 'incomplete', 'wrong-identity'):

@@ -19,7 +19,7 @@ def function(name, source=INSTALLER):
 
 
 def relocate(source, root):
-    return re.sub(r"(?<![A-Za-z0-9_./])/(?:etc|root|var|lib|usr/local|usr/bin/x-ui|dev/shm)(?=[/\s\"';,)]|$)",
+    return re.sub(r"(?<![A-Za-z0-9_./])/(?:etc|root|var|lib|usr/local|usr/bin/x-ui|usr/share/nginx|dev/shm)(?=[/\s\"';,)]|$)",
                   lambda m: str(root) + m[0], source)
 
 
@@ -35,7 +35,7 @@ def certificates(root, panel='example.com', reality='reality.example.com', mappe
         config.parent.mkdir(parents=True, exist_ok=True)
         cfg = ConfigObj()
         cfg.filename = str(config)
-        cfg['version'] = '4.2.0' if mapped else '2.9.0'
+        cfg['version'] = '4.0.0' if mapped else '2.9.0'
         cfg['fullchain'] = str(live / 'fullchain.pem')
         cfg['privkey'] = str(live / 'privkey.pem')
         cfg['renewalparams'] = {'authenticator': 'webroot', 'webroot_path': [str(root / 'var/www/acme')]}

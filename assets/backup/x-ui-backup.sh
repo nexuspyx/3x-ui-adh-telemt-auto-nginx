@@ -11,7 +11,7 @@ SYSCTL_FILE=/etc/sysctl.d/99-3x-ui-pro.conf
 XHTTP_SOCKET=/dev/shm/uds2023.sock
 LEGACY_CERTBOT_CRON='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
 PACKAGES=(nginx-full certbot sqlite3 curl wget jq ufw
-          netcat-openbsd mtr python3 libcap2-bin ca-certificates openssl procps iproute2 tar gzip tzdata)
+          netcat-openbsd mtr python3 python3-configobj python3-cryptography libcap2-bin ca-certificates openssl procps iproute2 tar gzip tzdata)
 RUNTIME_PATHS=(/etc/x-ui /usr/local/x-ui /usr/bin/x-ui)
 TREE_PATHS=(/etc/nginx /etc/letsencrypt /root/cert /usr/local/lib/3x-ui-pro
             /var/www/html /var/www/subpage)
@@ -23,6 +23,7 @@ REQUIRED_PATHS=("$DB" /usr/local/x-ui/x-ui /usr/bin/x-ui /etc/nginx/nginx.conf
                 /var/www/html /var/www/subpage "${EXTRA_PATHS[@]:0:5}")
 STAGING= OUTPUT= STAGE=preflight
 BACKUP_FINISHED=0 RESUME_XUI=0 APT_UPDATED=0
+RESUME_CERTBOT_TIMER=0
 
 stage() { STAGE=$*; printf '\n==> %s\n' "$*"; }
 ok()    { printf '[OK] %s\n' "$*"; }
@@ -41,6 +42,7 @@ cleanup() {
             result=1
         fi
     fi
+    resume_certbot_timer || { warn 'Cannot restore certbot.timer; run systemctl start certbot.timer.'; result=1; }
     if [[ -n "$OUTPUT" ]] && (( ! BACKUP_FINISHED )); then
         rm -f -- "$OUTPUT" || { warn 'Cannot remove incomplete archive'; result=1; }
     fi
@@ -48,6 +50,32 @@ cleanup() {
         rm -rf -- "$STAGING" || { warn 'Cannot remove private staging directory'; result=1; }
     fi
     exit "$result"
+}
+
+check_python_dependencies() {
+    python3 -c 'import configobj, cryptography' || die 'Required Python modules are unavailable: configobj, cryptography.'
+}
+
+pause_certbot_timer() {
+    local timer_state service_state
+    timer_state=$(systemctl is-active certbot.timer) || :
+    case "$timer_state" in
+        active) RESUME_CERTBOT_TIMER=1 ;;
+        inactive|failed) ;;
+        *) die 'Cannot determine certbot.timer state; retry after checking systemd.' ;;
+    esac
+    systemctl stop certbot.timer || die 'Cannot pause certbot.timer.'
+    service_state=$(systemctl is-active certbot.service) || :
+    case "$service_state" in
+        inactive|failed) ;;
+        *) die 'Certbot renewal is running or its state is unknown. No certificate state was copied or replaced; retry after it finishes.' ;;
+    esac
+}
+
+resume_certbot_timer() {
+    (( RESUME_CERTBOT_TIMER )) || return 0
+    systemctl start certbot.timer && systemctl is-active --quiet certbot.timer || return 1
+    RESUME_CERTBOT_TIMER=0
 }
 
 prepare_store() {
@@ -251,6 +279,13 @@ cmd_backup() {
         [[ -e "$path" ]] || die "Required managed path is missing: $path"
     done
     command -v python3 >/dev/null && command -v sqlite3 >/dev/null || die 'Backup requires python3 and sqlite3.'
+    check_python_dependencies
+    local domains
+    local -a names
+    domains=$(restored_certificate_domains) || die 'Cannot detect project certificate domains.'
+    mapfile -t names <<< "$domains"
+    check_certificate_renewal "${names[0]}" "${names[1]}" || die 'Certificate renewal preflight failed; no archive was created.'
+    pause_certbot_timer
     prepare_store backup
     local estimate available path initial_state existing=()
     for path in "${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}"; do
@@ -289,6 +324,7 @@ cmd_backup() {
     chown root:root "$OUTPUT"
     chmod 0600 "$OUTPUT"
     validate_archive "$OUTPUT"
+    resume_certbot_timer || die 'Cannot restore certbot.timer after snapshot.'
     mv -- "$OUTPUT" "$BACKUP_STORE/$name"
     OUTPUT="$BACKUP_STORE/$name"
     BACKUP_FINISHED=1
@@ -580,7 +616,9 @@ cmd_restore() {
     tar -xzf "$archive" -C "$STAGING" --same-owner
     check_compatibility
     install_missing_packages "${PACKAGES[@]}"
+    check_python_dependencies
     quick_check "$STAGING/files$DB"
+    pause_certbot_timer
     stage 'Stopping services and restoring managed state'
     for service in nginx x-ui mtr-backend; do
         if systemctl cat "$service" >/dev/null 2>&1; then
@@ -604,6 +642,7 @@ cmd_restore() {
         systemctl start "$service" || die "Cannot start $service."
     done
     systemctl enable --now certbot.timer || die 'Cannot enable and start certbot.timer.'
+    RESUME_CERTBOT_TIMER=0
     check_health
     printf '\nRestore completed successfully.\n'
     warn 'Recovery uses the saved domains. On a new VPS, point their DNS to this VPS separately.'

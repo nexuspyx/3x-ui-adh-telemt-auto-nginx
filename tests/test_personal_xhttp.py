@@ -432,12 +432,13 @@ apt() { echo "apt $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != apt ]]; }
 apt-get() { echo "apt-get $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != apt ]]; }
 systemctl() { echo "systemctl $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != nginx || "$*" != 'enable --now nginx' ]]; }
 command() { [[ "$*" != "-v $FAIL_DEP" ]]; }
+python3() { echo "python3 $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != python-import ]]; }
 '''
         required = {"openssl", "procps", "iproute2", "tar", "gzip", "tzdata", "ca-certificates",
                     "curl", "wget", "jq", "bash", "sudo", "nginx-full", "certbot",
-                    "sqlite3", "ufw", "netcat-openbsd", "mtr", "python3", "libcap2-bin"}
+                    "sqlite3", "ufw", "netcat-openbsd", "mtr", "python3", "python3-configobj", "python3-cryptography", "libcap2-bin"}
         self.assertRegex(function("main"), r"install_packages\s*\|\|.*exit 1")
-        for failure in ("", "apt", "sysctl", "ip", "nginx"):
+        for failure in ("", "apt", "sysctl", "ip", "nginx", "python-import"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
                 log = Path(tmp) / "calls"
                 result = subprocess.run(["bash", "-u", "-c", mock + function("install_packages") + "\ninstall_packages\n"],
@@ -450,6 +451,7 @@ command() { [[ "$*" != "-v $FAIL_DEP" ]]; }
                     self.assertTrue(required.issubset(packages))
                     self.assertNotIn("cron", packages)
                     self.assertNotIn("python3-certbot-nginx", packages)
+                    self.assertIn('python3 -c import configobj, cryptography', calls)
 
     def test_installer_final_health_gate_precedes_success_output(self):
         main = function("main")
@@ -828,7 +830,7 @@ sys.exit(1 if sys.argv[1] == os.environ["FAIL_PANEL_COMMAND"] else 0)
         start = SOURCE.index('while [ "$#" -gt 0 ]; do')
         end = SOURCE.index("# ─── Detect package manager")
         preflight = SOURCE[start:end]
-        self.assertLess(end, SOURCE.index('    uninstall_xui\n'))
+        self.assertLess(end, SOURCE.index('    uninstall_xui || exit 1\n'))
         for version, accepted in (("v3.7.0", False), ("v3.7.99", False), ("v3.8.0", True), ("v3.8.5", True),
                                   ("v3.9.0", True), ("3.10.0", True), ("v4.0.0", True),
                                   ("v3.08.0", False), ("v3.8", False), ("latest", False), ("", False)):

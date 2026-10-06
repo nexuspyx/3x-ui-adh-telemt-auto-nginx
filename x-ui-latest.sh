@@ -226,11 +226,12 @@ confirm_destructive_reinstall() {
 }
 
 uninstall_xui() {
+    rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx || return 1
     printf 'y\n' | x-ui uninstall 2>/dev/null || true
     rm -rf /etc/x-ui/ /usr/local/x-ui/
     rm -f  /usr/bin/x-ui
-    $Pak -y remove nginx nginx-common nginx-core nginx-full python3-certbot-nginx
-    $Pak -y purge  nginx nginx-common nginx-core nginx-full python3-certbot-nginx
+    $Pak -y remove nginx nginx-common nginx-core nginx-full
+    $Pak -y purge  nginx nginx-common nginx-core nginx-full
     $Pak -y autoremove
     $Pak -y autoclean
     rm -rf /var/www/html/ /var/www/diagnostics/ /var/www/subpage/ /etc/nginx/ /usr/share/nginx/
@@ -243,7 +244,7 @@ uninstall_xui() {
 
 if [[ ${UNINSTALL} == *"y"* ]]; then
     confirm_destructive_reinstall || exit 1
-    uninstall_xui
+    uninstall_xui || exit 1
     msg_ok "3x-ui Auto Nginx completely uninstalled."
     exit 0
 fi
@@ -307,7 +308,7 @@ install_packages() {
         [[ "$version" == "20" || "$version" == "22" ]] && echo "System: Ubuntu $version"
 
         $Pak -y update || return 1
-        $Pak -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr python3 libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates || return 1
+        $Pak -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr python3 python3-configobj python3-cryptography libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates || return 1
         systemctl daemon-reload && systemctl enable --now nginx || return 1
     fi
 
@@ -316,6 +317,7 @@ install_packages() {
     for binary in openssl sysctl ip ss tar gzip curl wget jq bash sudo nginx certbot sqlite3 ufw nc mtr python3 setcap; do
         command -v "$binary" >/dev/null || { msg_err "Required binary is missing: $binary"; return 1; }
     done
+    python3 -c 'import configobj, cryptography' || { msg_err 'Required Python modules are unavailable: configobj, cryptography.'; return 1; }
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -369,8 +371,10 @@ get_ssl_certs() {
                 msg_err "Incomplete certificate lineage: $d. Resolve it before rebuilding."; return 1;
             }
             check_certificate_identity "$d" || return 1
-            certbot reconfigure --cert-name "$d" --webroot --webroot-path /var/www/acme \
-                --pre-hook '' --post-hook '' --non-interactive || return 1
+            if ! check_webroot_lineage "$d" 2>/dev/null; then
+                certbot reconfigure --cert-name "$d" --webroot --webroot-path /var/www/acme \
+                    --pre-hook '' --post-hook '' --non-interactive || return 1
+            fi
         elif compgen -G "/etc/letsencrypt/live/$d-*" >/dev/null || compgen -G "/etc/letsencrypt/renewal/$d-*.conf" >/dev/null; then
             msg_err "Ambiguous certificate lineage for $d. Resolve it before rebuilding."; return 1
         else
