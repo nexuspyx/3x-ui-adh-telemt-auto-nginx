@@ -17,6 +17,7 @@ import threading
 import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
 from certificate_fixtures import relocate
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -170,6 +171,32 @@ if sys.argv[1]=='cert':
             self.assertEqual(hook.count('systemctl restart x-ui'),1)
             self.assertIn('if (( panel )); then check_xray_runtime; fi',hook)
 
+    def test_fresh_json_subscription_replaces_upstream_seed(self):
+        from test_personal_xhttp import render
+        setup = re.search(r'^    local json_uri=.*$',function('configure_xui_db'),re.M)[0]
+        uri = subprocess.check_output(['bash','-eu','-c',
+                                      'emit() {\n' + setup + '\nprintf "%s" "$json_uri"; }; emit'],
+                                     text=True,env={**os.environ,'domain':'example.com','json_path':'jsonsub'})
+        self.assertEqual(uri,'https://example.com/jsonsub/')
+        self.assertNotIn('?name=',function('configure_xui_db'))
+        for previous in (None,'false','true'):
+            with self.subTest(previous=previous), sqlite3.connect(':memory:') as db:
+                db.execute('CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT)')
+                db.execute("INSERT INTO settings VALUES('subPath','/sub/')")
+                if previous is not None:
+                    db.executemany('INSERT INTO settings VALUES(?,?)',[
+                        ('subJsonEnable',previous),('subJsonPath','/upstream/'),('subJsonURI','old')])
+                db.executescript(render('sqlite3 $XUIDB',json_uri=uri).split('INSERT INTO "inbounds"',1)[0])
+                values = dict(db.execute('SELECT key,value FROM settings'))
+                self.assertEqual(values['subJsonEnable'],'true')
+                self.assertEqual(values['subJsonPath'],'/jsonsub/')
+                self.assertEqual(values['subJsonURI'],uri)
+                self.assertEqual(values['subEnable'],'true')
+                self.assertEqual(values['subPath'],'/subscription/')
+                self.assertEqual(values['subURI'],'https://deploy.example/subscription/')
+                self.assertEqual(values['subClashEnable'],'false')
+                self.assertNotIn('subJsonAutoDetect',values)
+
     def test_xray_health_requires_live_sockets_and_managed_same_pid(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -235,18 +262,41 @@ if sys.argv[1]=='cert':
                             '-keyout',str(root/'key.pem'),'-out',str(root/'cert.pem')], check=True,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             requests = []
+            with sqlite3.connect(':memory:') as db:
+                db.execute('CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT)')
+                db.execute("INSERT INTO settings VALUES('subPath','/sub/')")
+                db.executescript(render('sqlite3 $XUIDB').split('INSERT INTO "inbounds"',1)[0])
+                settings = dict(db.execute('SELECT key,value FROM settings'))
             class Backend(BaseHTTPRequestHandler):
                 def do_GET(self):
                     requests.append((self.server.kind, self.path, self.headers.get('Authorization'), self.headers.get('Host')))
+                    # Model the exact v3.9.0 enabled JSON :subid route, not an unconditional 200.
+                    if self.server.kind == 'sub-https':
+                        path = urlsplit(self.path).path
+                        if path.startswith('/jsonsub'):
+                            if settings['subJsonEnable'] != 'true' or path != settings['subJsonPath'] + 'fixture':
+                                self.send_error(404); return
+                        elif path != settings['subPath'] + 'fixture':
+                            self.send_error(404); return
                     body = json.dumps({'backend':self.server.kind,'path':self.path}).encode()
-                    self.send_response(200); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
+                    self.send_response(200); self.send_header('Content-Type','application/json')
+                    self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
                 def log_message(self, *args): pass
             panel = ThreadingHTTPServer(('127.0.0.1',0), Backend); panel.kind = 'panel-https'
             tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); tls.load_cert_chain(root/'cert.pem',root/'key.pem')
             panel.socket = tls.wrap_socket(panel.socket, server_side=True)
             sub = ThreadingHTTPServer(('127.0.0.1',0), Backend); sub.kind = 'sub-https'
             sub.socket = tls.wrap_socket(sub.socket, server_side=True)
-            for server in (panel, sub):
+            # Run the actual local Clash generator against its actual installed template.
+            tpl = root/'clash.yaml.tpl'
+            tpl.write_text((ROOT/'assets/clash/clash.yaml').read_text().replace('${DOMAIN}','deploy.example')
+                           .replace('${SUB_PATH}','subscription'))
+            backend_source = (ROOT/'assets/diagnostics/mtr-backend.py').read_text()
+            namespace = {'__name__':'clash_fixture'}
+            exec(compile(backend_source.replace('"/var/www/subpage/clash.yaml.tpl"',repr(str(tpl))),
+                         'mtr-backend-fixture.py','exec'),namespace)
+            clash = ThreadingHTTPServer(('127.0.0.1',0),namespace['Handler'])
+            for server in (panel, sub, clash):
                 thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
                 self.addCleanup(server.server_close); self.addCleanup(server.shutdown)
             with socket.socket() as s, socket.socket() as r:
@@ -256,7 +306,8 @@ if sys.argv[1]=='cert':
             self.assertEqual(shared.count(f'proxy_pass https://127.0.0.1:{sub.server_port};'),7)
             self.assertNotIn(f'proxy_pass http://127.0.0.1:{sub.server_port};',shared)
             (root/'includes.conf').write_text(shared)
-            vhost = render(MAIN, panel_port=str(panel.server_port), sub_port=str(sub.server_port))
+            vhost = render(MAIN, panel_port=str(panel.server_port), sub_port=str(sub.server_port),
+                           mtr_backend_port=str(clash.server_port))
             self.assertIn(f'proxy_pass https://127.0.0.1:{panel.server_port};',vhost)
             # Fixture direct TLS entry bypasses only the outer stream/proxy-protocol hop.
             vhost = re.sub(r'127\.0\.0\.1:7443 ssl(?: http2)? proxy_protocol', f'127.0.0.1:{public_port} ssl', vhost)
@@ -282,13 +333,39 @@ if sys.argv[1]=='cert':
                     with socket.create_connection(('127.0.0.1', public_port), timeout=.1): break
                 except OSError: time.sleep(.02)
             for path, kind in [('/panel/panel/api/inbounds/list?node=Fixture&token=query','panel-https'),
-                               ('/subscription/fixture','sub-https'),('/jsonsub?name=Fixture','sub-https')]:
+                               ('/subscription/fixture','sub-https'),('/jsonsub/fixture','sub-https'),
+                               ('/subscription/fixture?provider=1','sub-https')]:
                 result = subprocess.run(['curl','--noproxy','*','-fsS','--max-time','5',
                                          '--cacert',str(root/'cert.pem'),'--resolve',f'deploy.example:{public_port}:127.0.0.1',
                                          '-H','Authorization: Bearer fixture-api-token',f'https://deploy.example:{public_port}{path}'],capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,result.stderr)
                 self.assertEqual(json.loads(result.stdout), {'backend':kind,'path':path})
                 self.assertEqual(requests[-1], (kind,path,'Bearer fixture-api-token','deploy.example'))
+            # Clash/Mihomo gets the full template; its provider URL must bypass that rewrite.
+            for user_agent in ('Clash','Mihomo'):
+                before = list(requests)
+                result = subprocess.run(['curl','--noproxy','*','-fsS','--max-time','5',
+                                         '--cacert',str(root/'cert.pem'),'--resolve',f'deploy.example:{public_port}:127.0.0.1',
+                                         '-A',user_agent,f'https://deploy.example:{public_port}/subscription/fixture'],
+                                        capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(result.stdout,tpl.read_text().replace('${SUB_ID}','fixture'))
+                self.assertIn('https://deploy.example/subscription/fixture?provider=1',result.stdout)
+                self.assertEqual(requests,before)
+                provider = subprocess.run(['curl','--noproxy','*','-fsS','--max-time','5',
+                                           '--cacert',str(root/'cert.pem'),'--resolve',f'deploy.example:{public_port}:127.0.0.1',
+                                           '-A',user_agent,f'https://deploy.example:{public_port}/subscription/fixture?provider=1'],
+                                          capture_output=True,text=True)
+                self.assertEqual(provider.returncode,0,provider.stderr)
+                self.assertEqual(json.loads(provider.stdout),{'backend':'sub-https','path':'/subscription/fixture?provider=1'})
+            for enabled, path in [('true','/jsonsub?name=fixture'),('false','/jsonsub/fixture')]:
+                settings['subJsonEnable'] = enabled
+                negative = subprocess.run(['curl','--noproxy','*','-sS','--max-time','5','-o','/dev/null','-w','%{http_code}',
+                                           '--cacert',str(root/'cert.pem'),'--resolve',f'deploy.example:{public_port}:127.0.0.1',
+                                           f'https://deploy.example:{public_port}{path}'],capture_output=True,text=True)
+                self.assertEqual(negative.returncode,0,negative.stderr)
+                self.assertEqual(negative.stdout,'404')
+            settings['subJsonEnable'] = 'true'
             before = list(requests)
             result = subprocess.run(['curl','--noproxy','*','-sS','--max-time','5',
                                      '--cacert',str(root/'cert.pem'),'--resolve',f'cover.example:{reality_port}:127.0.0.1',
@@ -420,6 +497,8 @@ class AuditRecovery(unittest.TestCase):
         f = self.fixture
         with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
             db.execute("UPDATE settings SET value='' WHERE key='webListen'")
+            db.execute("UPDATE settings SET value='false' WHERE key='subJsonEnable'")
+            db.execute("UPDATE settings SET value='https://example.com/jsonsub?name=' WHERE key='subJsonURI'")
         reality_path = f.path('/etc/nginx/sites-available/reality.example.com')
         normalized_reality = reality_path.read_text()
         reality_path.write_text(normalized_reality.replace('    include ',self.legacy_panel_blocks() + '    include ',1))
@@ -438,6 +517,10 @@ class AuditRecovery(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
                 self.assertEqual(db.execute("SELECT value FROM settings WHERE key='webListen'").fetchone()[0],'127.0.0.1')
+                values = dict(db.execute('SELECT key,value FROM settings'))
+                self.assertEqual(values['subJsonEnable'],'true')
+                self.assertEqual(values['subJsonPath'],'/jsonsub/')
+                self.assertEqual(values['subJsonURI'],'https://example.com/jsonsub/')
             includes = f.path('/etc/nginx/snippets/includes.conf').read_text()
             self.assertEqual(includes.count('proxy_pass https://127.0.0.1:10003;'),7)
             self.assertNotIn('proxy_pass http://127.0.0.1:10003;',includes)
@@ -449,6 +532,44 @@ class AuditRecovery(unittest.TestCase):
             self.assertIn('check_xray_runtime',f.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx').read_text())
             self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
             archive.unlink(); archive = f.backup(); digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+
+    def test_legacy_json_missing_enable_is_migrated_only_in_staging(self):
+        f = self.fixture
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            db.execute("DELETE FROM settings WHERE key='subJsonEnable'")
+            db.execute("UPDATE settings SET value='https://example.com/jsonsub?name=' WHERE key='subJsonURI'")
+        archive = f.backup(); digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        original = f.path('/etc/x-ui/x-ui.db').read_bytes()
+        shared = f.path('/etc/nginx/snippets/includes.conf').read_bytes()
+        result = f.run_tool('restore',archive)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            self.assertEqual(db.execute("SELECT value FROM settings WHERE key='subJsonEnable'").fetchall(),[('true',)])
+            self.assertEqual(db.execute("SELECT value FROM settings WHERE key='subJsonURI'").fetchone()[0],
+                             'https://example.com/jsonsub/')
+        self.assertEqual(f.path('/etc/nginx/snippets/includes.conf').read_bytes(),shared)
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
+        with tarfile.open(archive) as src:
+            self.assertEqual(src.extractfile(f.member('/etc/x-ui/x-ui.db')).read(),original)
+
+    def test_custom_or_inconsistent_json_state_rejected_before_mutation(self):
+        f = self.fixture; archive = f.backup()
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        original = f.path('/etc/x-ui/x-ui.db').read_bytes()
+        cases = ["UPDATE settings SET value='https://custom.example/jsonsub?name=' WHERE key='subJsonURI'",
+                 "UPDATE settings SET value='https://example.com/jsonsub?name=custom' WHERE key='subJsonURI'",
+                 "UPDATE settings SET value='false' WHERE key='subJsonEnable'",
+                 "INSERT INTO settings VALUES('subJsonEnable','true')",
+                 "DELETE FROM settings WHERE key='subJsonURI'"]
+        for sql in cases:
+            with self.subTest(sql=sql):
+                dbfile = Path(f.temp.name)/'bad-json.db'; dbfile.write_bytes(original)
+                with sqlite3.connect(dbfile) as db: db.execute(sql)
+                bad = self.modified(archive,{f.member('/etc/x-ui/x-ui.db'):dbfile.read_bytes()})
+                services = json.loads((f.root/'services.json').read_text()); (f.root/'commands').write_text('')
+                self.assert_untouched(f.run_tool('restore',bad),services)
+                self.assertEqual(f.path('/etc/x-ui/x-ui.db').read_bytes(),original)
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
 
     def test_post_replacement_dead_xray_restores_and_verifies_old_state(self):
         f = self.fixture; archive = f.backup()

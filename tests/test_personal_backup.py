@@ -274,7 +274,8 @@ class PersonalBackup(unittest.TestCase):
                 ('webListen','127.0.0.1'), ('webPort','10002'), ('webBasePath','/panel/'),
                 ('webKeyFile',str(self.path('/root/cert/example.com/privkey.pem'))),
                 ('subListen','127.0.0.1'), ('subPort','10003'), ('subPath','/subscription/'),
-                ('subJsonPath','/jsonsub'),
+                ('subJsonEnable','true'), ('subJsonPath','/jsonsub/'),
+                ('subJsonURI','https://example.com/jsonsub/'),
                 ('subCertFile',str(self.path('/root/cert/example.com/fullchain.pem'))),
                 ('subKeyFile',str(self.path('/root/cert/example.com/privkey.pem')))])
             conn.execute('CREATE TABLE clients (uuid TEXT)')

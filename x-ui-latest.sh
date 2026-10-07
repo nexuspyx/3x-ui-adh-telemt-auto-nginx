@@ -1007,7 +1007,7 @@ configure_xui_db() {
     emoji_flag=$(country_flag)
 
     local sub_uri="https://${domain}/${sub_path}/"
-    local json_uri="https://${domain}/${json_path}?name="
+    local json_uri="https://${domain}/${json_path}/"
 
     # Prepare short IDs for REALITY
     local shor
@@ -1015,12 +1015,13 @@ configure_xui_db() {
            $(openssl rand -hex 8) $(openssl rand -hex 8) $(openssl rand -hex 8) $(openssl rand -hex 8))
 
     sqlite3 $XUIDB <<EOF
-DELETE FROM "settings" WHERE "key" IN ("webCertFile","webKeyFile","webListen","subListen");
+DELETE FROM "settings" WHERE "key" IN ("webCertFile","webKeyFile","webListen","subListen","subJsonEnable","subJsonPath","subJsonURI");
 
 INSERT INTO "settings" ("key","value") VALUES ("subPort",             '${sub_port}');
 UPDATE "settings" SET "value" = '/${sub_path}/' WHERE "key" = 'subPath';
 INSERT INTO "settings" ("key","value") VALUES ("subURI",              '${sub_uri}');
-UPDATE "settings" SET "value" = '/${json_path}/' WHERE "key" = 'subJsonPath';
+INSERT INTO "settings" ("key","value") VALUES ("subJsonEnable",       'true');
+INSERT INTO "settings" ("key","value") VALUES ("subJsonPath",         '/${json_path}/');
 INSERT INTO "settings" ("key","value") VALUES ("subJsonURI",          '${json_uri}');
 INSERT INTO "settings" ("key","value") VALUES ("subClashEnable",      'false');
 INSERT INTO "settings" ("key","value") VALUES ("subEnableRouting",    'false');

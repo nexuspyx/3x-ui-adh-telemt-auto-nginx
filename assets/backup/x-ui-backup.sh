@@ -958,7 +958,7 @@ with sqlite3.connect(staged(dbpath)) as db:
     rows = db.execute('SELECT key,value FROM settings').fetchall()
     settings = dict(rows)
     for name in ('webListen','webPort','webBasePath','webCertFile','webKeyFile',
-                 'subListen','subCertFile','subKeyFile','subPort','subPath','subJsonPath'):
+                 'subListen','subCertFile','subKeyFile','subPort','subPath','subJsonPath','subJsonURI'):
         if sum(k == name for k,v in rows) != 1: raise ValueError('Missing/duplicate setting: ' + name)
     if settings['webListen'] not in ('','127.0.0.1'): raise ValueError('Unexpected panel listen setting')
     if settings['subListen'] != '127.0.0.1':
@@ -984,8 +984,20 @@ with sqlite3.connect(staged(dbpath)) as db:
     if not re.fullmatch(r'[0-9]{1,5}',port) or not 1 <= int(port) <= 65535 or port == panel_port:
         raise ValueError('Invalid subscription port')
     sub, jsonpath = settings['subPath'], settings['subJsonPath']
-    if not re.fullmatch(r'/[A-Za-z0-9_-]+/',sub) or not re.fullmatch(r'/[A-Za-z0-9_-]+/?',jsonpath):
+    if not re.fullmatch(r'/[A-Za-z0-9_-]+/',sub) or not re.fullmatch(r'/[A-Za-z0-9_-]+/',jsonpath):
         raise ValueError('Unexpected managed subscription paths')
+    # Repair only the exact old project-generated JSON URI, in the private staged DB.
+    modern_json_uri = 'https://' + panel + jsonpath
+    legacy_json_uri = modern_json_uri.rstrip('/') + '?name='
+    enabled = [v for k,v in rows if k == 'subJsonEnable']
+    if len(enabled) > 1 or (enabled and enabled[0] not in ('true','false')):
+        raise ValueError('Invalid/duplicate managed JSON enable setting')
+    if settings['subJsonURI'] == legacy_json_uri:
+        db.execute('UPDATE settings SET value=? WHERE key=?', (modern_json_uri, 'subJsonURI'))
+        db.execute("DELETE FROM settings WHERE key='subJsonEnable'")
+        db.execute("INSERT INTO settings(key,value) VALUES('subJsonEnable','true')")
+    elif settings['subJsonURI'] != modern_json_uri or enabled != ['true']:
+        raise ValueError('Unexpected managed JSON subscription state; staged migration refused')
     jsonpath = jsonpath.rstrip('/')
     expected = {sub, '= ' + sub.rstrip('/'), '~ ^' + sub + '(?<clash_sub_id>[^/]+)$',
                 '/assets','/assets/',jsonpath,jsonpath + '/'}

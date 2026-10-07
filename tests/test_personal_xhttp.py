@@ -34,7 +34,7 @@ FIXTURE = {
     "diag_path": "/diagnostics/", "diag_token": "test-token", "emoji_flag": "test",
     "private_key": "test-private", "public_key": "test-public",
     "sub_uri": "https://deploy.example/subscription/",
-    "json_uri": "https://deploy.example/jsonsub?name=",
+    "json_uri": "https://deploy.example/jsonsub/",
     "gid_col": "", "gid_reality": "", "gid_ws": "", "gid_xhttp": "", "gid_trojan": "", "gid_hysteria": "",
     "http2_listen": " http2", "http2_on": "",
 }
