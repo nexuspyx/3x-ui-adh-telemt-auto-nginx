@@ -25,6 +25,8 @@ STAGING= OUTPUT= STAGE=preflight
 BACKUP_FINISHED=0 RESUME_XUI=0 APT_UPDATED=0
 RESUME_CERTBOT_TIMER=0
 RESUME_AGH=0 ADGUARD_HOME=false AGH_ARCH=
+RESTORE_RECOVERY=0 RESTORE_MUTATED=0 ROLLBACK_DIR=
+declare -A OLD_ACTIVE=() OLD_ENABLED=()
 
 stage() { STAGE=$*; printf '\n==> %s\n' "$*"; }
 ok()    { printf '[OK] %s\n' "$*"; }
@@ -35,8 +37,20 @@ require_root() { [[ $EUID -eq 0 ]] || die 'Run x-ui-backup as root.'; }
 cleanup() {
     local result=$?
     trap - EXIT ERR
+    if (( RESTORE_RECOVERY )); then
+        # Retain the original restore failure even when recovery succeeds.
+        result=1
+        set +e
+        if recover_restore_target; then
+            warn 'Previous managed state/service states restored and checked; restore failed.'
+            [[ -z "$ROLLBACK_DIR" ]] || rm -rf -- "$ROLLBACK_DIR"
+        else
+            warn "Automatic rollback could not be verified. Private recovery material: ${ROLLBACK_DIR:-not created}. Inspect nginx -t and systemctl status x-ui/nginx/AdGuardHome before retrying."
+        fi
+        RESUME_CERTBOT_TIMER=0
+    fi
     if (( RESUME_XUI )); then
-        if systemctl start x-ui && systemctl is-active --quiet x-ui; then
+        if systemctl start x-ui && check_xray_runtime; then
             ok 'x-ui returned to its original active state after failure'
         else
             printf '[FAIL] Cannot recover x-ui; run systemctl start x-ui.\n' >&2
@@ -366,7 +380,7 @@ cmd_backup() {
     quick_check "$DB"
     for path in "${RUNTIME_PATHS[@]}"; do collect_path "$path"; done
     if (( RESUME_XUI )); then
-        systemctl start x-ui && systemctl is-active --quiet x-ui || die 'Cannot return x-ui to its original active state.'
+        systemctl start x-ui && check_xray_runtime || die 'Cannot return x-ui to its original active state.'
         RESUME_XUI=0
         ok 'x-ui returned to its original active state'
     else
@@ -625,7 +639,7 @@ restore_firewall() {
 }
 
 restored_certificate_domains() {
-    python3 - /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx <<'PYDOM'
+    python3 - "${1:-/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx}" <<'PYDOM'
 import shlex, sys
 values = {}
 for line in open(sys.argv[1]):
@@ -641,10 +655,89 @@ print('\n'.join(names))
 PYDOM
 }
 
+# Same canonical runtime contract in installer/backup; embedded in the trusted deploy hook.
+check_xray_runtime() {
+    local attempt proc_root=${1:-/proc}
+    for attempt in {1..10}; do
+        if systemctl is-active --quiet x-ui && python3 - "$proc_root" <<'PY'
+import os, pathlib, re, subprocess, sys
+try:
+    network = subprocess.check_output(['ss', '-H', '-lntup'], text=True)
+    unix = subprocess.check_output(['ss', '-H', '-lxnp'], text=True)
+    owners = []
+    for protocol, state, address, listing in (
+        ('tcp', 'LISTEN', '127.0.0.1:8443', network),
+        ('udp', 'UNCONN', None, network),
+        ('u_str', 'LISTEN', '/dev/shm/uds2023.sock', unix),
+    ):
+        candidates = set()
+        for line in listing.splitlines():
+            fields = line.split()
+            if len(fields) < 6 or fields[0] != protocol or fields[1] != state:
+                continue
+            local = fields[4]
+            if address is not None and local != address:
+                continue
+            if address is None and local not in ('*:443', '0.0.0.0:443', '[::]:443', ':::443'):
+                continue
+            candidates.update(int(pid) for pid in re.findall(r'pid=(\d+)', line))
+        owners.append(candidates)
+    common = set.intersection(*owners)
+    managed = pathlib.Path('/usr/local/x-ui/bin').resolve()
+    for pid in common:
+        executable = pathlib.Path(os.readlink(sys.argv[1] + '/' + str(pid) + '/exe'))
+        if executable.parent == managed and re.fullmatch(r'xray-linux-[A-Za-z0-9_-]+', executable.name) and executable.is_file():
+            sys.exit(0)
+except (OSError, subprocess.CalledProcessError, ValueError):
+    pass
+sys.exit(1)
+PY
+        then return 0; fi
+        sleep 0.5
+    done
+    printf '[FAIL] Xray must own the REALITY TCP, live XHTTP Unix and Hysteria2 UDP listeners.\n' >&2
+    return 1
+}
+
+render_certificate_hook() {
+    local domain=$1 reality_domain=$2
+    {
+        printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n'
+        printf 'PANEL_DOMAIN=%q\nREALITY_DOMAIN=%q\n' "$domain" "$reality_domain"
+        if [[ "${3:-current}" != legacy ]]; then declare -f check_xray_runtime; fi
+        cat <<'HOOK'
+panel=0
+project=0
+read -r -a renewed_domains <<< "${RENEWED_DOMAINS:-}"
+for renewed in "${renewed_domains[@]}"; do
+    if [[ "$renewed" == "$PANEL_DOMAIN" ]]; then panel=1; project=1; fi
+    if [[ "$renewed" == "$REALITY_DOMAIN" ]]; then project=1; fi
+done
+case "${RENEWED_LINEAGE:-}" in
+    "/etc/letsencrypt/live/$PANEL_DOMAIN") panel=1; project=1 ;;
+    "/etc/letsencrypt/live/$REALITY_DOMAIN") project=1 ;;
+esac
+(( project )) || exit 0
+nginx -t
+systemctl reload nginx
+systemctl is-active --quiet nginx
+if (( panel )); then
+    systemctl restart x-ui
+    systemctl is-active --quiet x-ui
+fi
+HOOK
+        if [[ "${3:-current}" != legacy ]]; then
+            printf 'if (( panel )); then check_xray_runtime; fi\n'
+        fi
+    }
+}
+
 check_health() {
-    local service attempt failed=0
+    local service failed=0
     stage 'Final checks'
     quick_check "$DB"
+    [[ "$(sqlite3 "$DB" "SELECT value FROM settings WHERE key='webListen';")" == 127.0.0.1 ]] ||
+        die 'Restored panel backend must bind only to 127.0.0.1.'
     if nginx -t > "$STAGING/nginx-test.log" 2>&1; then
         ok 'nginx configuration'
     else
@@ -660,12 +753,7 @@ check_health() {
     local -a names
     mapfile -t names <<< "$domains"
     check_certificate_renewal "${names[0]}" "${names[1]}" || die 'Certificate renewal validation failed.'
-    for attempt in {1..10}; do
-        [[ -S "$XHTTP_SOCKET" ]] && break
-        sleep 0.5
-    done
-    if [[ -S "$XHTTP_SOCKET" ]]; then ok 'XHTTP Unix socket';
-    else printf '[FAIL] XHTTP Unix socket is missing\n' >&2; failed=1; fi
+    check_xray_runtime || die 'Restore failed Xray runtime health.'
     if [[ "$ADGUARD_HOME" == true ]]; then
         agh_health || die 'AdGuard Home failed mandatory health checks.'
         ok 'AdGuard Home / HTTPS DoH; existing credentials preserved'
@@ -808,6 +896,244 @@ preflight_staged_adguard() (
         die 'Staged AdGuard Home nginx snippet is invalid; target state was not changed.'
 )
 
+preflight_staged_core() {
+    local domains panel reality hook="$STAGING/files/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx"
+    domains=$(restored_certificate_domains "$hook") || die 'Invalid staged project domains.'
+    panel=${domains%%$'\n'*} reality=${domains#*$'\n'}
+    render_certificate_hook "$panel" "$reality" > "$STAGING/current-hook"
+    render_certificate_hook "$panel" "$reality" legacy > "$STAGING/legacy-hook"
+    [[ -f "$hook" && ! -L "$hook" ]] &&
+        { cmp -s "$hook" "$STAGING/current-hook" || cmp -s "$hook" "$STAGING/legacy-hook"; } ||
+        die 'Unexpected staged project deploy hook; archive code was not executed.'
+    python3 - "$STAGING/files" "$DB" /etc/nginx /etc/letsencrypt /root/cert /var/www \
+        "$panel" "$reality" "$STAGING/nginx-validation" <<'PY'
+import os, pathlib, re, shutil, sqlite3, sys
+from configobj import ConfigObj
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+root, dbpath, nginx, letsencrypt, certroot, webroot, panel, reality, validation = sys.argv[1:]
+root, validation = pathlib.Path(root), pathlib.Path(validation)
+def staged(path):
+    # Resolve every archived symlink component without consulting live certificates.
+    p = root / str(path).lstrip('/')
+    for _ in range(32):
+        relative = p.relative_to(root)
+        current = root
+        for i, component in enumerate(relative.parts):
+            current /= component
+            if current.is_symlink():
+                target = os.readlink(current)
+                destination = root / target.lstrip('/') if target.startswith('/') else current.parent / target
+                p = pathlib.Path(os.path.normpath(destination.joinpath(*relative.parts[i+1:])))
+                if not p.is_relative_to(root): raise ValueError('Staged link escaped private state')
+                break
+        else:
+            if not p.is_file(): raise ValueError('Missing staged file: ' + str(path))
+            return p
+    raise ValueError('Staged link cycle')
+for domain in (panel, reality):
+    if not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?', domain):
+        raise ValueError('Invalid saved domain')
+    live = letsencrypt + '/live/' + domain
+    cfg = ConfigObj(str(staged(letsencrypt + '/renewal/' + domain + '.conf')), file_error=True, encoding='utf-8')
+    params = cfg['renewalparams']
+    for key, filename in (('fullchain','fullchain.pem'), ('privkey','privkey.pem')):
+        if cfg.get(key) != live + '/' + filename: raise ValueError('Unexpected lineage reference')
+    cert = x509.load_pem_x509_certificate(staged(live + '/fullchain.pem').read_bytes())
+    key = serialization.load_pem_private_key(staged(live + '/privkey.pem').read_bytes(), password=None)
+    public = lambda k: k.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    if public(cert.public_key()) != public(key.public_key()): raise ValueError('Certificate/private key mismatch')
+    names = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)
+    if set(names) != {domain}: raise ValueError('Wrong certificate SAN')
+    roots = params.get('webroot_path', [])
+    if isinstance(roots, str): roots = [roots]
+    mapping = params.get('webroot_map', {})
+    effective = mapping.get(domain) if domain in mapping else (roots[-1] if roots else None)
+    if params.get('authenticator') != 'webroot' or effective != webroot + '/acme':
+        raise ValueError('Invalid staged webroot renewal')
+    if any(params.get(k) for k in ('pre_hook','post_hook','renew_hook','deploy_hook')):
+        raise ValueError('Unexpected per-lineage hook')
+# Verify the existing runtime certificate references too, never a live-host fallback.
+with sqlite3.connect(staged(dbpath)) as db:
+    rows = db.execute('SELECT key,value FROM settings').fetchall()
+    settings = dict(rows)
+    for name in ('webListen','webPort','webCertFile','webKeyFile','subPort','subPath','subJsonPath'):
+        if sum(k == name for k,v in rows) != 1: raise ValueError('Missing/duplicate setting: ' + name)
+    if settings['webListen'] not in ('','127.0.0.1'): raise ValueError('Unexpected panel listen setting')
+    if settings.get('subListen') != '127.0.0.1' or settings.get('subCertFile','') or settings.get('subKeyFile',''):
+        raise ValueError('Unexpected subscription listener/TLS contract')
+    for setting, filename in (('webCertFile','fullchain.pem'),('webKeyFile','privkey.pem')):
+        expected = certroot + '/' + panel + '/' + filename
+        if settings[setting] != expected: raise ValueError('Unexpected panel certificate reference')
+        # Old v3 may omit compatibility links: recreate only these two known links in staging.
+        link = root / expected.lstrip('/')
+        if not link.exists() and not link.is_symlink():
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(letsencrypt + '/live/' + panel + '/' + filename)
+        if staged(expected).read_bytes() != staged(letsencrypt + '/live/' + panel + '/' + filename).read_bytes():
+            raise ValueError('Panel certificate reference does not match project lineage')
+    port, panel_port = settings['subPort'], settings['webPort']
+    if not re.fullmatch(r'[0-9]{1,5}',port) or not 1 <= int(port) <= 65535 or port == panel_port:
+        raise ValueError('Invalid subscription port')
+    sub, jsonpath = settings['subPath'], settings['subJsonPath']
+    if not re.fullmatch(r'/[A-Za-z0-9_-]+/',sub) or not re.fullmatch(r'/[A-Za-z0-9_-]+/?',jsonpath):
+        raise ValueError('Unexpected managed subscription paths')
+    jsonpath = jsonpath.rstrip('/')
+    expected = {sub, '= ' + sub.rstrip('/'), '~ ^' + sub + '(?<clash_sub_id>[^/]+)$',
+                '/assets','/assets/',jsonpath,jsonpath + '/'}
+    include = staged(nginx + '/snippets/includes.conf')
+    text, location, depth, seen = include.read_text(), None, 0, set()
+    lines = []
+    for line in text.splitlines(keepends=True):
+        match = re.match(r'\s*location\s+(.+?)\s*\{',line)
+        if match:
+            if depth: raise ValueError('Nested/ambiguous managed location')
+            location = match[1]
+        proxy = re.search(r'proxy_pass (https?)://127\.0\.0\.1:' + re.escape(port) + r';',line)
+        if proxy:
+            if location not in expected or location in seen: raise ValueError('Unexpected subscription backend context')
+            seen.add(location)
+            line = line[:proxy.start(1)] + 'http' + line[proxy.end(1):]
+        # Installer-managed locations contain no brace-bearing literals.
+        depth += line.count('{') - line.count('}')
+        if depth == 0: location = None
+        if depth < 0: raise ValueError('Invalid managed location braces')
+        lines.append(line)
+    if depth or seen != expected: raise ValueError('Incomplete managed subscription routes')
+    include.write_text(''.join(lines))
+    db.execute("UPDATE settings SET value='127.0.0.1' WHERE key='webListen' AND value='' ")
+# Private nginx representation, including absolute archived cert/module symlinks.
+validation.mkdir(mode=0o700)
+for base in (nginx, letsencrypt, certroot):
+    destination = validation / base.lstrip('/')
+    destination.parent.mkdir(parents=True,exist_ok=True)
+    shutil.copytree(root / base.lstrip('/'),destination,symlinks=True)
+bases = (nginx, letsencrypt, certroot, webroot, '/var/log/nginx')
+for p in list(validation.rglob('*')):
+    if not p.is_symlink(): continue
+    target = os.readlink(p)
+    if target.startswith('/') and any(target == b or target.startswith(b + '/') for b in bases):
+        p.unlink(); p.symlink_to(validation / target.lstrip('/'))
+    elif target.startswith('/usr/share/nginx/modules-available/'):
+        content = pathlib.Path(target).read_text(); p.unlink(); p.write_text(content)
+    elif target.startswith('/usr/lib/nginx/modules/'):
+        # Module files remain distro-owned; never load an ELF supplied in the archive.
+        pass
+for p in (validation / nginx.lstrip('/')).rglob('*'):
+    if p.is_dir() or p.is_symlink(): continue
+    text = p.read_text()
+    for base in sorted(bases,key=len,reverse=True):
+        text = re.sub(re.escape(base) + r'(?=/|[\s;"\']|$)',lambda m: str(validation / base.lstrip('/')),text)
+    text = re.sub(r'(?m)^(\s*pid\s+)\S+;',lambda m: m[1] + str(validation/'nginx.pid') + ';',text)
+    for module in re.findall(r'\bload_module\s+([^;]+);',text):
+        module = module.strip()
+        if not re.fullmatch(r'(?:/usr/lib/nginx/modules/|modules/)ngx_[A-Za-z0-9_]+\.so',module):
+            raise ValueError('Untrusted nginx module path')
+        text = text.replace('load_module ' + module + ';', 'load_module /usr/lib/nginx/modules/' + pathlib.Path(module).name + ';')
+    p.write_text(text)
+(validation / 'var/log/nginx').mkdir(parents=True,exist_ok=True)
+print('Staged TLS, renewal, panel and subscription state validated/normalized')
+PY
+    [[ $? == 0 ]] || die 'Staged core validation failed; current managed state was not changed.'
+    nginx -t -p "$STAGING/nginx-validation/" -c "$STAGING/nginx-validation/etc/nginx/nginx.conf" \
+        > "$STAGING/nginx-preflight.log" 2>&1 || { cat "$STAGING/nginx-preflight.log" >&2; die 'Staged nginx -t failed; current managed state was not changed.'; }
+    install -o root -g root -m 0755 "$STAGING/current-hook" "$hook" || die 'Cannot normalize staged project hook.'
+}
+
+save_restore_services() {
+    local service state
+    for service in x-ui nginx mtr-backend AdGuardHome certbot.timer; do
+        state=$(systemctl is-active "$service") || :
+        case "$state" in active|inactive|failed) OLD_ACTIVE[$service]=$state ;; *) die "Unknown original $service state." ;; esac
+        if systemctl is-enabled --quiet "$service"; then OLD_ENABLED[$service]=1; else OLD_ENABLED[$service]=0; fi
+    done
+    RESTORE_RECOVERY=1
+}
+
+snapshot_restore_target() {
+    local path
+    ROLLBACK_DIR=$(mktemp -d "$BACKUP_STORE/.rollback-XXXXXX")
+    chmod 0700 "$ROLLBACK_DIR"
+    local -a owned=("${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}" /var/www/diagnostics /etc/systemd/system/AdGuardHome.service)
+    for path in "${owned[@]}"; do
+        if [[ -e "$path" || -L "$path" ]]; then
+            mkdir -p "$ROLLBACK_DIR/files$(dirname "$path")"
+            cp -aT --reflink=auto -- "$path" "$ROLLBACK_DIR/files$path"
+        fi
+    done
+    if [[ -f "$DB" ]]; then quick_check "$ROLLBACK_DIR/files$DB"; fi
+    python3 - "$ROLLBACK_DIR/files" "${owned[@]}" <<'PY'
+import hashlib, os, pathlib, stat, sys
+root = pathlib.Path(sys.argv[1])
+def fingerprint(path):
+    mode = path.lstat().st_mode
+    if stat.S_ISLNK(mode): return ('link', os.readlink(path))
+    if stat.S_ISDIR(mode): return ('directory', tuple(sorted(p.name for p in path.iterdir())))
+    if not stat.S_ISREG(mode): raise ValueError('Unexpected original managed file type')
+    digest = hashlib.sha256()
+    with path.open('rb') as f:
+        for block in iter(lambda:f.read(1024*1024),b''): digest.update(block)
+    return ('file', stat.S_IMODE(mode), digest.digest())
+for name in sys.argv[2:]:
+    path = pathlib.Path(name)
+    if not path.exists() and not path.is_symlink(): continue
+    paths = [path, *path.rglob('*')] if path.is_dir() and not path.is_symlink() else [path]
+    for current in paths:
+        copy = root / str(current).lstrip('/')
+        if fingerprint(current) != fingerprint(copy): raise ValueError('Incomplete rollback copy: ' + str(current))
+PY
+    # A verified private copy plus SQLite validation must precede the first deletion.
+    printf 'complete\n' > "$ROLLBACK_DIR/ready"
+}
+
+recover_restore_target() {
+    local service path failed=0
+    if (( RESTORE_MUTATED )); then
+        [[ -f "$ROLLBACK_DIR/ready" ]] || return 1
+        for service in nginx x-ui mtr-backend AdGuardHome; do
+            if systemctl cat "$service" >/dev/null 2>&1; then systemctl stop "$service" || failed=1; fi
+        done
+        (( ! failed )) || return 1
+        for path in "${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}" /var/www/diagnostics /etc/systemd/system/AdGuardHome.service; do
+            rm -rf -- "$path" || failed=1
+            if [[ -e "$ROLLBACK_DIR/files$path" || -L "$ROLLBACK_DIR/files$path" ]]; then
+                mkdir -p "$(dirname "$path")" && cp -aT -- "$ROLLBACK_DIR/files$path" "$path" || failed=1
+            fi
+        done
+        if [[ -f "$SYSCTL_FILE" ]]; then sysctl -p "$SYSCTL_FILE" || failed=1; fi
+        systemctl daemon-reload || failed=1
+        nginx -t || failed=1
+        rm -f -- "$XHTTP_SOCKET" || failed=1
+    fi
+    for service in x-ui mtr-backend AdGuardHome nginx certbot.timer; do
+        if [[ "${OLD_ACTIVE[$service]}" == active ]]; then
+            systemctl is-active --quiet "$service" || systemctl start "$service" || failed=1
+        else
+            if systemctl is-active --quiet "$service"; then systemctl stop "$service" || failed=1; fi
+        fi
+        if [[ "${OLD_ENABLED[$service]}" == 1 ]]; then
+            systemctl enable "$service" || failed=1
+        elif systemctl is-enabled --quiet "$service"; then
+            systemctl disable "$service" || failed=1
+        fi
+    done
+    [[ "${OLD_ACTIVE[x-ui]}" != active ]] || check_xray_runtime || failed=1
+    if (( RESTORE_MUTATED )) && [[ -f "$DB" ]]; then
+        local domains
+        local -a names
+        domains=$(restored_certificate_domains) || failed=1
+        mapfile -t names <<< "$domains"
+        check_certificate_renewal "${names[0]:-}" "${names[1]:-}" || failed=1
+        if [[ "${OLD_ACTIVE[AdGuardHome]}" == active ]]; then
+            if [[ -f /usr/local/lib/3x-ui-pro/managed-adguard.sh ]]; then
+                . /usr/local/lib/3x-ui-pro/managed-adguard.sh
+                agh_health || failed=1
+            else failed=1; fi
+        fi
+    fi
+    (( ! failed ))
+}
+
 cmd_restore() {
     stage 'Restore preflight'
     local archive=${1:-} service path
@@ -832,14 +1158,19 @@ cmd_restore() {
     if [[ "$ADGUARD_HOME" == true ]]; then
         preflight_staged_adguard
     fi
+    preflight_staged_core
+    save_restore_services
     pause_certbot_timer
-    cleanup_adguard || die 'Cannot clean target AdGuard Home; core state was not replaced.'
-    stage 'Stopping services and restoring managed state'
-    for service in nginx x-ui mtr-backend; do
+    # Quiesce only after incoming staged state passes all static/native checks.
+    for service in nginx x-ui mtr-backend AdGuardHome; do
         if systemctl cat "$service" >/dev/null 2>&1; then
-            systemctl stop "$service" || die "Cannot stop $service."
+            systemctl stop "$service" || die "Cannot stop $service before rollback snapshot."
         fi
     done
+    snapshot_restore_target
+    RESTORE_MUTATED=1
+    cleanup_adguard || die 'Cannot clean target AdGuard Home; core state was not replaced.'
+    stage 'Stopping services and restoring managed state'
     replace_managed_state
     install -d -o root -g root -m 0755 /etc/nginx/snippets/x-ui-auto-optional || die 'Cannot prepare optional nginx include directory.'
     if [[ "$ADGUARD_HOME" == true ]]; then
@@ -868,6 +1199,9 @@ cmd_restore() {
     systemctl enable --now certbot.timer || die 'Cannot enable and start certbot.timer.'
     RESUME_CERTBOT_TIMER=0
     check_health
+    RESTORE_RECOVERY=0 RESTORE_MUTATED=0
+    rm -rf -- "$ROLLBACK_DIR"
+    ROLLBACK_DIR=''
     printf '\nRestore completed successfully.\n'
     warn 'Recovery uses the saved domains. On a new VPS, point their DNS to this VPS separately.'
 }

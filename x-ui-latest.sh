@@ -493,7 +493,7 @@ EOF
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_pass https://127.0.0.1:${sub_port};
+        proxy_pass http://127.0.0.1:${sub_port};
     }
     location = /${sub_path} {
         if (\$hack = 1) { return 404; }
@@ -501,7 +501,7 @@ EOF
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_pass https://127.0.0.1:${sub_port};
+        proxy_pass http://127.0.0.1:${sub_port};
     }
     # Regex takes priority over prefix: catches subscription IDs (one-level deep)
     # and routes Clash/Mihomo clients to dynamic clash.yaml generator
@@ -512,10 +512,10 @@ EOF
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_pass https://127.0.0.1:${sub_port};
+        proxy_pass http://127.0.0.1:${sub_port};
     }
-    location /assets  { proxy_pass https://127.0.0.1:${sub_port}; }
-    location /assets/ { proxy_pass https://127.0.0.1:${sub_port}; }
+    location /assets  { proxy_pass http://127.0.0.1:${sub_port}; }
+    location /assets/ { proxy_pass http://127.0.0.1:${sub_port}; }
 
     #Subscription (json)
     location /${json_path} {
@@ -524,7 +524,7 @@ EOF
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_pass https://127.0.0.1:${sub_port};
+        proxy_pass http://127.0.0.1:${sub_port};
     }
     location /${json_path}/ {
         if (\$hack = 1) { return 404; }
@@ -532,7 +532,7 @@ EOF
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_pass https://127.0.0.1:${sub_port};
+        proxy_pass http://127.0.0.1:${sub_port};
     }
 
     #XHTTP
@@ -875,6 +875,9 @@ _panel_initial_config() {
     /usr/local/x-ui/x-ui setting -username "$config_username" -password "$config_password" \
         -port "$panel_port" -webBasePath "$panel_path" || return 1
     /usr/local/x-ui/x-ui migrate || return 1
+    # No service is started until the managed backend bind is persisted.
+    sqlite3 "$XUIDB" "BEGIN; DELETE FROM settings WHERE key='webListen';
+        INSERT INTO settings(key,value) VALUES('webListen','127.0.0.1'); COMMIT;" || return 1
     # The upstream CLI can report individual setting errors with exit code 0.
     local initialized
     initialized=$(sqlite3 "$XUIDB" "SELECT
@@ -882,7 +885,7 @@ _panel_initial_config() {
         COALESCE((SELECT value FROM settings WHERE key='webListen'), ''),
         (SELECT value FROM settings WHERE key='webPort'),
         (SELECT value FROM settings WHERE key='webBasePath');") || return 1
-    [[ "$initialized" == "$config_username||$panel_port|/$panel_path/" ]] || {
+    [[ "$initialized" == "$config_username|127.0.0.1|$panel_port|/$panel_path/" ]] || {
         msg_err "3x-ui initial settings were not saved correctly."
         return 1
     }
@@ -971,6 +974,23 @@ install_panel() {
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURE X-UI DATABASE
 # ─────────────────────────────────────────────────────────────────────────────
+country_flag() {
+    local response
+    response=$(curl -fsS --connect-timeout 5 --max-time 10 https://ipwho.is/ 2>/dev/null) || response=''
+    printf '%s' "$response" | python3 -c '
+import json, re, sys
+flag = "🌐"
+try:
+    data = json.load(sys.stdin)
+    code = data.get("country_code") if data.get("success") is True else None
+    if isinstance(code, str) and re.fullmatch(r"[A-Z]{2}", code):
+        flag = "".join(chr(0x1F1E6 + ord(c) - ord("A")) for c in code)
+except (ValueError, AttributeError, RecursionError):
+    pass
+sys.stdout.buffer.write(flag.encode("utf-8"))
+'
+}
+
 configure_xui_db() {
     if [[ ! -f $XUIDB ]]; then
         msg_err "x-ui.db not found — panel may not be installed." && exit 1
@@ -998,8 +1018,7 @@ configure_xui_db() {
         gid_trojan="'$(gen_group_id)',"
         gid_hysteria="'$(gen_group_id)',"
     fi
-    emoji_flag=$(LC_ALL=en_US.UTF-8 curl -s --max-time 10 https://ipwho.is/ | jq -r '.flag.emoji' 2>/dev/null)
-    [[ -z "$emoji_flag" || "$emoji_flag" == "null" ]] && emoji_flag="🌐"
+    emoji_flag=$(country_flag)
 
     local sub_uri="https://${domain}/${sub_path}/"
     local json_uri="https://${domain}/${json_path}?name="
@@ -1020,7 +1039,7 @@ INSERT INTO "settings" ("key","value") VALUES ("subJsonURI",          '${json_ur
 INSERT INTO "settings" ("key","value") VALUES ("subClashEnable",      'false');
 INSERT INTO "settings" ("key","value") VALUES ("subEnableRouting",    'false');
 INSERT INTO "settings" ("key","value") VALUES ("subEnable",           'true');
-INSERT INTO "settings" ("key","value") VALUES ("webListen",           '');
+INSERT INTO "settings" ("key","value") VALUES ("webListen",           '127.0.0.1');
 INSERT INTO "settings" ("key","value") VALUES ("subListen",           '127.0.0.1');
 INSERT INTO "settings" ("key","value") VALUES ("webDomain",           '');
 INSERT INTO "settings" ("key","value") VALUES ("webCertFile",         '');
@@ -1499,13 +1518,12 @@ PY
     check_no_legacy_certbot_cron && nginx -t && check_acme_http "$domain" "$reality_domain"
 }
 
-setup_certificate_renewal() {
-    local hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx
-    remove_legacy_certbot_cron || return 1
-    install -d -o root -g root -m 0755 /etc/letsencrypt/renewal-hooks/deploy || return 1
+render_certificate_hook() {
+    local domain=$1 reality_domain=$2
     {
         printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n'
         printf 'PANEL_DOMAIN=%q\nREALITY_DOMAIN=%q\n' "$domain" "$reality_domain"
+        if [[ "${3:-current}" != legacy ]]; then declare -f check_xray_runtime; fi
         cat <<'HOOK'
 panel=0
 project=0
@@ -1527,25 +1545,77 @@ if (( panel )); then
     systemctl is-active --quiet x-ui
 fi
 HOOK
-    } > "$hook" || return 1
+        if [[ "${3:-current}" != legacy ]]; then
+            printf 'if (( panel )); then check_xray_runtime; fi\n'
+        fi
+    }
+}
+
+setup_certificate_renewal() {
+    local hook=/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx
+    remove_legacy_certbot_cron || return 1
+    install -d -o root -g root -m 0755 /etc/letsencrypt/renewal-hooks/deploy || return 1
+    render_certificate_hook "$domain" "$reality_domain" > "$hook" || return 1
     chown root:root "$hook" && chmod 0755 "$hook" && bash -n "$hook" || return 1
     systemctl enable --now certbot.timer || return 1
     check_certificate_renewal "$domain" "$reality_domain"
 }
 
+# Same canonical runtime contract in installer/backup; embedded in the trusted deploy hook.
+check_xray_runtime() {
+    local attempt proc_root=${1:-/proc}
+    for attempt in {1..10}; do
+        if systemctl is-active --quiet x-ui && python3 - "$proc_root" <<'PY'
+import os, pathlib, re, subprocess, sys
+try:
+    network = subprocess.check_output(['ss', '-H', '-lntup'], text=True)
+    unix = subprocess.check_output(['ss', '-H', '-lxnp'], text=True)
+    owners = []
+    for protocol, state, address, listing in (
+        ('tcp', 'LISTEN', '127.0.0.1:8443', network),
+        ('udp', 'UNCONN', None, network),
+        ('u_str', 'LISTEN', '/dev/shm/uds2023.sock', unix),
+    ):
+        candidates = set()
+        for line in listing.splitlines():
+            fields = line.split()
+            if len(fields) < 6 or fields[0] != protocol or fields[1] != state:
+                continue
+            local = fields[4]
+            if address is not None and local != address:
+                continue
+            if address is None and local not in ('*:443', '0.0.0.0:443', '[::]:443', ':::443'):
+                continue
+            candidates.update(int(pid) for pid in re.findall(r'pid=(\d+)', line))
+        owners.append(candidates)
+    common = set.intersection(*owners)
+    managed = pathlib.Path('/usr/local/x-ui/bin').resolve()
+    for pid in common:
+        executable = pathlib.Path(os.readlink(sys.argv[1] + '/' + str(pid) + '/exe'))
+        if executable.parent == managed and re.fullmatch(r'xray-linux-[A-Za-z0-9_-]+', executable.name) and executable.is_file():
+            sys.exit(0)
+except (OSError, subprocess.CalledProcessError, ValueError):
+    pass
+sys.exit(1)
+PY
+        then return 0; fi
+        sleep 0.5
+    done
+    printf '[FAIL] Xray must own the REALITY TCP, live XHTTP Unix and Hysteria2 UDP listeners.\n' >&2
+    return 1
+}
+
 check_installation() {
-    local service attempt
+    local service
+    [[ "$(sqlite3 "$XUIDB" "SELECT value FROM settings WHERE key='webListen';")" == 127.0.0.1 ]] || {
+        msg_err "Panel backend must bind only to 127.0.0.1."; return 1
+    }
     for service in x-ui nginx mtr-backend; do
         systemctl is-active --quiet "$service" || { msg_err "$service is not active."; return 1; }
     done
     check_certificate_renewal "$domain" "$reality_domain" || return 1
     nginx -t || return 1
-    for attempt in {1..10}; do
-        [[ -S /dev/shm/uds2023.sock ]] && return 0
-        sleep 0.5
-    done
-    msg_err "XHTTP Unix socket is missing."
-    return 1
+    check_xray_runtime
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -213,7 +213,8 @@ schema_version: 34
             return source[start:end]
         for name in ('agh_binary_hash', 'agh_verify_binary', 'agh_binary', 'agh_config', 'agh_snippet'):
             self.assertEqual(function(SOURCE, name), function(HELPER, name))
-        preflight = SOURCE[SOURCE.index('preflight_staged_adguard()'):SOURCE.index('cmd_restore()')]
+        start = SOURCE.index('preflight_staged_adguard()')
+        preflight = SOURCE[start:SOURCE.index('\n)\n', start) + 2]
         self.assertNotIn('source ', preflight)
         self.assertNotIn('managed-adguard.sh', preflight)
 
@@ -249,7 +250,8 @@ schema_version: 34
                 self.assertFalse((self.root/'binary-mutation').exists())
         # No metadata/helper digest override is accepted by production restore code.
         from test_personal_backup import SOURCE
-        preflight = SOURCE[SOURCE.index('preflight_staged_adguard()'):SOURCE.index('cmd_restore()')]
+        start = SOURCE.index('preflight_staged_adguard()')
+        preflight = SOURCE[start:SOURCE.index('\n)\n', start) + 2]
         self.assertLess(preflight.index('agh_verify_binary "$ARCH"'), preflight.index('agh_config'))
 
     def test_verified_fixture_restore_optimized_and_optional_directory_mode(self):

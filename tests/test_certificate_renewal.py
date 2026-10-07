@@ -73,9 +73,11 @@ class CertificateRenewal(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.calls = self.root / 'calls'
         self.env = {**os.environ, 'ROOT': str(self.root), 'CALLS': str(self.calls), 'CRON': str(self.root / 'cron'),
-                    'LEGACY_CERTBOT_CRON': LEGACY, 'domain': 'example.com', 'reality_domain': 'reality.example.com'}
+                    'PATH':str(self.root/'health-bin')+':'+os.environ['PATH'], 'LEGACY_CERTBOT_CRON': LEGACY, 'domain': 'example.com', 'reality_domain': 'reality.example.com'}
 
     def run_functions(self, names, body, mock=MOCK, input=None, **env):
+        if 'setup_certificate_renewal' in names:
+            names = (*names, 'render_certificate_hook', 'check_xray_runtime')
         script = mock + '\n' + '\n'.join(relocate(function(name), self.root) for name in names) + '\n' + body
         return subprocess.run(['bash', '-euo', 'pipefail', '-c', script], input=input, text=True, capture_output=True,
                               env={**self.env, **env})
@@ -303,6 +305,8 @@ COPY
                 **self.env,'HOOK':str(hook),'RENEWED_DOMAINS':domains,'RENEWED_LINEAGE':str(self.root/'etc/letsencrypt/live'/lineage),'FAIL_CERT':failure})
             self.assertEqual(result.returncode,1 if failure else 0,result.stderr)
             calls=self.calls.read_text().splitlines() if self.calls.exists() else []
+            if not failure and 'systemctl restart x-ui' in expected:
+                expected = expected + ['systemctl is-active --quiet x-ui']
             self.assertEqual(calls,expected)
         self.assertEqual(hook.stat().st_mode & 0o777,0o755)
         if os.geteuid()==0: self.assertEqual((hook.stat().st_uid,hook.stat().st_gid),(0,0))
