@@ -271,10 +271,12 @@ class PersonalBackup(unittest.TestCase):
             conn.execute('INSERT INTO settings VALUES (?, ?)',
                          ('webCertFile', str(self.path('/root/cert/example.com/fullchain.pem'))))
             conn.executemany('INSERT INTO settings VALUES (?,?)', [
-                ('webListen',''), ('webPort','10002'), ('webBasePath','/panel/'),
+                ('webListen','127.0.0.1'), ('webPort','10002'), ('webBasePath','/panel/'),
                 ('webKeyFile',str(self.path('/root/cert/example.com/privkey.pem'))),
                 ('subListen','127.0.0.1'), ('subPort','10003'), ('subPath','/subscription/'),
-                ('subJsonPath','/jsonsub'), ('subCertFile',''), ('subKeyFile','')])
+                ('subJsonPath','/jsonsub'),
+                ('subCertFile',str(self.path('/root/cert/example.com/fullchain.pem'))),
+                ('subKeyFile',str(self.path('/root/cert/example.com/privkey.pem')))])
             conn.execute('CREATE TABLE clients (uuid TEXT)')
             conn.execute("INSERT INTO clients VALUES ('fixture-secret-not-for-output')")
         self.write('/usr/local/x-ui/x-ui', '#!/bin/sh\necho 3.9.0\n', 0o755)

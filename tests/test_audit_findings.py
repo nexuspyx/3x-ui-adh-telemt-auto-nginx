@@ -25,7 +25,8 @@ BACKUP = (ROOT / 'assets/backup/x-ui-backup.sh').read_text()
 
 
 def function(name, source=INSTALLER):
-    return re.findall(r'^' + name + r'\(\)\s*\{.*?^\}', source, re.M | re.S)[0]
+    # A SQL JSON value can end with }', which is not the shell function boundary.
+    return re.findall(r'^' + name + r'\(\)\s*\{.*?^\}$', source, re.M | re.S)[0]
 
 
 class AuditInstaller(unittest.TestCase):
@@ -130,6 +131,45 @@ if sys.argv[1]=='setting':
             self.assertNotRegex(function('install_panel'), r'systemctl\s+(?:start|restart)\s+x-ui')
             self.assertIn("'127.0.0.1'", function('configure_xui_db'))
 
+    def test_final_tls_settings_include_upstream_cert_side_effect(self):
+        from test_personal_xhttp import render
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); dbpath = root/'x-ui.db'; binary = root/'x-ui'
+            with sqlite3.connect(dbpath) as db:
+                db.execute('CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT)')
+                db.executescript(render('sqlite3 $XUIDB').split('INSERT INTO "inbounds"',1)[0])
+                self.assertEqual(db.execute("SELECT value FROM settings WHERE key='subCertFile'").fetchone()[0],'')
+            # Exact v3.9.0 main.go updateCert: both web AND sub setters receive these paths.
+            # https://github.com/MHSanaei/3x-ui/blob/v3.9.0/main.go#L429
+            binary.write_text('''#!/usr/bin/env python3
+import os,sqlite3,sys
+if sys.argv[1]=='cert':
+    args=sys.argv[2:]; values=dict(zip(args[::2],args[1::2]))
+    with sqlite3.connect(os.environ['XUIDB']) as db:
+        for key,flag in [('webCertFile','-webCert'),('webKeyFile','-webCertKey'),
+                         ('subCertFile','-webCert'),('subKeyFile','-webCertKey')]:
+            db.execute('UPDATE settings SET value=? WHERE key=?',(values[flag],key))
+''')
+            binary.chmod(0o755)
+            tail = function('configure_xui_db').split('    /usr/local/x-ui/x-ui setting',1)[1]
+            script = 'finalize() {\n    /usr/local/x-ui/x-ui setting' + tail + '\nfinalize\n'
+            result = subprocess.run(['bash','-eu','-c',script.replace('/usr/local/x-ui/x-ui',str(binary))],
+                                    capture_output=True,text=True,env={**os.environ,'XUIDB':str(dbpath),
+                                    'domain':'example.com','config_username':'fixture-user','config_password':'fixture-password',
+                                    'panel_port':'10002','panel_path':'panel'})
+            self.assertEqual(result.returncode,0,result.stderr)
+            with sqlite3.connect(dbpath) as db: values = dict(db.execute('SELECT key,value FROM settings'))
+            for prefix in ('web','sub'):
+                self.assertEqual(values[prefix+'Listen'],'127.0.0.1')
+                self.assertEqual(values[prefix+'CertFile'],'/root/cert/example.com/fullchain.pem')
+                self.assertEqual(values[prefix+'KeyFile'],'/root/cert/example.com/privkey.pem')
+            for name in ('install_panel','_panel_initial_config','configure_xui_db'):
+                self.assertNotRegex(function(name),r'(?:x-ui\s+(?:start|restart)|systemctl\s+(?:start|restart)\s+x-ui)')
+            self.assertLess(function('main').index('configure_xui_db'),function('main').index('x-ui restart'))
+            hook = function('render_certificate_hook')
+            self.assertEqual(hook.count('systemctl restart x-ui'),1)
+            self.assertIn('if (( panel )); then check_xray_runtime; fi',hook)
+
     def test_xray_health_requires_live_sockets_and_managed_same_pid(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -184,7 +224,7 @@ if sys.argv[1]=='setting':
         self.assertIn('Xray must own',result.stderr)
         self.assertIn('systemctl restart x-ui',f.calls.read_text())
 
-    def test_real_nginx_verified_https_api_token_and_http_subscriptions(self):
+    def test_real_nginx_verified_https_api_token_and_tls_subscriptions(self):
         from test_personal_xhttp import render, SHARED, MAIN
         nginx = os.environ.get('NGINX_BIN') or shutil.which('nginx')
         self.assertIsNotNone(nginx, 'real nginx is required')
@@ -204,7 +244,8 @@ if sys.argv[1]=='setting':
             panel = ThreadingHTTPServer(('127.0.0.1',0), Backend); panel.kind = 'panel-https'
             tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); tls.load_cert_chain(root/'cert.pem',root/'key.pem')
             panel.socket = tls.wrap_socket(panel.socket, server_side=True)
-            sub = ThreadingHTTPServer(('127.0.0.1',0), Backend); sub.kind = 'sub-http'
+            sub = ThreadingHTTPServer(('127.0.0.1',0), Backend); sub.kind = 'sub-https'
+            sub.socket = tls.wrap_socket(sub.socket, server_side=True)
             for server in (panel, sub):
                 thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
                 self.addCleanup(server.server_close); self.addCleanup(server.shutdown)
@@ -212,8 +253,8 @@ if sys.argv[1]=='setting':
                 s.bind(('127.0.0.1',0)); public_port = s.getsockname()[1]
                 r.bind(('127.0.0.1',0)); reality_port = r.getsockname()[1]
             shared = render(SHARED, panel_port=str(panel.server_port), sub_port=str(sub.server_port))
-            self.assertEqual(shared.count(f'proxy_pass http://127.0.0.1:{sub.server_port};'),7)
-            self.assertNotIn(f'proxy_pass https://127.0.0.1:{sub.server_port};',shared)
+            self.assertEqual(shared.count(f'proxy_pass https://127.0.0.1:{sub.server_port};'),7)
+            self.assertNotIn(f'proxy_pass http://127.0.0.1:{sub.server_port};',shared)
             (root/'includes.conf').write_text(shared)
             vhost = render(MAIN, panel_port=str(panel.server_port), sub_port=str(sub.server_port))
             self.assertIn(f'proxy_pass https://127.0.0.1:{panel.server_port};',vhost)
@@ -241,7 +282,7 @@ if sys.argv[1]=='setting':
                     with socket.create_connection(('127.0.0.1', public_port), timeout=.1): break
                 except OSError: time.sleep(.02)
             for path, kind in [('/panel/panel/api/inbounds/list?node=Fixture&token=query','panel-https'),
-                               ('/subscription/fixture','sub-http'),('/jsonsub?name=Fixture','sub-http')]:
+                               ('/subscription/fixture','sub-https'),('/jsonsub?name=Fixture','sub-https')]:
                 result = subprocess.run(['curl','--noproxy','*','-fsS','--max-time','5',
                                          '--cacert',str(root/'cert.pem'),'--resolve',f'deploy.example:{public_port}:127.0.0.1',
                                          '-H','Authorization: Bearer fixture-api-token',f'https://deploy.example:{public_port}{path}'],capture_output=True,text=True)
@@ -256,7 +297,9 @@ if sys.argv[1]=='setting':
                                     capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual(requests,before,'camouflage request reached a managed backend')
-            self.assertNotIn('wrong version number',(root/'error.log').read_text().lower())
+            errors = (root/'error.log').read_text().lower()
+            for error in ('wrong version number','ssl_do_handshake() failed','unsupported http version'):
+                self.assertNotIn(error,errors)
 
 
 class AuditRecovery(unittest.TestCase):
@@ -347,8 +390,36 @@ class AuditRecovery(unittest.TestCase):
                 self.assert_untouched(f.run_tool('restore',bad),services)
         self.assertFalse(Path('/tmp/never-execute-incoming-hook').exists())
 
+    def test_subscription_tls_reference_and_http_route_fail_before_mutation(self):
+        f = self.fixture; archive = f.backup()
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        original_db = f.path('/etc/x-ui/x-ui.db').read_bytes()
+        for key,value in [('subCertFile',None),('subKeyFile',''),
+                          ('subCertFile',str(f.path('/etc/letsencrypt/live/reality.example.com/fullchain.pem'))),
+                          ('subKeyFile',str(f.path('/root/cert/example.com/fullchain.pem')))]:
+            dbfile = Path(f.temp.name)/'bad-sub-tls.db'; dbfile.write_bytes(original_db)
+            with sqlite3.connect(dbfile) as db:
+                if value is None: db.execute('DELETE FROM settings WHERE key=?',(key,))
+                else: db.execute('UPDATE settings SET value=? WHERE key=?',(value,key))
+            bad = self.modified(archive,{f.member('/etc/x-ui/x-ui.db'):dbfile.read_bytes()})
+            services = json.loads((f.root/'services.json').read_text()); (f.root/'commands').write_text('')
+            self.assert_untouched(f.run_tool('restore',bad),services)
+            self.assertEqual(f.path('/etc/x-ui/x-ui.db').read_bytes(),original_db)
+        shared = f.path('/etc/nginx/snippets/includes.conf').read_text()
+        for count in (1,7):
+            bad = self.modified(archive,{f.member('/etc/nginx/snippets/includes.conf'):
+                                        shared.replace('https://127.0.0.1:10003','http://127.0.0.1:10003',count).encode()})
+            services = json.loads((f.root/'services.json').read_text()); (f.root/'commands').write_text('')
+            result = f.run_tool('restore',bad)
+            self.assert_untouched(result,services)
+            self.assertIn('Subscription TLS DB requires HTTPS nginx backend',result.stderr)
+            self.assertEqual(f.path('/etc/nginx/snippets/includes.conf').read_text(),shared)
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
+
     def test_old_v3_normalization_and_new_v3_idempotency(self):
         f = self.fixture
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            db.execute("UPDATE settings SET value='' WHERE key='webListen'")
         reality_path = f.path('/etc/nginx/sites-available/reality.example.com')
         normalized_reality = reality_path.read_text()
         reality_path.write_text(normalized_reality.replace('    include ',self.legacy_panel_blocks() + '    include ',1))
@@ -368,9 +439,9 @@ class AuditRecovery(unittest.TestCase):
             with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
                 self.assertEqual(db.execute("SELECT value FROM settings WHERE key='webListen'").fetchone()[0],'127.0.0.1')
             includes = f.path('/etc/nginx/snippets/includes.conf').read_text()
-            self.assertEqual(includes.count('proxy_pass http://127.0.0.1:10003;'),7)
-            self.assertNotIn('proxy_pass https://127.0.0.1:10003;',includes)
-            self.assertEqual(includes,shared.replace('proxy_pass https://','proxy_pass http://'))
+            self.assertEqual(includes.count('proxy_pass https://127.0.0.1:10003;'),7)
+            self.assertNotIn('proxy_pass http://127.0.0.1:10003;',includes)
+            self.assertEqual(includes,shared)
             self.assertEqual(reality_path.read_text(),normalized_reality)
             self.assertNotIn('location /panel',reality_path.read_text())
             self.assertEqual(f.path('/etc/nginx/nginx.conf').read_bytes(),main)

@@ -493,7 +493,7 @@ EOF
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_pass http://127.0.0.1:${sub_port};
+        proxy_pass https://127.0.0.1:${sub_port};
     }
     location = /${sub_path} {
         if (\$hack = 1) { return 404; }
@@ -501,7 +501,7 @@ EOF
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_pass http://127.0.0.1:${sub_port};
+        proxy_pass https://127.0.0.1:${sub_port};
     }
     # Regex takes priority over prefix: catches subscription IDs (one-level deep)
     # and routes Clash/Mihomo clients to dynamic clash.yaml generator
@@ -512,10 +512,10 @@ EOF
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_pass http://127.0.0.1:${sub_port};
+        proxy_pass https://127.0.0.1:${sub_port};
     }
-    location /assets  { proxy_pass http://127.0.0.1:${sub_port}; }
-    location /assets/ { proxy_pass http://127.0.0.1:${sub_port}; }
+    location /assets  { proxy_pass https://127.0.0.1:${sub_port}; }
+    location /assets/ { proxy_pass https://127.0.0.1:${sub_port}; }
 
     #Subscription (json)
     location /${json_path} {
@@ -524,7 +524,7 @@ EOF
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_pass http://127.0.0.1:${sub_port};
+        proxy_pass https://127.0.0.1:${sub_port};
     }
     location /${json_path}/ {
         if (\$hack = 1) { return 404; }
@@ -532,7 +532,7 @@ EOF
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_pass http://127.0.0.1:${sub_port};
+        proxy_pass https://127.0.0.1:${sub_port};
     }
 
     #XHTTP
@@ -1217,6 +1217,7 @@ EOF
         -port      "${panel_port}"      \
         -webBasePath "${panel_path}" || return 1
 
+    # v3.9.0 updateCert sets BOTH web and subscription TLS settings before first start.
     /usr/local/x-ui/x-ui cert \
         -webCert    "/root/cert/${domain}/fullchain.pem" \
         -webCertKey "/root/cert/${domain}/privkey.pem" || return 1

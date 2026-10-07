@@ -957,21 +957,24 @@ for domain in (panel, reality):
 with sqlite3.connect(staged(dbpath)) as db:
     rows = db.execute('SELECT key,value FROM settings').fetchall()
     settings = dict(rows)
-    for name in ('webListen','webPort','webBasePath','webCertFile','webKeyFile','subPort','subPath','subJsonPath'):
+    for name in ('webListen','webPort','webBasePath','webCertFile','webKeyFile',
+                 'subListen','subCertFile','subKeyFile','subPort','subPath','subJsonPath'):
         if sum(k == name for k,v in rows) != 1: raise ValueError('Missing/duplicate setting: ' + name)
     if settings['webListen'] not in ('','127.0.0.1'): raise ValueError('Unexpected panel listen setting')
-    if settings.get('subListen') != '127.0.0.1' or settings.get('subCertFile','') or settings.get('subKeyFile',''):
-        raise ValueError('Unexpected subscription listener/TLS contract')
-    for setting, filename in (('webCertFile','fullchain.pem'),('webKeyFile','privkey.pem')):
+    if settings['subListen'] != '127.0.0.1':
+        raise ValueError('Unexpected subscription listener')
+    # upstream x-ui cert sets both listeners to the same panel-domain TLS lineage.
+    for setting, filename in (('webCertFile','fullchain.pem'),('webKeyFile','privkey.pem'),
+                              ('subCertFile','fullchain.pem'),('subKeyFile','privkey.pem')):
         expected = certroot + '/' + panel + '/' + filename
-        if settings[setting] != expected: raise ValueError('Unexpected panel certificate reference')
+        if settings[setting] != expected: raise ValueError('Unexpected managed TLS reference: ' + setting)
         # Old v3 may omit compatibility links: recreate only these two known links in staging.
         link = root / expected.lstrip('/')
         if not link.exists() and not link.is_symlink():
             link.parent.mkdir(parents=True, exist_ok=True)
             link.symlink_to(letsencrypt + '/live/' + panel + '/' + filename)
         if staged(expected).read_bytes() != staged(letsencrypt + '/live/' + panel + '/' + filename).read_bytes():
-            raise ValueError('Panel certificate reference does not match project lineage')
+            raise ValueError('Managed TLS reference does not match panel lineage: ' + setting)
     port, panel_port = settings['subPort'], settings['webPort']
     if not re.fullmatch(r'[0-9]{1,5}',panel_port) or not 1 <= int(panel_port) <= 65535:
         raise ValueError('Invalid panel port')
@@ -988,7 +991,6 @@ with sqlite3.connect(staged(dbpath)) as db:
                 '/assets','/assets/',jsonpath,jsonpath + '/'}
     include = staged(nginx + '/snippets/includes.conf')
     text, location, depth, seen = include.read_text(), None, 0, set()
-    lines = []
     for line in text.splitlines(keepends=True):
         match = re.match(r'\s*location\s+(.+?)\s*\{',line)
         if match:
@@ -997,15 +999,13 @@ with sqlite3.connect(staged(dbpath)) as db:
         proxy = re.search(r'proxy_pass (https?)://127\.0\.0\.1:' + re.escape(port) + r';',line)
         if proxy:
             if location not in expected or location in seen: raise ValueError('Unexpected subscription backend context')
+            if proxy[1] != 'https': raise ValueError('Subscription TLS DB requires HTTPS nginx backend')
             seen.add(location)
-            line = line[:proxy.start(1)] + 'http' + line[proxy.end(1):]
         # Installer-managed locations contain no brace-bearing literals.
         depth += line.count('{') - line.count('}')
         if depth == 0: location = None
         if depth < 0: raise ValueError('Invalid managed location braces')
-        lines.append(line)
     if depth or seen != expected: raise ValueError('Incomplete managed subscription routes')
-    include.write_text(''.join(lines))
     db.execute("UPDATE settings SET value='127.0.0.1' WHERE key='webListen' AND value='' ")
 # Remove only the two exact old managed panel proxies from the staged camouflage vhost.
 # The main panel vhost and shared include are intentionally outside this migration.
