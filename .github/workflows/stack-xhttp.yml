@@ -14,14 +14,15 @@ jobs:
   validate:
     name: Stack XHTTP and security
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Install test dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends nginx certbot sqlite3 openssl curl python3 python3-configobj python3-cryptography tar gzip shellcheck
+          timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends nginx libnginx-mod-stream certbot sqlite3 openssl curl python3 python3-configobj python3-cryptography tar gzip shellcheck
       - name: All tracked shell scripts (syntax and ShellCheck errors)
         run: |
           mapfile -d '' -t scripts < <(git ls-files -z -- '*.sh')
@@ -54,6 +55,10 @@ jobs:
         env:
           NGINX_BIN: /usr/sbin/nginx
         run: python3 tests/run_ci.py --suite nonroot
+      - name: Real Xray and subscription integration
+        env:
+          NGINX_BIN: /usr/sbin/nginx
+        run: python3 tests/run_ci.py --suite integration
       - name: Whitespace validation
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
