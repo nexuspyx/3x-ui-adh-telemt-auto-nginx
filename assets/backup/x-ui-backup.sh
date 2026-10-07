@@ -1025,6 +1025,16 @@ for p in (validation / nginx.lstrip('/')).rglob('*'):
     for base in sorted(bases,key=len,reverse=True):
         text = re.sub(re.escape(base) + r'(?=/|[\s;"\']|$)',lambda m: str(validation / base.lstrip('/')),text)
     text = re.sub(r'(?m)^(\s*pid\s+)\S+;',lambda m: m[1] + str(validation/'nginx.pid') + ';',text)
+    # nginx -t opens logs/includes/certificates: never let preflight use live-host paths.
+    scan = re.sub(r'(?m)^\s*#.*$', '', text)
+    resources = r'\b(?:include|error_log|access_log|ssl_certificate(?:_key)?|ssl_client_certificate|ssl_trusted_certificate|ssl_dhparam)\s+([^;\s]+)'
+    for resource in re.findall(resources, scan):
+        resource = resource.strip('\"\'')
+        if resource in ('off', 'stderr'): continue
+        if '$' in resource or '..' in pathlib.PurePosixPath(resource).parts:
+            raise ValueError('Unexpected nginx resource path')
+        if resource.startswith('/') and not resource.startswith(str(validation) + '/'):
+            raise ValueError('nginx preflight resource is outside private staged state')
     for module in re.findall(r'\bload_module\s+([^;]+);',text):
         module = module.strip()
         if not re.fullmatch(r'(?:/usr/lib/nginx/modules/|modules/)ngx_[A-Za-z0-9_]+\.so',module):

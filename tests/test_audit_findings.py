@@ -244,13 +244,18 @@ class AuditRecovery(unittest.TestCase):
 
     def test_broken_staged_nginx_rejected_before_any_service_stop(self):
         f = self.fixture; archive = f.backup()
-        bad = self.modified(archive,{f.member('/etc/nginx/nginx.conf'):b'invalid_nginx_directive;\n'})
-        digest = hashlib.sha256(bad.read_bytes()).hexdigest()
-        services = json.loads((f.root/'services.json').read_text()); (f.root/'commands').write_text('')
-        result = f.run_tool('restore',bad)
-        self.assert_untouched(result,services)
-        self.assertIn('Staged nginx -t failed',result.stderr)
-        self.assertEqual(hashlib.sha256(bad.read_bytes()).hexdigest(),digest)
+        configs = [(b'invalid_nginx_directive;\n','Staged nginx -t failed'),
+                   (('error_log ' + str(f.path('/var/www/html/recovery-marker')) + ';\ninclude /etc/passwd;\n').encode(),
+                    'outside private staged state')]
+        for config, message in configs:
+            with self.subTest(config=config):
+                bad = self.modified(archive,{f.member('/etc/nginx/nginx.conf'):config})
+                digest = hashlib.sha256(bad.read_bytes()).hexdigest()
+                services = json.loads((f.root/'services.json').read_text()); (f.root/'commands').write_text('')
+                result = f.run_tool('restore',bad)
+                self.assert_untouched(result,services)
+                self.assertIn(message,result.stderr)
+                self.assertEqual(hashlib.sha256(bad.read_bytes()).hexdigest(),digest)
 
     def test_broken_staged_tls_and_hook_rejected_before_mutation(self):
         f = self.fixture; archive = f.backup()
