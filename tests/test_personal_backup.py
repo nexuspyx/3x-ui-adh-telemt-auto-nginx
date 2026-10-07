@@ -36,7 +36,7 @@ PARAMS = [
 
 def relocated(source, root):
     # Apply a single pass so replacements cannot recursively match themselves.
-    return re.sub(r"/(?:opt|etc|root|var|usr/local|usr/bin/x-ui|dev/shm)(?=[/\s\"';,)]|$)",
+    return re.sub(r"/(?:proc|opt|etc|root|var|usr/local|usr/bin/x-ui|dev/shm)(?=[/\s\"';,)}]|$)",
                   lambda m: str(root) + m[0], source)
 
 
@@ -123,9 +123,21 @@ if name == 'systemctl':
             if os.environ.get('CORRUPT_RUNNING_DB'):
                 (root / 'etc/x-ui/x-ui.db').write_bytes(b'corrupt')
 elif name == 'ss':
-    m=json.loads((root / 'opt/AdGuardHome/managed.json').read_text())
-    for protocol, key in (('tcp', 'web_port'), ('udp', 'dns_port')):
-        print(f'{protocol} LISTEN 0 128 127.0.0.1:{m[key]} 0.0.0.0:* users:(("AdGuardHome",pid=12345,fd=5))')
+    services = json.loads((root/'services.json').read_text())
+    if services.get('x-ui') == 'active':
+        broken = os.environ.get('DEAD_XRAY') or (os.environ.get('FAIL_INCOMING_XRAY') and
+                    (root/'var/www/html/recovery-marker').read_text() == 'incoming')
+        if not broken:
+            if '-lxnp' in args:
+                if not os.environ.get('MISSING_SOCKET'):
+                    print(f'u_str LISTEN 0 128 {root}/dev/shm/uds2023.sock 0 users:(("xray",pid=43210,fd=1))')
+            else:
+                print('tcp LISTEN 0 128 127.0.0.1:8443 0.0.0.0:* users:(("xray",pid=43210,fd=2))')
+                print('udp UNCONN 0 128 *:443 *:* users:(("xray",pid=43210,fd=3))')
+    if (root / 'opt/AdGuardHome/managed.json').exists() and '-lxnp' not in args:
+        m=json.loads((root / 'opt/AdGuardHome/managed.json').read_text())
+        for protocol, key in (('tcp', 'web_port'), ('udp', 'dns_port')):
+            print(f'{protocol} LISTEN 0 128 127.0.0.1:{m[key]} 0.0.0.0:* users:(("AdGuardHome",pid=12345,fd=5))')
 elif name == 'crontab':
     path = root / 'crontab'
     if args == ['-l']:
@@ -182,6 +194,8 @@ elif name == 'ufw':
 elif name == 'nginx':
     if os.environ.get('FAIL_NGINX'):
         sys.exit(1)
+    if os.environ.get('NGINX_BIN') and '-c' in args:
+        sys.exit(subprocess.call([os.environ['NGINX_BIN'], *args]))
     if os.environ.get('NGINX_BIN'):
         sys.exit(subprocess.call([os.environ['NGINX_BIN'], *args, '-p', str(root) + '/',
                                  '-c', str(root / 'etc/nginx/nginx.conf')]))
@@ -256,6 +270,14 @@ class PersonalBackup(unittest.TestCase):
             conn.execute('CREATE TABLE settings (key TEXT, value TEXT)')
             conn.execute('INSERT INTO settings VALUES (?, ?)',
                          ('webCertFile', str(self.path('/root/cert/example.com/fullchain.pem'))))
+            conn.executemany('INSERT INTO settings VALUES (?,?)', [
+                ('webListen','127.0.0.1'), ('webPort','10002'), ('webBasePath','/panel/'),
+                ('webKeyFile',str(self.path('/root/cert/example.com/privkey.pem'))),
+                ('subListen','127.0.0.1'), ('subPort','10003'), ('subPath','/subscription/'),
+                ('subJsonEnable','true'), ('subJsonPath','/jsonsub/'),
+                ('subJsonURI','https://example.com/jsonsub/'),
+                ('subCertFile',str(self.path('/root/cert/example.com/fullchain.pem'))),
+                ('subKeyFile',str(self.path('/root/cert/example.com/privkey.pem')))])
             conn.execute('CREATE TABLE clients (uuid TEXT)')
             conn.execute("INSERT INTO clients VALUES ('fixture-secret-not-for-output')")
         self.write('/usr/local/x-ui/x-ui', '#!/bin/sh\necho 3.9.0\n', 0o755)
@@ -268,6 +290,15 @@ class PersonalBackup(unittest.TestCase):
             self.write('/etc/letsencrypt/live/example.com/' + name, 'fixture-cert\n', 0o600)
             self.path('/root/cert/example.com/' + name).symlink_to(self.path('/etc/letsencrypt/live/example.com/' + name))
         certificates(self.root)
+        locations = ('/subscription/', '= /subscription', '~ ^/subscription/(?<clash_sub_id>[^/]+)$',
+                     '/assets', '/assets/', '/jsonsub', '/jsonsub/')
+        includes = '\n'.join('location ' + name + ' { proxy_pass https://127.0.0.1:10003; }' for name in locations)
+        self.write('/etc/nginx/snippets/includes.conf', includes + '\n')
+        from test_personal_xhttp import render
+        self.write('/etc/nginx/sites-available/reality.example.com', relocated(
+            render('cat > "/etc/nginx/sites-available/${reality_domain}"',
+                   domain='example.com', reality_domain='reality.example.com'), self.root))
+        self.write('/etc/nginx/nginx.conf', f'pid {self.root}/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{ server {{ listen 127.0.0.1:10080; include {self.root}/etc/nginx/snippets/includes.conf; location /panel/ {{ proxy_pass https://127.0.0.1:10002; }} }} }}\n')
         self.write('/var/www/html/index.html', '192.0.2.10 unchanged')
         self.write('/var/www/subpage/clash.yaml', '192.0.2.10 unchanged')
         self.write('/var/www/diagnostics/index.html',
@@ -732,7 +763,7 @@ class PersonalBackup(unittest.TestCase):
         idle=calls.index(['systemctl','is-active','certbot.service'])
         replacement=next(i for i,c in enumerate(calls) if c[0]=='cp' and c[-1]==str(self.path('/etc/letsencrypt')))
         activation=calls.index(['systemctl','enable','--now','certbot.timer'])
-        health=calls.index(['systemctl','is-enabled','--quiet','certbot.timer'])
+        health=calls.index(['systemctl','is-enabled','--quiet','certbot.timer'],activation)
         self.assertLess(pause,idle);self.assertLess(idle,replacement)
         self.assertLess(replacement,activation);self.assertLess(activation,health)
         for failure in ({'FAIL_TIMER_OPERATION':'stop'},{'FAIL_PYTHON_IMPORT':'1'}):
@@ -780,6 +811,8 @@ class PersonalBackup(unittest.TestCase):
 
 
 from test_adguard_backup import AdGuardBackup
+
+from test_audit_findings import AuditRecovery
 
 
 if __name__ == '__main__':

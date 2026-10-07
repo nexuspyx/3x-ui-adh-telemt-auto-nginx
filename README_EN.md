@@ -11,11 +11,13 @@ Automatic: **nginx · Let's Encrypt · Fake Site · REALITY · XHTTP · Hysteria
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[Русский](README.md) · [Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Telemt WEB Manager](#telemt-web-manager) · [Issues](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
+[Русский](README.md) · [Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Telegram Web Proxy Manager](#telemt-web-manager) · [Issues](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
 
 </div>
 
 A turnkey deployment project for [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray. Supply a panel domain and a REALITY domain; the script installs the server, configures nginx and TLS, and deploys a cover website. Optionally, it also installs AdGuard Home with DNS-over-HTTPS through the same panel domain, without a public DNS port 53.
+
+> **A modernized evolution of the original 3x-ui-pro.** The simple “two domains → ready server” idea remains, while the stack has been substantially reworked for current production use: REALITY/XHTTP/Hysteria2, loopback-isolated internal services, TLS renewal without nginx downtime, UFW-aware setup, Backup/Restore v3, and security/regression CI.
 
 ## ⚡ Get started
 
@@ -76,17 +78,17 @@ No need to build a cover website yourself: the installer selects a page from the
 
 Installation is **optional, default N**. No third domain is needed: AGH uses the existing panel domain. The admin UI is published under a random `/adg-.../` prefix; the DoH endpoint is `https://panel.example.com/dns-query`.
 
-AGH web and native DNS listen only on loopback; public TCP/UDP 53 is not opened. TLS terminates at nginx. AGH configuration, data and sessions are included in **Backup / Restore v3**.
+AGH web and native DNS listen only on loopback; public TCP/UDP 53 is not opened. TLS terminates at nginx. AGH configuration and data are included in **Backup / Restore v3**.
 
 <a id="telemt-web-manager"></a>
 
 ## ✈️ Need a Telegram proxy too?
 
-### [Telemt WEB Manager](https://github.com/xPROMSx/telemt-web-manager)
+### [Telegram Web Proxy Manager](https://github.com/xPROMSx/telegram-web-proxy-manager)
 
-A companion project for automated Telemt WEB proxy installation and management, with updates, rollback and nginx/TLS integration.
+A companion project for running your own Telegram WEB Proxy on Ubuntu VPS: one-command setup, HTTPS / Let's Encrypt, automatic Fake Sites, health checks and safe updates with rollback/recovery. SOCKS5 is supported for VPS hosts without direct Telegram access.
 
-**3x-ui Auto Nginx** handles your 3x-ui/Xray server; **Telemt WEB Manager** handles Telemt WEB proxy. They are separate projects: this installer does not install Telemt. Shared-host deployment requires checking ports, domains and nginx configuration.
+**3x-ui Auto Nginx** deploys the 3x-ui/Xray server, while **Telegram Web Proxy Manager** adds the Telegram WEB Proxy. The projects are independent and can coexist on the same VPS; this installer does not install the companion project.
 
 ## 💾 Backup / Restore
 
@@ -98,6 +100,8 @@ x-ui-backup list
 ```
 
 The current backup format is **v3**. This tool does not restore v2 archives; use the utility from the matching older release.
+
+Restore only trusted archives created by this utility and kept under your control. Restore validation detects corrupted or incompatible managed state, but does not authenticate archive provenance.
 
 Archives are saved in `/var/backups/x-ui/` with root-only permissions. They contain client/database state, certificates/private keys and runtime secrets. **Copy the archive off the VPS** to a PC, NAS or another secure store.
 
@@ -146,6 +150,7 @@ Restore installs missing application dependencies and restores panel/runtime, ng
 
 - **Platforms:** Ubuntu 26.04 amd64 has live VPS validation; Ubuntu 24.04 runs in CI. Debian 13 is accepted by OS checks without equivalent live coverage; Debian 12 is unsupported. Not every architecture is tested. QEMU CPUs do not block installation; missing hardware AES produces a performance advisory.
 - **Routing:** nginx owns TCP 443 and routes by SNI to REALITY/Xray on 8443 or the panel TLS vhost on 7443. The REALITY camouflage target uses 9443. XHTTP uses a Unix socket; WS/gRPC have fixed paths/backends. Hysteria2 owns UDP 443 independently.
+- **Panel/API and subscriptions:** the panel backend binds only to `127.0.0.1:<random_port>` with HTTPS; the subscription backend uses loopback HTTPS behind nginx TLS. Public panel/API access remains through nginx :443, including API-token multi-node with TLS verification. Direct native panel mTLS is outside the managed topology.
 - **UFW:** active UFW receives only 80/tcp, 443/tcp and 443/udp rules. Inactive UFW is enabled only after detecting and allowing SSH ports; otherwise it stays inactive with a warning. Existing rules/default policy are preserved, with no hardcoded SSH port 22.
 - **Versions:** latest stable 3x-ui is selected by default. Use `-version <tag>` to select a panel release; binary and CLI come from that same tag.
 - **Diagnostics/subscriptions:** panel-authenticated MTR/LibreSpeed, JSON and Clash/Mihomo subscriptions. New custom WS/gRPC inbounds require explicit nginx routes; there is no arbitrary localhost-port proxy.
@@ -168,6 +173,6 @@ Historical `personal-v*` releases and branches are preserved. Future project rel
 
 ## 🤝 Credits / Origins
 
-Derived from [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro). The panel is provided by [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). **3x-ui Auto Nginx** develops independently and may selectively adopt useful upstream changes after review.
+Derived from [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) and since substantially reworked as an independently maintained project. The panel is provided by [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). **3x-ui Auto Nginx** may selectively adopt useful upstream changes after review.
 
 Third-party authors retain their rights and existing license/copyright statements. No new license is added for inherited code.

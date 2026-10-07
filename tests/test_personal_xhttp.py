@@ -34,7 +34,7 @@ FIXTURE = {
     "diag_path": "/diagnostics/", "diag_token": "test-token", "emoji_flag": "test",
     "private_key": "test-private", "public_key": "test-public",
     "sub_uri": "https://deploy.example/subscription/",
-    "json_uri": "https://deploy.example/jsonsub?name=",
+    "json_uri": "https://deploy.example/jsonsub/",
     "gid_col": "", "gid_reality": "", "gid_ws": "", "gid_xhttp": "", "gid_trojan": "", "gid_hysteria": "",
     "http2_listen": " http2", "http2_on": "",
 }
@@ -461,9 +461,11 @@ python3() { echo "python3 $*" >> "$TEST_LOG"; [[ "$FAIL_DEP" != python-import ]]
 systemctl() { [[ "$FAIL_HEALTH" != "$1:$3" ]]; }
 nginx() { [[ "$FAIL_HEALTH" != nginx-test ]]; }
 check_certificate_renewal() { [[ "$FAIL_HEALTH" != renewal ]]; }
+check_xray_runtime() { [[ "$FAIL_HEALTH" != socket ]]; }
+sqlite3() { [[ "$FAIL_HEALTH" == panel-bind ]] || echo 127.0.0.1; }
 sleep() { :; }
 '''
-        failures = ("", "is-active:x-ui", "is-active:nginx", "is-active:mtr-backend", "renewal", "nginx-test", "socket")
+        failures = ("", "is-active:x-ui", "is-active:nginx", "is-active:mtr-backend", "renewal", "nginx-test", "socket", "panel-bind")
         for failure in failures:
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "xhttp.sock"
@@ -472,7 +474,7 @@ sleep() { :; }
                         uds.bind(str(path))
                     script = mock + function("check_installation").replace("/dev/shm/uds2023.sock", str(path))
                     result = subprocess.run(["bash", "-u", "-c", script + "\ncheck_installation || exit 1\necho final-success\n"],
-                                            capture_output=True, text=True, env={**os.environ, **FIXTURE, "FAIL_HEALTH": failure})
+                                            capture_output=True, text=True, env={**os.environ, **FIXTURE, "XUIDB": "/fixture/db", "FAIL_HEALTH": failure})
                     self.assertEqual(result.returncode, 1 if failure else 0, result.stderr)
                     self.assertEqual("final-success" in result.stdout, not bool(failure))
 
@@ -861,7 +863,7 @@ with open(os.environ["PANEL_TEST_LOG"], "a") as log: log.write(json.dumps(sys.ar
 sys.exit(1 if sys.argv[1] == os.environ["FAIL_PANEL_COMMAND"] else 0)
 ''')
             executable.chmod(0o755)
-            script = 'sqlite3() { echo "$PANEL_SAVED_STATE"; }\nmsg_err() { echo "$*" >&2; }\n' + initial.replace("/usr/local/x-ui/x-ui", str(executable)) + "\n_panel_initial_config\n"
+            script = 'sqlite3() { [[ "$*" == *SELECT* ]] && echo "$PANEL_SAVED_STATE"; return 0; }\nmsg_err() { echo "$*" >&2; }\n' + initial.replace("/usr/local/x-ui/x-ui", str(executable)) + "\n_panel_initial_config\n"
             for failed in ("", "setting", "migrate", "unsaved-state"):
                 with self.subTest(failed=failed):
                     log.write_text("")
@@ -869,7 +871,7 @@ sys.exit(1 if sys.argv[1] == os.environ["FAIL_PANEL_COMMAND"] else 0)
                         **os.environ, "PANEL_TEST_LOG": str(log), "FAIL_PANEL_COMMAND": failed,
                         "config_username": "fixture-user", "config_password": "fixture-secret",
                         "panel_port": "10002", "panel_path": "fixture-path", "XUIDB": str(root / "db"),
-                        "PANEL_SAVED_STATE": "admin|0.0.0.0|2053|/" if failed == "unsaved-state" else "fixture-user||10002|/fixture-path/",
+                        "PANEL_SAVED_STATE": "admin|0.0.0.0|2053|/" if failed == "unsaved-state" else "fixture-user|127.0.0.1|10002|/fixture-path/",
                     })
                     calls = [json.loads(line) for line in log.read_text().splitlines()]
                     self.assertEqual(calls[0], ["setting", "-username", "fixture-user", "-password", "fixture-secret",
@@ -904,7 +906,7 @@ sys.exit(1 if sys.argv[1] == os.environ["FAIL_PANEL_COMMAND"] else 0)
                 self.assertEqual(result.returncode, 0 if accepted else 1, result.stderr)
                 self.assertEqual("destructive-actions" in result.stdout, accepted)
 
-    def test_panel_mtls_bind_and_managed_backend_listeners(self):
+    def test_panel_loopback_bind_and_managed_backend_listeners(self):
         rows = inbounds()
         for name in ("reality", "ws", "trojan-grpc"):
             self.assertEqual(rows[name]["listen"], "127.0.0.1", name)
@@ -916,7 +918,7 @@ sys.exit(1 if sys.argv[1] == os.environ["FAIL_PANEL_COMMAND"] else 0)
             db.executemany('INSERT INTO settings VALUES (?,?)', [("webListen", "0.0.0.0"), ("subListen", "::")])
             db.executescript(sql)
             values = dict(db.execute('SELECT key,value FROM settings'))
-        self.assertEqual(values["webListen"], "", "Native node mTLS needs an external-capable panel listener")
+        self.assertEqual(values["webListen"], "127.0.0.1")
         self.assertNotIn("-listenIP", function("_panel_initial_config") + function("configure_xui_db"))
         self.assertEqual(values["subListen"], "127.0.0.1")
 
@@ -1077,6 +1079,8 @@ curl() {
 
 from test_certificate_renewal import CertificateRenewal
 from test_adguard import AdGuardInstaller
+
+from test_audit_findings import AuditInstaller
 
 
 if __name__ == "__main__":

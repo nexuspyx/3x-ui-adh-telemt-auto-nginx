@@ -19,7 +19,7 @@ def function(name, source=INSTALLER):
 
 
 def relocate(source, root):
-    return re.sub(r"(?<![A-Za-z0-9_./])/(?:opt|etc|root|var|lib|usr/local|usr/bin/x-ui|usr/share/nginx|dev/shm)(?=[/\s\"';,)]|$)",
+    return re.sub(r"(?<![A-Za-z0-9_./])/(?:proc|opt|etc|root|var|lib|usr/local|usr/bin/x-ui|usr/share/nginx|dev/shm)(?=[/\s\"';,)}]|$)",
                   lambda m: str(root) + m[0], source)
 
 
@@ -44,9 +44,23 @@ def certificates(root, panel='example.com', reality='reality.example.com', mappe
         cfg.write()
     hook = root / 'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx'
     hook.parent.mkdir(parents=True, exist_ok=True)
-    body = re.search(r"cat <<'HOOK'\n(.*?)^HOOK$", function('setup_certificate_renewal'), re.M | re.S).group(1)
-    hook.write_text('#!/usr/bin/env bash\nset -Eeuo pipefail\nPANEL_DOMAIN=' + shlex.quote(panel) +
-                    '\nREALITY_DOMAIN=' + shlex.quote(reality) + '\n' + relocate(body, root))
+    source = '\n'.join(relocate(function(name), root) for name in ('check_xray_runtime', 'render_certificate_hook'))
+    body = subprocess.check_output(['bash', '-c', source + '\nrender_certificate_hook "$1" "$2"',
+                                    'fixture', panel, reality], text=True)
+    hook.write_text(body)
+    executable = root/'usr/local/x-ui/bin/xray-linux-amd64'
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    if not executable.exists(): executable.write_text('fixture executable')
+    proc = root/'proc/43210/exe'; proc.parent.mkdir(parents=True, exist_ok=True)
+    if not proc.exists(): proc.symlink_to(executable)
+    ss = root/'health-bin/ss'; ss.parent.mkdir(exist_ok=True)
+    ss.write_text(f'''#!/bin/sh
+case "$*" in
+ *-lxnp*) echo 'u_str LISTEN 0 128 {root}/dev/shm/uds2023.sock 0 users:(("xray",pid=43210,fd=1))' ;;
+ *) echo 'tcp LISTEN 0 128 127.0.0.1:8443 0.0.0.0:* users:(("xray",pid=43210,fd=2))'; echo 'udp UNCONN 0 128 *:443 *:* users:(("xray",pid=43210,fd=3))' ;;
+esac
+''')
+    ss.chmod(0o755)
     hook.chmod(0o755)
     if os.geteuid() == 0:
         os.chown(hook, 0, 0)

@@ -11,11 +11,13 @@
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#-технические-подробности)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[English](README_EN.md) · [Релизы](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Telemt WEB Manager](#telemt-web-manager) · [Ошибки](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
+[English](README_EN.md) · [Релизы](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Telegram Web Proxy Manager](#telemt-web-manager) · [Ошибки](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
 
 </div>
 
 Готовое развёртывание [3x-ui](https://github.com/MHSanaei/3x-ui) и Xray: укажите домен панели и REALITY-домен — скрипт установит сервер, настроит nginx, TLS и сайт-прикрытие. При желании во время установки он также развернёт AdGuard Home с DNS-over-HTTPS через тот же домен панели, без публичного DNS-порта 53.
+
+> **Современная переработка исходного 3x-ui-pro.** Сохранена простая идея «два домена → готовый сервер», но стек существенно обновлён для актуального production: REALITY/XHTTP/Hysteria2, loopback-изоляция внутренних сервисов, TLS renewal без остановки nginx, UFW-aware установка, Backup/Restore v3 и security/regression CI.
 
 ## ⚡ Быстрый старт
 
@@ -76,17 +78,17 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 Установка **опциональна, по умолчанию N**. Третий домен не нужен: используется существующий домен панели. Admin UI доступен под случайным `/adg-.../`, DoH endpoint — `https://panel.example.com/dns-query`.
 
-AGH web и native DNS слушают только loopback; публичный TCP/UDP 53 не открывается. TLS завершается nginx. Конфигурация, данные и sessions AGH включаются в **Backup / Restore v3**.
+AGH web и native DNS слушают только loopback; публичный TCP/UDP 53 не открывается. TLS завершается nginx. Конфигурация и данные AGH включаются в **Backup / Restore v3**.
 
 <a id="telemt-web-manager"></a>
 
 ## ✈️ Нужен ещё и Telegram proxy?
 
-### [Telemt WEB Manager](https://github.com/xPROMSx/telemt-web-manager)
+### [Telegram Web Proxy Manager](https://github.com/xPROMSx/telegram-web-proxy-manager)
 
-Companion-проект для автоматической установки и управления Telemt WEB proxy: обновления, rollback и интеграция с nginx/TLS.
+Companion-проект для собственного Telegram WEB Proxy на Ubuntu VPS: установка одной командой, HTTPS / Let's Encrypt, автоматические Fake Sites, health-check и безопасные обновления с rollback/recovery. Поддерживается SOCKS5 для VPS без прямого доступа к Telegram.
 
-**3x-ui Auto Nginx** разворачивает сервер 3x-ui/Xray, **Telemt WEB Manager** — Telemt WEB proxy. Это отдельные проекты: данный installer не устанавливает Telemt. Для совместного размещения нужно проверить порты, домены и конфигурацию nginx.
+**3x-ui Auto Nginx** разворачивает 3x-ui/Xray-сервер, а **Telegram Web Proxy Manager** добавляет Telegram WEB Proxy. Проекты независимы и могут работать на одном VPS; данный installer не устанавливает companion-проект.
 
 ## 💾 Backup / Restore
 
@@ -98,6 +100,8 @@ x-ui-backup list
 ```
 
 Текущий backup format — **v3**. Архивы v2 новым tool не поддерживаются: восстановите их утилитой из matching older release.
+
+Восстанавливайте только доверенные архивы, созданные этой утилитой и хранившиеся под вашим контролем. Проверки restore выявляют повреждённое или несовместимое managed state, но не проверяют происхождение архива.
 
 Архивы сохраняются в `/var/backups/x-ui/` с доступом только для root. Внутри — состояние клиентов/базы, сертификаты/private keys и runtime secrets. **Обязательно скопируйте архив с VPS** на ПК, NAS или в другое безопасное хранилище.
 
@@ -144,6 +148,7 @@ Restore сам устанавливает отсутствующие application
 
 - **Платформы:** Ubuntu 26.04 amd64 проверен на реальном VPS; Ubuntu 24.04 используется в CI. Debian 13 допускается OS checks без аналогичной live-проверки; Debian 12 не поддерживается. Не все архитектуры протестированы. QEMU CPU не блокирует installation; отсутствие hardware AES даёт performance advisory.
 - **Маршрутизация:** nginx принимает TCP 443 и направляет по SNI в REALITY/Xray на 8443 либо TLS vhost панели на 7443. Camouflage target REALITY использует 9443. XHTTP работает через Unix socket; WS/gRPC имеют фиксированные paths/backends. Hysteria2 независимо принимает UDP 443.
+- **Panel/API и subscriptions:** panel backend — только `127.0.0.1:<random_port>` с HTTPS; subscription backend — loopback HTTPS за nginx TLS. Публичные panel/API доступны через nginx :443, включая штатный multi-node по API token с проверкой TLS. Прямой native panel mTLS не входит в managed topology.
 - **UFW:** активный UFW получает только правила 80/tcp, 443/tcp и 443/udp. Неактивный включается только после определения и разрешения SSH ports; иначе остаётся выключенным с warning. Существующие rules/default policy сохраняются, жёстко заданного SSH port 22 нет.
 - **Версии:** по умолчанию выбирается latest stable 3x-ui. `-version <tag>` позволяет выбрать релиз панели; binary и CLI берутся из одного tag.
 - **Diagnostics/subscriptions:** MTR/LibreSpeed с авторизацией через панель, JSON и Clash/Mihomo subscriptions. Новые пользовательские WS/gRPC inbounds требуют явных nginx routes; generic proxy к произвольному localhost port отсутствует.
@@ -166,6 +171,6 @@ CI проверяет transport/Host-профили, nginx syntax, отрица�
 
 ## 🤝 Credits / Origins
 
-Проект основан на [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro). Панель предоставляется [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). **3x-ui Auto Nginx** развивается независимо и может выборочно принимать полезные upstream changes после ревью.
+Проект основан на [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), с тех пор существенно переработан и развивается независимо. Панель предоставляется [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). **3x-ui Auto Nginx** может выборочно принимать полезные upstream changes после ревью.
 
 Права авторов сторонних компонентов и существующие license/copyright statements сохраняются. Новая лицензия для унаследованного кода не добавляется.
