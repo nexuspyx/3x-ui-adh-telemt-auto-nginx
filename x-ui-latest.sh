@@ -903,7 +903,7 @@ install_panel() {
     local tag_version archive
     apt-get update && apt-get install -y -q wget curl tar tzdata
 
-    cd /usr/local/
+    cd /usr/local/ || return 1
 
     if [[ -n "$PANEL_VERSION" ]]; then
         tag_version="v${PANEL_VERSION#v}"
@@ -937,7 +937,7 @@ install_panel() {
     fi
     rm -f "$archive"
 
-    cd x-ui
+    cd x-ui || return 1
     chmod +x x-ui x-ui.sh
 
     if [[ $(_arch) == "armv5" || $(_arch) == "armv6" || $(_arch) == "armv7" ]]; then
