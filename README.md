@@ -2,9 +2,9 @@
 
 # 🚀 3x-ui Auto Nginx
 
-**Введите два домена — остальное сделает скрипт.**
+**Два домена — готовый 3x-ui/Xray сервер.**
 
-Автоматически: **nginx · SSL · Fake Site · REALITY · XHTTP · Hysteria2 · Backup / Restore**
+Автоматически: **nginx · Let's Encrypt · Fake Site · REALITY · XHTTP · Hysteria2 · опциональный AdGuard Home + DoH · Backup / Restore**
 
 [![XHTTP / security](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml)
 [![Backup / Restore](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml)
@@ -15,7 +15,7 @@
 
 </div>
 
-Готовое развёртывание [3x-ui](https://github.com/MHSanaei/3x-ui) и Xray: укажите домен панели и REALITY-домен — скрипт установит сервер, настроит nginx и TLS, развернёт сайт-прикрытие.
+Готовое развёртывание [3x-ui](https://github.com/MHSanaei/3x-ui) и Xray: укажите домен панели и REALITY-домен — скрипт установит сервер, настроит nginx, TLS и сайт-прикрытие. При желании во время установки он также развернёт AdGuard Home с DNS-over-HTTPS через тот же домен панели, без публичного DNS-порта 53.
 
 ## ⚡ Быстрый старт
 
@@ -36,13 +36,13 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 Нужны входящие TCP 80/443 и UDP 443; для получения сертификатов DNS доменов должен указывать на этот сервер.
 
-> **⚠️ Только для чистой установки или полной переустановки.** `x-ui-latest.sh` удаляет существующую установку 3x-ui на сервере, включая базу панели и конфигурацию nginx. **Не используйте его как обычное обновление рабочего VPS.** При обнаружении 3x-ui/nginx/TLS требуется точное `YES` до удаления файлов, включая uninstall. Если сервер уже настроен, сначала сохраните резервную копию вне VPS.
+> **⚠️ Только для чистой установки или полной переустановки.** `x-ui-latest.sh` удаляет существующую установку 3x-ui на сервере, включая базу панели и конфигурацию nginx. **Не используйте его как обычное обновление рабочего VPS.** При обнаружении 3x-ui/nginx/TLS требуется точное `YES` в верхнем регистре до удаления файлов, включая uninstall. Если сервер уже настроен, сначала сохраните резервную копию вне VPS.
 
 ## 🌐 Два домена → готовый сервер
 
 | Вы вводите | Скрипт подготавливает | Вы получаете |
 | --- | --- | --- |
-| Домен панели + REALITY-домен | 3x-ui/Xray, nginx, Let's Encrypt TLS, автоматический fake site, пять inbound-профилей, subscriptions, diagnostics, Backup / Restore и интеграцию с UFW | URL панели, сгенерированные логин/пароль и URL diagnostics |
+| Домен панели + REALITY-домен | 3x-ui/Xray, nginx, Let's Encrypt TLS, автоматический fake site, пять inbound-профилей, subscriptions, diagnostics, Backup / Restore v3, интеграцию с UFW и опциональный AdGuard Home + DoH | URL панели, сгенерированные логин/пароль и URL diagnostics; при выборе AGH — admin URL, его пароль и DoH endpoint без третьего домена |
 
 **Клиентов создайте в 3x-ui после установки.** Share links и subscriptions управляются через панель; installer не создаёт клиентские аккаунты.
 
@@ -54,6 +54,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 | **🌐 nginx + SNI + TLS**<br>Готовая маршрутизация и сертификаты Let's Encrypt. | **🥸 Automatic Fake Site**<br>Сайт-прикрытие случайно выбирается из коллекции и разворачивается за вас. |
 | **🚀 Современные transport'ы**<br>REALITY, XHTTP stream-up и Hysteria2, дополнительные WS/gRPC-профили. | **💾 Backup / Restore**<br>Откат на текущем VPS и восстановление на совместимой чистой ОС. |
 | **📊 Diagnostics**<br>MTR и LibreSpeed с авторизацией через панель. | **🔥 UFW-aware**<br>Добавляет application rules, сохраняя существующие правила и policy. |
+| **🛡 AdGuard Home + DoH**<br>Опциональная интеграция через тот же nginx/TLS, без публичного :53. | **♻️ Автоматическое TLS renewal**<br>Let's Encrypt webroot + `certbot.timer`; nginx остаётся online при renewal. |
 
 ### 🚀 Transport-профили
 
@@ -70,6 +71,12 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 ### 🥸 Automatic Fake Site
 
 Не нужно самостоятельно создавать сайт-прикрытие: installer выбирает страницу из встроенной коллекции fake sites и разворачивает её вместе с nginx и TLS. Это часть развёртывания, а не гарантия незаметности трафика.
+
+### 🛡 AdGuard Home + DNS-over-HTTPS
+
+Установка **опциональна, по умолчанию N**. Третий домен не нужен: используется существующий домен панели. Admin UI доступен под случайным `/adg-.../`, DoH endpoint — `https://panel.example.com/dns-query`.
+
+AGH web и native DNS слушают только loopback; публичный TCP/UDP 53 не открывается. TLS завершается nginx. Конфигурация, данные и sessions AGH включаются в **Backup / Restore v3**.
 
 <a id="telemt-web-manager"></a>
 
@@ -102,6 +109,8 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 
 Успешное восстановление заканчивается `Restore completed successfully.` Восстанавливается управляемое состояние приложения, а не вся ОС.
 
+Backup / Restore v3 проверен на реальном Ubuntu 26.04 amd64 VPS: создание архива с AdGuard Home, повторное восстановление на том же сервере, сохранение TLS/Certbot/AGH/DoH, работоспособность панели и XHTTP после restore и полный запуск после reboot.
+
 <details>
 <summary>🛟 Восстановление на новом VPS / установка backup utility</summary>
 
@@ -126,8 +135,6 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 
 Restore сам устанавливает отсутствующие application dependencies и восстанавливает panel/runtime, nginx, сертификаты, web/diagnostics, project systemd units, managed sysctl и webroot renewal через `certbot.timer`. SSH, `authorized_keys`, fail2ban, базовая UFW policy и OS/bootstrap state остаются ответственностью администратора. Restore добавляет правила 80/tcp, 443/tcp и 443/udp, но никогда не включает UFW; посторонние cron jobs сохраняются.
 
-Предыдущий Backup/Restore v2 был проверен на реальном Ubuntu 26.04 amd64 VPS: same-host rollback, clean-host recovery после bootstrap без installer, работа после reboot и подключения к панели/реальных клиентов (3x-ui 3.9.0, Xray 26.9.30, nginx 1.28.3).
-
 </details>
 
 ## 🔧 Технические подробности
@@ -140,7 +147,7 @@ Restore сам устанавливает отсутствующие application
 - **UFW:** активный UFW получает только правила 80/tcp, 443/tcp и 443/udp. Неактивный включается только после определения и разрешения SSH ports; иначе остаётся выключенным с warning. Существующие rules/default policy сохраняются, жёстко заданного SSH port 22 нет.
 - **Версии:** по умолчанию выбирается latest stable 3x-ui. `-version <tag>` позволяет выбрать релиз панели; binary и CLI берутся из одного tag.
 - **Diagnostics/subscriptions:** MTR/LibreSpeed с авторизацией через панель, JSON и Clash/Mihomo subscriptions. Новые пользовательские WS/gRPC inbounds требуют явных nginx routes; generic proxy к произвольному localhost port отсутствует.
-- **Optional AdGuard Home:** installer предлагает интегрированный AGH (по умолчанию **N**). DoH и admin UI используют тот же panel domain и nginx TLS; отдельный домен и публичный :53 не нужны. Установленный AGH включается в Backup/Restore v3. `x-ui-adguard.sh` — retired non-destructive stub. `x-ui-patch.sh` остаётся secondary maintenance utility, а не универсальным updater.
+- **Optional AdGuard Home:** по умолчанию **N**; тот же panel domain/nginx TLS, без публичного :53, с Backup / Restore v3. `x-ui-adguard.sh` — retired non-destructive stub. `x-ui-patch.sh` остаётся secondary maintenance utility, а не универсальным updater.
 - **TLS renewal:** webroot `/var/www/acme` + distro `certbot.timer`. Nginx остаётся online и graceful reload применяется после renewal; x-ui перезапускается только при обновлении сертификата панели. Release acceptance включает `certbot renew --dry-run` для обоих сертификатов.
 - **Совместимость:** `/usr/local/lib/3x-ui-pro` и `/etc/sysctl.d/99-3x-ui-pro.conf` намеренно сохранены для Backup/Restore.
 
