@@ -1,5 +1,6 @@
 """Focused v1.5 audit regressions, using the existing isolated fixtures."""
 import copy
+import ctypes
 import hashlib
 import io
 import json
@@ -452,6 +453,86 @@ class AuditRecovery(unittest.TestCase):
                 self.assert_untouched(result,services)
                 self.assertIn(message,result.stderr)
                 self.assertEqual(hashlib.sha256(bad.read_bytes()).hexdigest(),digest)
+
+    def test_unused_distro_snakeoil_and_other_configs_restore_idempotently(self):
+        f = self.fixture
+        distro_files = ('snippets/snakeoil.conf','snippets/fastcgi-php.conf','sites-available/default',
+                        'fastcgi.conf','fastcgi_params','proxy_params','scgi_params','uwsgi_params',
+                        'mime.types','koi-utf','koi-win','win-utf')
+        for name in distro_files:
+            source = Path('/etc/nginx')/name
+            self.assertTrue(source.is_file(),name)
+            f.write('/etc/nginx/'+name,source.read_text())
+        snippet = f.path('/etc/nginx/snippets/snakeoil.conf').read_bytes()
+        self.assertIn(b'/etc/ssl/certs/ssl-cert-snakeoil.pem',snippet)
+        self.assertIn(b'/etc/ssl/private/ssl-cert-snakeoil.key',snippet)
+        archive = f.backup(); digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        main = f.path('/etc/nginx/nginx.conf').read_bytes()
+        for _ in range(2):
+            (f.root/'commands').write_text('')
+            result = f.run_tool('restore',archive)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertIn('Restore completed successfully.',result.stdout)
+            self.assertTrue(any(c[0]=='nginx' and '-c' in c and any('nginx-validation' in a for a in c)
+                                for c in f.commands()))
+            self.assertEqual(f.path('/etc/nginx/snippets/snakeoil.conf').read_bytes(),snippet)
+            self.assertEqual(f.path('/etc/nginx/nginx.conf').read_bytes(),main)
+            self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
+
+    def test_active_exact_and_wildcard_snakeoil_fail_before_mutation(self):
+        f = self.fixture
+        snippet = Path('/etc/nginx/snippets/snakeoil.conf').read_text()
+        f.write('/etc/nginx/snippets/snakeoil.conf',snippet)
+        archive = f.backup()
+        main = f.path('/etc/nginx/nginx.conf').read_text()
+        for suffix in ('snakeoil.conf','*.conf'):
+            with self.subTest(include=suffix):
+                include = str(f.path('/etc/nginx/snippets'))+'/'+suffix
+                config = main.replace('server {', 'server { include '+include+';',1)
+                bad = self.modified(archive,{f.member('/etc/nginx/nginx.conf'):config.encode()})
+                digest = hashlib.sha256(bad.read_bytes()).hexdigest()
+                services = json.loads((f.root/'services.json').read_text()); (f.root/'commands').write_text('')
+                result = f.run_tool('restore',bad)
+                self.assert_untouched(result,services)
+                self.assertIn('unknown directive "xui_untrusted_resource_',result.stderr)
+                self.assertIn('Untrusted nginx resource in snippets/snakeoil.conf:',result.stderr)
+                self.assertIn('ssl_certificate /etc/ssl/certs/ssl-cert-snakeoil.pem',result.stderr)
+                self.assertEqual(f.path('/etc/nginx/nginx.conf').read_text(),main)
+                self.assertEqual(f.path('/etc/nginx/snippets/snakeoil.conf').read_text(),snippet)
+                self.assertEqual(hashlib.sha256(bad.read_bytes()).hexdigest(),digest)
+
+    def test_active_external_resources_never_open_live_files(self):
+        f = self.fixture; archive = f.backup()
+        external = Path(f.temp.name)/'outside-nginx'; external.mkdir()
+        cert, key, config = external/'cert.pem',external/'key.pem',external/'valid.conf'
+        shutil.copy2(f.path('/etc/letsencrypt/live/example.com/fullchain.pem'),cert)
+        shutil.copy2(f.path('/etc/letsencrypt/live/example.com/privkey.pem'),key)
+        config.write_text('server { listen 127.0.0.1:10123; }\n')
+        # Watch actual readable live files: even a failing preflight must never open them.
+        libc = ctypes.CDLL(None,use_errno=True)
+        libc.inotify_add_watch.argtypes = (ctypes.c_int,ctypes.c_char_p,ctypes.c_uint32)
+        descriptor = libc.inotify_init1(os.O_NONBLOCK|os.O_CLOEXEC)
+        self.assertGreaterEqual(descriptor,0)
+        self.addCleanup(os.close,descriptor)
+        for path in (cert,key,config):
+            self.assertGreaterEqual(libc.inotify_add_watch(descriptor,os.fsencode(path),0x20),0)  # IN_OPEN
+        main = f.path('/etc/nginx/nginx.conf').read_bytes()
+        cases = [('ssl_certificate',cert),('ssl_certificate_key',key),('include',config)]
+        for directive, path in cases:
+            with self.subTest(directive=directive):
+                nginx = 'events {} http { '+directive+' "'+str(path)+'"; }\n'
+                bad = self.modified(archive,{f.member('/etc/nginx/nginx.conf'):nginx.encode()})
+                digest = hashlib.sha256(bad.read_bytes()).hexdigest()
+                services = json.loads((f.root/'services.json').read_text()); (f.root/'commands').write_text('')
+                result = f.run_tool('restore',bad)
+                self.assert_untouched(result,services)
+                self.assertIn('unknown directive "xui_untrusted_resource_',result.stderr)
+                self.assertIn('Untrusted nginx resource in nginx.conf: '+directive+' '+str(path),result.stderr)
+                self.assertEqual(f.path('/etc/nginx/nginx.conf').read_bytes(),main)
+                self.assertEqual(hashlib.sha256(bad.read_bytes()).hexdigest(),digest)
+                try: opened = os.read(descriptor,8192)
+                except BlockingIOError: opened = b''
+                self.assertEqual(opened,b'','private preflight opened a live external resource')
 
     def test_broken_staged_tls_and_hook_rejected_before_mutation(self):
         f = self.fixture; archive = f.backup()

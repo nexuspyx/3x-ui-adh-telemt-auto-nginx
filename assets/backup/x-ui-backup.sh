@@ -907,7 +907,7 @@ preflight_staged_core() {
         die 'Unexpected staged project deploy hook; archive code was not executed.'
     python3 - "$STAGING/files" "$DB" /etc/nginx /etc/letsencrypt /root/cert /var/www \
         "$panel" "$reality" "$STAGING/nginx-validation" <<'PY'
-import os, pathlib, re, shutil, sqlite3, sys
+import json, os, pathlib, re, shutil, sqlite3, sys
 from configobj import ConfigObj
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
@@ -1057,34 +1057,53 @@ for p in list(validation.rglob('*')):
     elif target.startswith('/usr/lib/nginx/modules/'):
         # Module files remain distro-owned; never load an ELF supplied in the archive.
         pass
+blocked_resources = {}
 for p in (validation / nginx.lstrip('/')).rglob('*'):
     if p.is_dir() or p.is_symlink(): continue
     text = p.read_text()
     for base in sorted(bases,key=len,reverse=True):
         text = re.sub(re.escape(base) + r'(?=/|[\s;"\']|$)',lambda m: str(validation / base.lstrip('/')),text)
     text = re.sub(r'(?m)^(\s*pid\s+)\S+;',lambda m: m[1] + str(validation/'nginx.pid') + ';',text)
-    # nginx -t opens logs/includes/certificates: never let preflight use live-host paths.
-    scan = re.sub(r'(?m)^\s*#.*$', '', text)
-    resources = r'\b(?:include|error_log|access_log|ssl_certificate(?:_key)?|ssl_client_certificate|ssl_trusted_certificate|ssl_dhparam)\s+([^;\s]+)'
-    for resource in re.findall(resources, scan):
-        resource = resource.strip('\"\'')
-        if resource in ('off', 'stderr'): continue
-        if '$' in resource or '..' in pathlib.PurePosixPath(resource).parts:
-            raise ValueError('Unexpected nginx resource path')
-        if resource.startswith('/') and not resource.startswith(str(validation) + '/'):
-            raise ValueError('nginx preflight resource is outside private staged state')
+    # Only nginx knows which files exact/wildcard includes actually load. In this
+    # private copy, neutralize unsafe directives before nginx can open their paths.
+    # An inactive distro snippet is harmless; loading it must fail nginx -t.
+    text = re.sub(r'(?m)^\s*#.*$', '', text)
+    resources = r'''\b(include|error_log|access_log|ssl_certificate(?:_key)?|ssl_client_certificate|ssl_trusted_certificate|ssl_dhparam)\s+("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^;\s]+)'''
+    def private_resource(match):
+        directive, resource = match[1], match[2].strip('\"\'')
+        if resource in ('off', 'stderr'): return match[0]
+        if ('$' in resource or '\\' in resource or '..' in pathlib.PurePosixPath(resource).parts or
+                (resource.startswith('/') and not resource.startswith(str(validation) + '/'))):
+            marker = 'xui_untrusted_resource_' + str(len(blocked_resources))
+            archived = p.relative_to(validation / nginx.lstrip('/'))
+            blocked_resources[marker] = f'Untrusted nginx resource in {archived}: {directive} {resource} (outside private staged state)'
+            return marker
+        return match[0]
+    text = re.sub(resources, private_resource, text)
     for module in re.findall(r'\bload_module\s+([^;]+);',text):
         module = module.strip()
         if not re.fullmatch(r'(?:/usr/lib/nginx/modules/|modules/)ngx_[A-Za-z0-9_]+\.so',module):
             raise ValueError('Untrusted nginx module path')
         text = text.replace('load_module ' + module + ';', 'load_module /usr/lib/nginx/modules/' + pathlib.Path(module).name + ';')
     p.write_text(text)
+(validation / 'blocked-resources.json').write_text(json.dumps(blocked_resources))
 (validation / 'var/log/nginx').mkdir(parents=True,exist_ok=True)
 print('Staged TLS, renewal, panel and subscription state validated/normalized')
 PY
     [[ $? == 0 ]] || die 'Staged core validation failed; current managed state was not changed.'
     nginx -t -p "$STAGING/nginx-validation/" -c "$STAGING/nginx-validation/etc/nginx/nginx.conf" \
-        > "$STAGING/nginx-preflight.log" 2>&1 || { cat "$STAGING/nginx-preflight.log" >&2; die 'Staged nginx -t failed; current managed state was not changed.'; }
+        > "$STAGING/nginx-preflight.log" 2>&1 || {
+        cat "$STAGING/nginx-preflight.log" >&2
+        python3 - "$STAGING/nginx-validation/blocked-resources.json" "$STAGING/nginx-preflight.log" <<'PY'
+import json, pathlib, sys
+blocked = json.loads(pathlib.Path(sys.argv[1]).read_text())
+log = pathlib.Path(sys.argv[2]).read_text()
+for marker, message in blocked.items():
+    if '"' + marker + '"' in log:
+        print(message, file=sys.stderr)
+PY
+        die 'Staged nginx -t failed; current managed state was not changed.'
+    }
     install -o root -g root -m 0755 "$STAGING/current-hook" "$hook" || die 'Cannot normalize staged project hook.'
 }
 
