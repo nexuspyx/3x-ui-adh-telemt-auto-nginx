@@ -105,6 +105,41 @@ def function(name):
 
 
 class PersonalXHTTP(unittest.TestCase):
+    def test_panel_directory_errors_abort_before_following_operations(self):
+        # Run the original function, including its caller's `||` context (no errexit).
+        for failed in (1, 2):
+            with self.subTest(cd=failed), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                calls = root/'calls'
+                panel = function('install_panel').replace('/usr/local', str(root/'local'))
+                mock = '''
+record() { printf '%s\\n' "$*" >> "$CALLS"; }
+cd() { (( CD_COUNT+=1 )); record "cd $CD_COUNT"; [[ "$CD_COUNT" != "$FAIL_CD" ]]; }
+apt-get() { :; }
+curl() { :; }
+_validate_panel_version() { :; }
+_arch() { echo amd64; }
+mktemp() { echo "$ROOT/archive"; }
+_download_panel_archive() { record download; }
+rm() { record remove; }
+tar() { record extract; }
+chmod() { record chmod; }
+install() { record install-cli; }
+_panel_initial_config() { record initial-config; }
+cp() { record copy-service; }
+systemctl() { record systemctl; }
+msg_ok() { record success; }
+CD_COUNT=0
+'''
+                result = subprocess.run(['bash','-u','-c', mock+panel+'\ninstall_panel || exit 1'],
+                                        env={**os.environ,'PANEL_VERSION':'v3.9.0','FAIL_CD':str(failed),
+                                             'ROOT':str(root),'CALLS':str(calls)}, text=True, capture_output=True)
+                events = calls.read_text().splitlines()
+                self.assertIn(f'cd {failed}', events, 'chdir failure must actually be reached')
+                self.assertNotEqual(result.returncode, 0, f'continued after failed cd: {events}')
+                self.assertEqual(events[-1], f'cd {failed}', 'no operation may follow failed chdir')
+                self.assertNotIn('success', events)
+
     def test_shell_syntax(self):
         subprocess.run(["bash", "-n", str(ROOT / "x-ui-latest.sh")], check=True)
 

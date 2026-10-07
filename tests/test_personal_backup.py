@@ -55,6 +55,13 @@ args = sys.argv[1:]
 root = pathlib.Path(os.environ['FIXTURE_ROOT'])
 with open(root / 'commands', 'a') as log:
     log.write(json.dumps([name, *args]) + '\n')
+def fault():
+    if os.environ.get('FAIL_ONCE'):
+        (root/'fault-used').touch()
+if os.environ.get('FAIL_ONCE') and (root/'fault-used').exists():
+    for key in ('FAIL_NGINX','FAIL_HEALTH_SERVICE','CORRUPT_RUNNING_DB','MISSING_SOCKET','FAIL_SYSCTL',
+                'FAIL_CERTBOT_ENABLE','FAIL_CRON_WRITE','BREAK_FINAL_RENEWAL'):
+        os.environ.pop(key, None)
 installed_path = root / 'installed-packages'
 installed = set(installed_path.read_text().split()) if installed_path.exists() else set()
 if name in ('python3', 'gzip', 'tar') and name in os.environ.get('MISSING_PACKAGES', '').split() and name not in installed:
@@ -67,7 +74,7 @@ if name == 'systemctl':
     enabled = json.loads(enabled_path.read_text()) if enabled_path.exists() else {}
     if command == 'enable':
         if service == 'certbot.timer' and os.environ.get('FAIL_CERTBOT_ENABLE'):
-            sys.exit(1)
+            fault(); sys.exit(1)
         enabled[service] = True
         enabled_path.write_text(json.dumps(enabled))
         if '--now' in args:
@@ -75,6 +82,9 @@ if name == 'systemctl':
             path.write_text(json.dumps(services))
         if service == 'certbot.timer' and '--now' in args:
             broken = os.environ.get('BREAK_FINAL_RENEWAL')
+            if broken:
+                fault()
+                with open(root/'commands','a') as log: log.write(json.dumps(['fault','renewal',broken])+'\n')
             if broken == 'active':
                 services[service] = 'inactive'
                 path.write_text(json.dumps(services))
@@ -95,7 +105,7 @@ if name == 'systemctl':
         state = services.get(service, 'inactive')
         active = state == 'active'
         if '--quiet' in args and os.environ.get('FAIL_HEALTH_SERVICE') == service:
-            active = False
+            fault(); active = False
         if '--quiet' not in args:
             print(state)
         sys.exit(0 if active else 3)
@@ -116,11 +126,16 @@ if name == 'systemctl':
             sock = root / 'dev/shm/uds2023.sock'
             sock.parent.mkdir(parents=True, exist_ok=True)
             sock.unlink(missing_ok=True)
+            if os.environ.get('MISSING_SOCKET'):
+                fault()
+                with open(root/'commands','a') as log: log.write(json.dumps(['fault','missing-socket'])+'\n')
             if not os.environ.get('MISSING_SOCKET'):
                 s = socket.socket(socket.AF_UNIX)
                 s.bind(str(sock))
                 s.close()
             if os.environ.get('CORRUPT_RUNNING_DB'):
+                fault()
+                with open(root/'commands','a') as log: log.write(json.dumps(['fault','running-db'])+'\n')
                 (root / 'etc/x-ui/x-ui.db').write_bytes(b'corrupt')
 elif name == 'ss':
     services = json.loads((root/'services.json').read_text())
@@ -129,7 +144,7 @@ elif name == 'ss':
                     (root/'var/www/html/recovery-marker').read_text() == 'incoming')
         if not broken:
             if '-lxnp' in args:
-                if not os.environ.get('MISSING_SOCKET'):
+                if not os.environ.get('MISSING_SOCKET') and (not os.environ.get('FAIL_ONCE') or (root/'dev/shm/uds2023.sock').exists()):
                     print(f'u_str LISTEN 0 128 {root}/dev/shm/uds2023.sock 0 users:(("xray",pid=43210,fd=1))')
             else:
                 print('tcp LISTEN 0 128 127.0.0.1:8443 0.0.0.0:* users:(("xray",pid=43210,fd=2))')
@@ -147,7 +162,7 @@ elif name == 'crontab':
         print(path.read_text(), end='')
     elif args == ['-']:
         if os.environ.get('FAIL_CRON_WRITE'):
-            sys.exit(1)
+            fault(); sys.exit(1)
         path.write_text(sys.stdin.read())
     else:
         sys.exit(2)
@@ -193,7 +208,7 @@ elif name == 'ufw':
         print('Status: ' + os.environ.get('UFW_STATE', 'inactive'))
 elif name == 'nginx':
     if os.environ.get('FAIL_NGINX'):
-        sys.exit(1)
+        fault(); sys.exit(1)
     if os.environ.get('NGINX_BIN') and '-c' in args:
         sys.exit(subprocess.call([os.environ['NGINX_BIN'], *args]))
     if os.environ.get('NGINX_BIN'):
@@ -226,7 +241,8 @@ elif name == 'tar':
 elif name == 'id':
     sys.exit(1 if os.environ.get('MTR_ABSENT') else 0)
 elif name == 'sysctl':
-    sys.exit(1 if os.environ.get('FAIL_SYSCTL') else 0)
+    if os.environ.get('FAIL_SYSCTL'): fault(); sys.exit(1)
+    sys.exit(0)
 elif name == 'setcap':
     sys.exit(1 if pathlib.Path(args[-1]).name in os.environ.get('FAIL_SETCAP', '').split() else 0)
 # useradd and non-root chown only record calls; no host mutation.
@@ -639,16 +655,41 @@ class PersonalBackup(unittest.TestCase):
                     self.assertLess(validation, extraction)
 
     def test_restore_renewal_failures_never_report_success(self):
-        archive = self.backup()
         for env in ({'FAIL_CERTBOT_ENABLE': '1'}, {'FAIL_CRON_WRITE': '1'}, {'FAIL_HEALTH_SERVICE': 'certbot.timer'},
                     *({'BREAK_FINAL_RENEWAL': state} for state in ('active', 'enabled', 'hook', 'authenticator', 'legacy'))):
             with self.subTest(failure=env):
-                (self.root / 'commands').write_text('')
-                (self.root / 'crontab').write_text(CRON + '\n@daily unrelated\n')
-                result = self.run_tool('restore', archive, **env)
+                f = PersonalBackup('runTest'); f.setUp()
+                self.addCleanup(f.doCleanups)
+                archive = f.backup()
+                f.write('/etc/x-ui/target-marker', 'previous target')
+                initial_services = json.loads((f.root/'services.json').read_text())
+                initial_enabled = json.loads((f.root/'enabled.json').read_text())
+                (f.root / 'commands').write_text('')
+                (f.root / 'crontab').write_text((CRON+'\n' if 'FAIL_CRON_WRITE' in env else '')+'@daily unrelated\n')
+                result = f.run_tool('restore', archive, FAIL_ONCE='1', **env)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn('Restore completed successfully.', result.stdout)
                 self.assertIn('[FAIL]', result.stderr)
+
+                calls = f.commands()
+                self.assertEqual(f.path('/etc/x-ui/target-marker').read_text(), 'previous target')
+                self.assertEqual(json.loads((f.root/'services.json').read_text()), initial_services)
+                self.assertEqual({k for k,v in json.loads((f.root/'enabled.json').read_text()).items() if v},
+                                 {k for k,v in initial_enabled.items() if v})
+                self.assertFalse(list(f.path('/var/backups/x-ui').glob('.restore-*')))
+                if 'FAIL_CRON_WRITE' in env:
+                    self.assertIn(['crontab','-'], calls)
+                else:
+                    self.assertIn(['systemctl','enable','--now','certbot.timer'], calls)
+                if 'BREAK_FINAL_RENEWAL' in env:
+                    self.assertIn(['fault','renewal',env['BREAK_FINAL_RENEWAL']], calls)
+                retained = 'FAIL_CRON_WRITE' in env or env.get('BREAK_FINAL_RENEWAL')=='legacy'
+                self.assertEqual(bool(list(f.path('/var/backups/x-ui').glob('.rollback-*'))), retained)
+                self.assertIn('Automatic rollback could not be verified' if retained else
+                              'Previous managed state/service states restored and checked', result.stderr)
+                self.assertIn('@daily unrelated\n', (f.root/'crontab').read_text())
+                with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                    self.assertEqual(db.execute('PRAGMA quick_check').fetchone()[0], 'ok')
 
     def test_v2_is_explicitly_rejected_without_extraction(self):
         archive = self.changed_archive(self.backup(), metadata={'format_version': 2})
@@ -798,16 +839,45 @@ class PersonalBackup(unittest.TestCase):
         self.assertNotIn('Restore completed successfully.', result.stdout)
 
     def test_mandatory_health_and_sysctl_failures_never_report_success(self):
-        archive = self.backup()
         for env in ({'FAIL_NGINX': '1'}, {'FAIL_HEALTH_SERVICE': 'mtr-backend'},
                     {'CORRUPT_RUNNING_DB': '1'}, {'MISSING_SOCKET': '1'}, {'FAIL_SYSCTL': '1'}):
             with self.subTest(failure=env):
-                (self.root / 'commands').write_text('')
-                result = self.run_tool('restore', archive, **env)
+                f = PersonalBackup('runTest'); f.setUp()
+                self.addCleanup(f.doCleanups)
+                archive = f.backup()
+                f.write('/etc/x-ui/target-marker', 'previous target')
+                initial_services = json.loads((f.root/'services.json').read_text())
+                initial_enabled = json.loads((f.root/'enabled.json').read_text())
+                (f.root / 'commands').write_text('')
+                result = f.run_tool('restore', archive, FAIL_ONCE='1', **env)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn('Restore completed successfully.', result.stdout)
                 if 'FAIL_NGINX' in env:
-                    self.assertNotIn(['systemctl', 'start', 'nginx'], self.commands())
+                    self.assertNotIn(['systemctl', 'start', 'nginx'], f.commands())
+
+                calls = f.commands()
+                self.assertEqual(f.path('/etc/x-ui/target-marker').read_text(), 'previous target')
+                self.assertEqual(json.loads((f.root/'services.json').read_text()), initial_services)
+                self.assertEqual({k for k,v in json.loads((f.root/'enabled.json').read_text()).items() if v},
+                                 {k for k,v in initial_enabled.items() if v})
+                self.assertFalse(list(f.path('/var/backups/x-ui').glob('.restore-*')))
+                if 'FAIL_NGINX' in env:
+                    self.assertTrue(any(c[0]=='nginx' and '-c' in c for c in calls), 'private nginx fault reached')
+                    self.assertFalse(any(c[:2]==['systemctl','stop'] for c in calls))
+                else:
+                    self.assertIn(['systemctl','start','x-ui'], calls)
+                    if 'FAIL_HEALTH_SERVICE' in env:
+                        self.assertIn(['systemctl','is-active','--quiet','mtr-backend'], calls)
+                    if 'CORRUPT_RUNNING_DB' in env:
+                        self.assertIn(['fault','running-db'], calls)
+                    if 'MISSING_SOCKET' in env:
+                        self.assertIn(['fault','missing-socket'], calls)
+                    if 'FAIL_SYSCTL' in env:
+                        self.assertTrue(any(c[0]=='sysctl' for c in calls))
+                    self.assertIn('Previous managed state/service states restored and checked', result.stderr)
+                    self.assertFalse(list(f.path('/var/backups/x-ui').glob('.rollback-*')))
+                    with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                        self.assertEqual(db.execute('PRAGMA quick_check').fetchone()[0], 'ok')
 
 
 from test_adguard_backup import AdGuardBackup
