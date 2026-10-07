@@ -323,7 +323,9 @@ if sys.argv[1]=='cert':
             reality = reality.replace('/etc/nginx/snippets/includes.conf',str(root/'includes.conf')).replace('/var/www/html/',str(root/'site')+'/')
             (root/'site').mkdir(); (root/'site/index.html').write_text('camouflage')
             maps = render('cat > /etc/nginx/sites-available/00-maps.conf')
-            (root/'nginx.conf').write_text(f'pid {root}/nginx.pid; error_log {root}/error.log; events {{}} http {{ access_log off; {maps}\n{vhost}\n{reality}\n}}')
+            temp_paths = '\n'.join(f'{kind}_temp_path {root}/{kind};'
+                                   for kind in ('client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi'))
+            (root/'nginx.conf').write_text(f'pid {root}/nginx.pid; error_log {root}/error.log; events {{}} http {{ access_log off; {temp_paths}\n{maps}\n{vhost}\n{reality}\n}}')
             cmd = [nginx,'-p',str(root)+'/', '-c',str(root/'nginx.conf')]
             syntax = subprocess.run([*cmd,'-t'],capture_output=True,text=True)
             self.assertEqual(syntax.returncode,0,syntax.stderr)

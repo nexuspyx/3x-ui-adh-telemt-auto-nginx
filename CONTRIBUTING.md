@@ -19,15 +19,24 @@ Reproduce the full suites on a disposable Ubuntu 24.04 test environment:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y --no-install-recommends nginx sqlite3 certbot
-bash -n x-ui-latest.sh
-bash -n x-ui-patch.sh
-bash -n x-ui-adguard.sh
-bash -n assets/backup/x-ui-backup.sh
-NGINX_BIN=/usr/sbin/nginx python3 tests/test_personal_xhttp.py
-sudo env NGINX_BIN=/usr/sbin/nginx python3 tests/test_personal_backup.py
+sudo apt-get install -y --no-install-recommends nginx certbot sqlite3 openssl curl python3 python3-configobj python3-cryptography tar gzip shellcheck
+mapfile -d '' -t scripts < <(git ls-files -z -- '*.sh')
+for script in "${scripts[@]}"; do bash -n "$script"; done
+shellcheck --severity=error "${scripts[@]}"
+python3 tests/run_ci.py --check-completeness
+NGINX_BIN=/usr/sbin/nginx python3 tests/run_ci.py --suite nonroot
+export NGINX_BIN=/usr/sbin/nginx
+sudo --preserve-env=NGINX_BIN python3 tests/run_ci.py --suite root
 git diff --check
 ```
+
+The canonical runner collects only TestCase classes defined in each `tests/test_*.py` module, so imported classes run once. Assign every new TestCase to exactly one suite in `tests/run_ci.py`; completeness fails for unassigned classes or stale/duplicate entries. New test methods in an existing class are included automatically. Do not use `unittest discover` as the CI entry point: existing imports would execute tests twice.
+
+The `nonroot` suite requires EUID != 0; the `root` suite requires EUID 0 for ownership/permission coverage. Do not run both under sudo. Legacy entry commands remain available for compatibility but are not the canonical CI interface.
+
+CI checks every tracked shell script with `bash -n` and ShellCheck **error-only**. Existing warning/info/style findings are not suppressed or claimed clean. All tracked workflow YAML is checked with actionlint 1.7.12, downloaded from its official release with a pinned SHA-256 verified before extraction; the workflow records the exact download and checksum.
+
+Every confirmed bug must follow: **reproducing RED regression test → fix → same test PASS → full suite PASS**.
 
 The suites use isolated fixtures and mock host services. Do not run `x-ui-latest.sh` to test syntax: it removes an existing installation. CI does not certify real network/client acceptance. Use a disposable VPS for live checks.
 
