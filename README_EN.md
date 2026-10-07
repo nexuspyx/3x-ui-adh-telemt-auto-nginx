@@ -2,9 +2,11 @@
 
 # 🚀 3x-ui Auto Nginx
 
-**Two domains — a ready-to-use 3x-ui/Xray server.**
+### Automated 3x-ui / Xray deployment on your own VPS
 
-Automatic: **nginx · Let's Encrypt · Fake Site · REALITY · XHTTP · Hysteria2 · optional AdGuard Home + DoH · Backup / Restore**
+**REALITY · XHTTP · Hysteria2 · WebSocket · gRPC · nginx · HTTPS · Backup / Restore**
+
+Two domains, a clean VPS, and a few minutes to install.
 
 [![XHTTP / security](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml)
 [![Backup / Restore](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml)
@@ -15,164 +17,131 @@ Automatic: **nginx · Let's Encrypt · Fake Site · REALITY · XHTTP · Hysteria
 
 </div>
 
-A turnkey deployment project for [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray. Supply a panel domain and a REALITY domain; the script installs the server, configures nginx and TLS, and deploys a cover website. Optionally, it also installs AdGuard Home with DNS-over-HTTPS through the same panel domain, without a public DNS port 53.
+**3x-ui Auto Nginx** installs [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray with nginx, HTTPS, connection profiles, subscriptions, diagnostics, and Backup / Restore. Choose AdGuard Home with DoH during setup if needed.
 
-> **A modernized evolution of the original 3x-ui-pro.** The simple “two domains → ready server” idea remains, while the stack has been substantially reworked for current production use: REALITY/XHTTP/Hysteria2, loopback-isolated internal services, TLS renewal without nginx downtime, UFW-aware setup, Backup/Restore v3, and security/regression CI.
+Bring two domains and a clean VPS. A cover website is selected and deployed automatically.
 
-## ⚡ Get started
+## ✨ Why this project
 
-1. Point **two domains to your VPS**: one for the panel, one for REALITY.
-2. On a clean supported OS, connect to the server over SSH as **root**.
-3. Run:
+| | |
+| --- | --- |
+| **Preconfigured connections**<br>REALITY, XHTTP, Hysteria2, WebSocket, and Trojan gRPC are already set up. | **Private internal services**<br>The panel and subscription service don't expose their internal ports to the internet. |
+| **Restricted nginx routing**<br>Requests cannot be forwarded to arbitrary local ports. | **Backup / Restore v3**<br>Roll back your VPS or recover after reinstalling the OS. |
+| **Automatic certificates**<br>Let's Encrypt issuance and renewal need no manual configuration. | **AdGuard Home + DoH**<br>Opt in during setup; no third domain needed. |
+
+<a id="installation"></a>
+
+## 🚀 Quick start
+
+Point **two domains** at a clean VPS: one for the panel, one for REALITY. Connect via SSH as **root** and allow TCP **80/443**, UDP **443**. [Supported systems](#technical-details).
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh
 bash x-ui-latest.sh
 ```
 
-The script will prompt for both domains. If you prefer to pass them directly:
+The installer prompts for both domains. You can also supply them directly:
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
 ```
 
-Allow inbound TCP 80/443 and UDP 443; the domains must resolve to this server for certificate issuance.
+> **⚠️ Clean install or full reinstall only.** `x-ui-latest.sh` removes the 3x-ui database and nginx configuration. **Do not use it to update a working VPS.** Save a Backup off-server first. A detected installation requires exact uppercase `YES` for reinstall or uninstall.
 
-> **⚠️ Clean installation or full reinstall only.** `x-ui-latest.sh` removes an existing 3x-ui installation, including the panel database and nginx configuration. **Do not use it as a normal update command on a working VPS.** Detected 3x-ui/nginx/TLS state requires exact uppercase `YES` before file removal, including uninstall. If the server is already configured, copy a backup off-server first.
+You receive a **panel URL, random credentials, and diagnostics URL** (3x-ui-authenticated MTR/LibreSpeed). With AdGuard Home: admin URL, password, and DoH endpoint.
 
-## 🌐 Two domains → ready server
+## 🚀 Connection profiles
 
-| You provide | The script prepares | You receive |
-| --- | --- | --- |
-| Panel domain + REALITY domain | 3x-ui/Xray, nginx, Let's Encrypt TLS, automatic fake site, five inbound profiles, subscriptions, diagnostics, Backup / Restore v3, UFW integration and optional AdGuard Home + DoH | Panel URL, generated login/password and diagnostics URL; with AGH selected, its admin URL, password and DoH endpoint without a third domain |
+| Connection | Status |
+| --- | :---: |
+| VLESS + REALITY | ✅ Ready to use |
+| VLESS + XHTTP | ✅ Ready to use |
+| Hysteria2 | ✅ Ready to use |
+| VLESS + WebSocket | ✅ Ready to use |
+| Trojan + gRPC | ✅ Ready to use |
 
-**Create clients in 3x-ui after installation.** Share links and subscriptions are managed through the panel; the installer does not seed client accounts.
+All five profiles are preconfigured. Enable whichever you need in 3x-ui without editing nginx. **Create clients in the panel**; compatibility depends on your app and version.
 
-## ✨ Built for a quick deployment
+### 🔗 Subscriptions
 
-| | |
-| --- | --- |
-| **⚡ Fully automated**<br>Installation and server configuration from two domains. | **🔐 Generated secrets**<br>Panel credentials, REALITY keys/short IDs and paths are generated automatically. |
-| **🌐 nginx + SNI + TLS**<br>Ready routing and Let's Encrypt certificates. | **🥸 Automatic Fake Site**<br>A bundled cover site is randomly selected and deployed for you. |
-| **🚀 Modern transports**<br>REALITY, XHTTP stream-up and Hysteria2, with optional WS/gRPC profiles. | **💾 Backup / Restore**<br>Same-host rollback and recovery on a compatible clean OS. |
-| **📊 Diagnostics**<br>Panel-authenticated MTR and LibreSpeed tools. | **🔥 UFW-aware**<br>Adds application rules while preserving existing policy and rules. |
-| **🛡 AdGuard Home + DoH**<br>Optional integration through the same nginx/TLS, without a public :53. | **♻️ Automatic TLS renewal**<br>Let's Encrypt webroot + `certbot.timer`; nginx stays online during renewal. |
+Standard subscriptions, JSON, and **Mihomo / Clash** use nginx and HTTPS. `provider=1` returns the original subscription for proxy providers instead of a full Clash configuration.
 
-### 🚀 Transport profiles
+## 🛡️ AdGuard Home + DoH
 
-| Transport | Fresh-install default | Connection model |
-| --- | --- | --- |
-| VLESS + REALITY | ✅ Enabled | TCP 443 → nginx SNI → Xray |
-| VLESS + XHTTP `stream-up` | ✅ Enabled | TLS/HTTP/2 → nginx → Unix socket |
-| Hysteria2 | ✅ Enabled | UDP 443 → Xray, TLS + H3 |
-| VLESS + WebSocket | ⏸ Disabled | TLS → fixed nginx route → Xray |
-| Trojan + gRPC | ⏸ Disabled | TLS/HTTP/2 → fixed nginx route → Xray |
+Optional, default **N**. No third domain needed: the admin UI uses a random `/adg-.../` prefix on your panel domain, with DoH at `https://panel.example.com/dns-query`.
 
-All five profiles are created. Enable WS or Trojan gRPC manually in 3x-ui when needed. Client support depends on the transport and client version.
-
-### 🥸 Automatic Fake Site
-
-No need to build a cover website yourself: the installer selects a page from the bundled fake-site collection and deploys it with nginx and TLS. The site is part of the deployment, not a guarantee of traffic invisibility.
-
-### 🛡 AdGuard Home + DNS-over-HTTPS
-
-Installation is **optional, default N**. No third domain is needed: AGH uses the existing panel domain. The admin UI is published under a random `/adg-.../` prefix; the DoH endpoint is `https://panel.example.com/dns-query`.
-
-AGH web and native DNS listen only on loopback; public TCP/UDP 53 is not opened. TLS terminates at nginx. AGH configuration and data are included in **Backup / Restore v3**.
-
-<a id="telemt-web-manager"></a>
-
-## ✈️ Need a Telegram proxy too?
-
-### [Telegram Web Proxy Manager](https://github.com/xPROMSx/telegram-web-proxy-manager)
-
-A companion project for running your own Telegram WEB Proxy on Ubuntu VPS: one-command setup, HTTPS / Let's Encrypt, automatic Fake Sites, health checks and safe updates with rollback/recovery. SOCKS5 is supported for VPS hosts without direct Telegram access.
-
-**3x-ui Auto Nginx** deploys the 3x-ui/Xray server, while **Telegram Web Proxy Manager** adds the Telegram WEB Proxy. The projects are independent and can coexist on the same VPS; this installer does not install the companion project.
+The installer does not open public TCP/UDP **53**. AdGuard Home configuration and data are included in **Backup / Restore v3**.
 
 ## 💾 Backup / Restore
 
-Run as root. A fresh install includes `/usr/local/bin/x-ui-backup`:
+Backup / Restore **v3** lets you roll back your VPS or recover a compatible server after an OS reinstall. The utility is installed with the server; run as root:
 
 ```bash
+# Create a new backup
 x-ui-backup backup
+
+# List available backups
 x-ui-backup list
-```
 
-The current backup format is **v3**. This tool does not restore v2 archives; use the utility from the matching older release.
-
-Restore only trusted archives created by this utility and kept under your control. Restore validation detects corrupted or incompatible managed state, but does not authenticate archive provenance.
-
-Archives are saved in `/var/backups/x-ui/` with root-only permissions. They contain client/database state, certificates/private keys and runtime secrets. **Copy the archive off the VPS** to a PC, NAS or another secure store.
-
-For rollback on the current VPS:
-
-```bash
+# Restore a selected backup
 x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 ```
 
-Success ends with `Restore completed successfully.` Restore covers managed application state, not the entire OS.
+Archives are saved in `/var/backups/x-ui/`.
 
-Backup / Restore v3 was validated on a real Ubuntu 26.04 amd64 VPS: archive creation with AdGuard Home, repeated same-host restore, preservation of TLS/Certbot/AGH/DoH, working panel and XHTTP after restore, and the full stack starting after reboot.
+> **Backups contain sensitive data:** the client database, passwords, and certificate private keys. Keep a copy **off the VPS** and restore only trusted archives.
 
-<details>
-<summary>🛟 Recovery on a new VPS / installing the backup utility</summary>
+[Recovery on a new VPS](#technical-details).
 
-Use **the same OS ID, VERSION_ID and architecture** as the backup, e.g. Ubuntu 26.04 amd64 → Ubuntu 26.04 amd64. Ubuntu 24.04 or arm64 is not a compatible target for that archive.
+## 🔐 Security
 
-1. Install the compatible clean OS and run your usual OS/bootstrap script if needed.
-2. **Do not run `x-ui-latest.sh`.** Install only the backup utility (also suitable for an existing installation missing the tool):
+Service interfaces are not exposed directly to the internet. The panel, subscriptions, and additional services are accessible through nginx and HTTPS, while internal ports remain local.
 
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
-   install -o root -g root -m 0755 /tmp/x-ui-backup /usr/local/bin/x-ui-backup
-   rm -f /tmp/x-ui-backup
-   ```
+There is no generic proxy to arbitrary localhost ports. Critical errors stop installation or restore rather than starting an incomplete configuration.
 
-3. Transfer the saved archive securely, then restore:
-
-   ```bash
-   x-ui-backup restore /root/x-ui-backup-....tar.gz
-   ```
-
-4. If the server IP changed, point the existing domains' DNS to the new VPS. Use your existing panel and client configurations after recovery.
-
-Restore installs missing application dependencies and restores panel/runtime, nginx, certificates, web/diagnostics, project systemd units, managed sysctl and webroot renewal through `certbot.timer`. SSH, `authorized_keys`, fail2ban, base UFW policy and OS/bootstrap state remain the administrator's responsibility. Restore adds 80/tcp, 443/tcp and 443/udp rules but never enables UFW; unrelated cron jobs are preserved.
-
-</details>
+New releases undergo automated checks and full installation and restore testing on a real VPS.
 
 <a id="technical-details"></a>
 
-## 🔧 Technical details
-
 <details>
-<summary>Platforms, routing, firewall and optional tools</summary>
+<summary>⚙️ Technical details and compatibility</summary>
 
-- **Platforms:** Ubuntu 26.04 amd64 has live VPS validation; Ubuntu 24.04 runs in CI. Debian 13 is accepted by OS checks without equivalent live coverage; Debian 12 is unsupported. Not every architecture is tested. QEMU CPUs do not block installation; missing hardware AES produces a performance advisory.
-- **Routing:** nginx owns TCP 443 and routes by SNI to REALITY/Xray on 8443 or the panel TLS vhost on 7443. The REALITY camouflage target uses 9443. XHTTP uses a Unix socket; WS/gRPC have fixed paths/backends. Hysteria2 owns UDP 443 independently.
-- **Panel/API and subscriptions:** the panel backend binds only to `127.0.0.1:<random_port>` with HTTPS; the subscription backend uses loopback HTTPS behind nginx TLS. Public panel/API access remains through nginx :443, including API-token multi-node with TLS verification. Direct native panel mTLS is outside the managed topology.
-- **UFW:** active UFW receives only 80/tcp, 443/tcp and 443/udp rules. Inactive UFW is enabled only after detecting and allowing SSH ports; otherwise it stays inactive with a warning. Existing rules/default policy are preserved, with no hardcoded SSH port 22.
-- **Versions:** latest stable 3x-ui is selected by default. Use `-version <tag>` to select a panel release; binary and CLI come from that same tag.
-- **Diagnostics/subscriptions:** panel-authenticated MTR/LibreSpeed, JSON and Clash/Mihomo subscriptions. New custom WS/gRPC inbounds require explicit nginx routes; there is no arbitrary localhost-port proxy.
-- **Optional AdGuard Home:** default **N**; same panel domain/nginx TLS, no public :53, included in Backup / Restore v3. `x-ui-adguard.sh` is a retired, non-destructive stub. `x-ui-patch.sh` remains a secondary maintenance utility, not a universal updater.
-- **TLS renewal:** webroot `/var/www/acme` + distro `certbot.timer`. Nginx stays online and reloads gracefully after renewal; x-ui restarts only when the panel certificate renews. Release acceptance includes `certbot renew --dry-run` for both certificates.
-- **Compatibility:** `/usr/local/lib/3x-ui-pro` and `/etc/sysctl.d/99-3x-ui-pro.conf` are deliberately preserved for Backup/Restore compatibility.
+- **Systems:** Ubuntu 24.04, Ubuntu 26.04, and Debian 13. Debian 12 is unsupported.
+- **UFW:** adds 80/tcp, 443/tcp, and 443/udp. Inactive UFW is enabled only after the SSH port is detected and allowed; otherwise it remains inactive with a warning. Restore never enables UFW.
+- **Certificates:** Let's Encrypt webroot and `certbot.timer` renew certificates automatically without stopping nginx.
+- **3x-ui version:** latest stable release by default. Select a specific release with `-version v3.9.0`; the minimum is v3.8.0.
+
+**Recovery on a new VPS:** match the backup's OS, OS version, and architecture. Update DNS if the IP changes. Do not run `x-ui-latest.sh` — install only the utility, then restore a trusted archive:
+
+```bash
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
+install -o root -g root -m 0755 /tmp/x-ui-backup /usr/local/bin/x-ui-backup
+rm -f /tmp/x-ui-backup
+x-ui-backup restore /root/<archive>.tar.gz
+```
+
+SSH, OS configuration, and the base firewall remain the administrator's responsibility. For v2 archives, use the utility from the matching older release.
 
 </details>
 
-<details>
-<summary>Validation, development and releases</summary>
+<a id="telemt-web-manager"></a>
 
-CI checks all transport/Host profiles, nginx syntax, negative arbitrary-localhost-port access, firewall behavior, version pinning, the destructive guard, webroot/timer renewal and canonical sources. Backup/Restore tests use isolated fixtures with real tar/gzip, SQLite and nginx. Bash syntax covers installer, patch, AdGuard and backup scripts. CI does not replace live client acceptance.
+## ✈️ Telegram Web Proxy Manager
 
-Development uses PRs to `main`; see [CONTRIBUTING.md](CONTRIBUTING.md). Required job names remain `Stack XHTTP and security` and `Stack Backup and restore` for branch-protection compatibility.
+[A companion project](https://github.com/xPROMSx/telegram-web-proxy-manager) for your own Telegram WEB Proxy: HTTPS, a cover site, and updates with rollback.
 
-Historical `personal-v*` releases and branches are preserved. Future project releases belong to 3x-ui Auto Nginx; project versioning is independent of upstream 3x-ui/Xray versions. No new release is implied by branding changes.
-
-</details>
+The projects are independent; **this installer does not install Telegram Web Proxy Manager**.
 
 ## 🤝 Credits / Origins
 
-Derived from [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) and since substantially reworked as an independently maintained project. The panel is provided by [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). **3x-ui Auto Nginx** may selectively adopt useful upstream changes after review.
+Based on [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), with more than half of the core logic reworked or replaced since the fork. XHTTP/nginx routing, certificates, and Backup / Restore were reworked; Hysteria2 was added and identified security issues fixed. The project is developed independently.
 
-Third-party authors retain their rights and existing license/copyright statements. No new license is added for inherited code.
+The panel comes from [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Third-party authors retain their rights and existing licenses.
+
+<div align="center">
+
+**Two domains. A few minutes. Your own 3x-ui / Xray server.**
+
+[Install](#installation) · [Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Issues](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
+
+</div>
