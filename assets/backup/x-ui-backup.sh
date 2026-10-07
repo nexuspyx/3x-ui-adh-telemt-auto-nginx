@@ -1119,38 +1119,22 @@ save_restore_services() {
 
 snapshot_restore_target() {
     local path
-    ROLLBACK_DIR=$(mktemp -d "$BACKUP_STORE/.rollback-XXXXXX")
-    chmod 0700 "$ROLLBACK_DIR"
+    ROLLBACK_DIR=$(mktemp -d "$BACKUP_STORE/.rollback-XXXXXX") || die 'Cannot create private rollback directory.'
+    chmod 0700 "$ROLLBACK_DIR" || die 'Cannot protect private rollback directory.'
     local -a owned=("${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}" /var/www/diagnostics /etc/systemd/system/AdGuardHome.service)
     for path in "${owned[@]}"; do
         if [[ -e "$path" || -L "$path" ]]; then
-            mkdir -p "$ROLLBACK_DIR/files$(dirname "$path")"
-            cp -aT --reflink=auto -- "$path" "$ROLLBACK_DIR/files$path"
+            mkdir -p "$ROLLBACK_DIR/files$(dirname "$path")" || die "Cannot prepare rollback copy: $path"
+            cp -aT --reflink=auto -- "$path" "$ROLLBACK_DIR/files$path" || die "Cannot copy rollback state: $path"
         fi
     done
+    # Clean-host recovery has no previous objects to copy.
+    for path in "$DB" /usr/local/x-ui/x-ui /etc/nginx/nginx.conf; do
+        [[ ! -e "$path" || -f "$ROLLBACK_DIR/files$path" ]] || die "Missing rollback file: $path"
+    done
     if [[ -f "$DB" ]]; then quick_check "$ROLLBACK_DIR/files$DB"; fi
-    python3 - "$ROLLBACK_DIR/files" "${owned[@]}" <<'PY'
-import hashlib, os, pathlib, stat, sys
-root = pathlib.Path(sys.argv[1])
-def fingerprint(path):
-    mode = path.lstat().st_mode
-    if stat.S_ISLNK(mode): return ('link', os.readlink(path))
-    if stat.S_ISDIR(mode): return ('directory', tuple(sorted(p.name for p in path.iterdir())))
-    if not stat.S_ISREG(mode): raise ValueError('Unexpected original managed file type')
-    digest = hashlib.sha256()
-    with path.open('rb') as f:
-        for block in iter(lambda:f.read(1024*1024),b''): digest.update(block)
-    return ('file', stat.S_IMODE(mode), digest.digest())
-for name in sys.argv[2:]:
-    path = pathlib.Path(name)
-    if not path.exists() and not path.is_symlink(): continue
-    paths = [path, *path.rglob('*')] if path.is_dir() and not path.is_symlink() else [path]
-    for current in paths:
-        copy = root / str(current).lstrip('/')
-        if fingerprint(current) != fingerprint(copy): raise ValueError('Incomplete rollback copy: ' + str(current))
-PY
-    # A verified private copy plus SQLite validation must precede the first deletion.
-    printf 'complete\n' > "$ROLLBACK_DIR/ready"
+    # Successful copies and SQLite validation must precede the first deletion.
+    printf 'complete\n' > "$ROLLBACK_DIR/ready" || die 'Cannot mark rollback snapshot ready.'
 }
 
 recover_restore_target() {

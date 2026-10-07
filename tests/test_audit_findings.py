@@ -652,6 +652,31 @@ class AuditRecovery(unittest.TestCase):
                 self.assertEqual(f.path('/etc/x-ui/x-ui.db').read_bytes(),original)
         self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
 
+    def test_wal_target_snapshot_and_repeated_restore_succeed(self):
+        f = self.fixture; archive = f.backup()
+        dbfile = f.path('/etc/x-ui/x-ui.db')
+        for _ in range(2):
+            with self.subTest(restore=_ + 1):
+                db = sqlite3.connect(dbfile)
+                try:
+                    self.assertEqual(db.execute('PRAGMA journal_mode=WAL').fetchone()[0], 'wal')
+                    db.execute('CREATE TABLE IF NOT EXISTS rollback_wal_fixture (value TEXT)')
+                    db.execute("INSERT INTO rollback_wal_fixture VALUES ('pending WAL data')")
+                    db.commit()
+                    self.assertEqual(dbfile.read_bytes()[18:20], b'\x02\x02')
+                    for suffix in ('-wal', '-shm'):
+                        self.assertTrue(Path(str(dbfile) + suffix).is_file())
+                    result = f.run_tool('restore', archive)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('Restore completed successfully.', result.stdout)
+                    # Incoming, rollback and restored databases passed the real SQLite CLI check.
+                    self.assertEqual(result.stdout.count('SQLite database is consistent'), 3)
+                finally:
+                    db.close()
+                with sqlite3.connect(dbfile) as restored:
+                    self.assertEqual(restored.execute('PRAGMA quick_check').fetchone()[0], 'ok')
+                    self.assertIsNone(restored.execute("SELECT name FROM sqlite_master WHERE name='rollback_wal_fixture'").fetchone())
+
     def test_post_replacement_dead_xray_restores_and_verifies_old_state(self):
         f = self.fixture; archive = f.backup()
         incoming = self.modified(archive,{f.member('/var/www/html/recovery-marker'):b'incoming'})
