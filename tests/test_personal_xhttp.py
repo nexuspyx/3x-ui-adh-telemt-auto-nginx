@@ -105,6 +105,12 @@ def function(name):
 
 
 class PersonalXHTTP(unittest.TestCase):
+    def test_vless_seed_supplies_json_subscription_encryption(self):
+        # v3.9.0 genVless reads the outbound encryption from these inbound settings.
+        for name in ('reality', 'ws', 'xhttp'):
+            with self.subTest(profile=name):
+                self.assertEqual(json.loads(inbounds()[name]['settings']).get('encryption'), 'none')
+
     def test_panel_directory_errors_abort_before_following_operations(self):
         # Run the original function, including its caller's `||` context (no errexit).
         for failed in (1, 2):
@@ -589,7 +595,7 @@ sleep() { :; }
     def test_reality_profile_is_preserved(self):
         row = inbounds()["reality"]
         self.assertEqual((row["port"], row["listen"], row["tag"]), ("8443", "127.0.0.1", "inbound-8443"))
-        self.assertEqual(json.loads(row["settings"]), {"clients": [], "decryption": "none", "fallbacks": []})
+        self.assertEqual(json.loads(row["settings"]), {"clients": [], "decryption": "none", "encryption": "none", "fallbacks": []})
         self.assertEqual(json.loads(row["stream_settings"]), {
             "network": "tcp", "security": "reality",
             "realitySettings": {
