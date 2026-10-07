@@ -76,7 +76,7 @@ No need to build a cover website yourself: the installer selects a page from the
 
 Installation is **optional, default N**. No third domain is needed: AGH uses the existing panel domain. The admin UI is published under a random `/adg-.../` prefix; the DoH endpoint is `https://panel.example.com/dns-query`.
 
-AGH web and native DNS listen only on loopback; public TCP/UDP 53 is not opened. TLS terminates at nginx. AGH configuration, data and sessions are included in **Backup / Restore v3**.
+AGH web and native DNS listen only on loopback; public TCP/UDP 53 is not opened. TLS terminates at nginx. AGH configuration and data are included in **Backup / Restore v3**.
 
 <a id="telemt-web-manager"></a>
 
@@ -98,6 +98,8 @@ x-ui-backup list
 ```
 
 The current backup format is **v3**. This tool does not restore v2 archives; use the utility from the matching older release.
+
+Restore only trusted archives created by this utility and kept under your control. Restore validation detects corrupted or incompatible managed state, but does not authenticate archive provenance.
 
 Archives are saved in `/var/backups/x-ui/` with root-only permissions. They contain client/database state, certificates/private keys and runtime secrets. **Copy the archive off the VPS** to a PC, NAS or another secure store.
 

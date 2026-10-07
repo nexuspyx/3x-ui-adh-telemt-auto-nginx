@@ -30,12 +30,15 @@ def function(name, source=INSTALLER):
 
 class AuditInstaller(unittest.TestCase):
     def flag(self, response, failure=False):
-        script = ('curl() { printf "%s" "$RESPONSE"; return "$CURL_RESULT"; };\n' +
+        script = ('curl() { cat "$RESPONSE_FILE"; return "$CURL_RESULT"; };\n' +
                   function('country_flag') + '\ncountry_flag')
-        result = subprocess.run(['bash', '-eu', '-c', script], capture_output=True,
-                                env={**os.environ, 'LC_ALL': 'C', 'RESPONSE': response,
-                                     'CURL_RESULT': '1' if failure else '0'})
+        with tempfile.NamedTemporaryFile() as fixture:
+            fixture.write(response.encode('utf-8') if isinstance(response,str) else response); fixture.flush()
+            result = subprocess.run(['bash', '-eu', '-c', script], capture_output=True,
+                                    env={**os.environ, 'LC_ALL': 'C', 'RESPONSE_FILE': fixture.name,
+                                         'CURL_RESULT': '1' if failure else '0'})
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr,b'')
         return result.stdout.decode('utf-8')
 
     def test_country_iso_and_nonfatal_fallback(self):
@@ -44,6 +47,32 @@ class AuditInstaller(unittest.TestCase):
         for payload in ('null', '[]', 'bad JSON', '{}', '{"success":false,"country_code":"FI"}'):
             self.assertEqual(self.flag(payload), '🌐')
         self.assertEqual(self.flag('{"success":true,"country_code":"FI"}', failure=True), '🌐')
+        self.assertEqual(self.flag(b'{"success":true,"country_code":"\xff\xfe"}'), '🌐')
+
+    def test_country_parser_failure_still_returns_single_fallback(self):
+        # Even a parser startup/write failure must not leak partial output or fail installation.
+        script = ('curl() { :; }; python3() { printf partial; echo traceback >&2; return 1; };\n' +
+                  function('country_flag') + '\ncountry_flag')
+        result = subprocess.run(['bash','-eu','-c',script],capture_output=True)
+        self.assertEqual(result.returncode,0)
+        self.assertEqual(result.stdout.decode(),'🌐')
+        self.assertEqual(result.stderr,b'')
+
+    def test_generated_panel_and_camouflage_routes_are_separate(self):
+        from test_personal_xhttp import render, MAIN
+        main = render(MAIN)
+        reality = render('cat > "/etc/nginx/sites-available/${reality_domain}"')
+        for path in ('/panel/','/panel','= /__diag_auth'):
+            block = re.search(r'location ' + re.escape(path) + r' \{(.*?)\n    \}',main,re.S)
+            self.assertIsNotNone(block,path)
+            self.assertIn('proxy_pass https://127.0.0.1:10002',block[1])
+        self.assertNotIn('location /panel',reality)
+        self.assertNotIn('127.0.0.1:10002',reality)
+        for item in ('listen 127.0.0.1:9443 ssl','root /var/www/html/;',
+                     '/etc/letsencrypt/live/cover.example/fullchain.pem',
+                     '/etc/letsencrypt/live/cover.example/privkey.pem',
+                     'include /etc/nginx/snippets/includes.conf;'):
+            self.assertIn(item,reality)
 
     def test_hostile_country_cannot_inject_sqlite_cli(self):
         self.assertIn('emoji_flag=$(country_flag)',function('configure_xui_db'))
@@ -162,7 +191,7 @@ if sys.argv[1]=='setting':
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1',
-                            '-subj','/CN=deploy.example','-addext','subjectAltName=DNS:deploy.example',
+                            '-subj','/CN=deploy.example','-addext','subjectAltName=DNS:deploy.example,DNS:cover.example',
                             '-keyout',str(root/'key.pem'),'-out',str(root/'cert.pem')], check=True,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             requests = []
@@ -179,8 +208,9 @@ if sys.argv[1]=='setting':
             for server in (panel, sub):
                 thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
                 self.addCleanup(server.server_close); self.addCleanup(server.shutdown)
-            with socket.socket() as s:
+            with socket.socket() as s, socket.socket() as r:
                 s.bind(('127.0.0.1',0)); public_port = s.getsockname()[1]
+                r.bind(('127.0.0.1',0)); reality_port = r.getsockname()[1]
             shared = render(SHARED, panel_port=str(panel.server_port), sub_port=str(sub.server_port))
             self.assertEqual(shared.count(f'proxy_pass http://127.0.0.1:{sub.server_port};'),7)
             self.assertNotIn(f'proxy_pass https://127.0.0.1:{sub.server_port};',shared)
@@ -192,8 +222,15 @@ if sys.argv[1]=='setting':
             vhost = re.sub(r'/etc/letsencrypt/live/[^/]+/fullchain.pem', str(root/'cert.pem'), vhost)
             vhost = re.sub(r'/etc/letsencrypt/live/[^/]+/privkey.pem', str(root/'key.pem'), vhost)
             vhost = vhost.replace('/etc/nginx/snippets/includes.conf',str(root/'includes.conf')).replace('/etc/nginx/snippets/x-ui-auto-optional',str(root/'optional'))
+            reality = render('cat > "/etc/nginx/sites-available/${reality_domain}"',
+                             panel_port=str(panel.server_port), sub_port=str(sub.server_port))
+            reality = re.sub(r'127\.0\.0\.1:9443 ssl(?: http2)?', f'127.0.0.1:{reality_port} ssl', reality)
+            reality = re.sub(r'/etc/letsencrypt/live/[^/]+/fullchain.pem', str(root/'cert.pem'), reality)
+            reality = re.sub(r'/etc/letsencrypt/live/[^/]+/privkey.pem', str(root/'key.pem'), reality)
+            reality = reality.replace('/etc/nginx/snippets/includes.conf',str(root/'includes.conf')).replace('/var/www/html/',str(root/'site')+'/')
+            (root/'site').mkdir(); (root/'site/index.html').write_text('camouflage')
             maps = render('cat > /etc/nginx/sites-available/00-maps.conf')
-            (root/'nginx.conf').write_text(f'pid {root}/nginx.pid; error_log {root}/error.log; events {{}} http {{ access_log off; {maps}\n{vhost}\n}}')
+            (root/'nginx.conf').write_text(f'pid {root}/nginx.pid; error_log {root}/error.log; events {{}} http {{ access_log off; {maps}\n{vhost}\n{reality}\n}}')
             cmd = [nginx,'-p',str(root)+'/', '-c',str(root/'nginx.conf')]
             syntax = subprocess.run([*cmd,'-t'],capture_output=True,text=True)
             self.assertEqual(syntax.returncode,0,syntax.stderr)
@@ -211,6 +248,14 @@ if sys.argv[1]=='setting':
                 self.assertEqual(result.returncode,0,result.stderr)
                 self.assertEqual(json.loads(result.stdout), {'backend':kind,'path':path})
                 self.assertEqual(requests[-1], (kind,path,'Bearer fixture-api-token','deploy.example'))
+            before = list(requests)
+            result = subprocess.run(['curl','--noproxy','*','-sS','--max-time','5',
+                                     '--cacert',str(root/'cert.pem'),'--resolve',f'cover.example:{reality_port}:127.0.0.1',
+                                     '-H','Authorization: Bearer fixture-api-token',
+                                     f'https://cover.example:{reality_port}/panel/panel/api/inbounds/list?node=Fixture'],
+                                    capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(requests,before,'camouflage request reached a managed backend')
             self.assertNotIn('wrong version number',(root/'error.log').read_text().lower())
 
 
@@ -241,6 +286,37 @@ class AuditRecovery(unittest.TestCase):
         self.assertEqual(json.loads((f.root/'services.json').read_text()),services)
         self.assertFalse(any(c[:2] == ['systemctl','stop'] for c in f.commands()))
         self.assertNotIn('Restore completed successfully.',result.stdout)
+
+    def legacy_panel_blocks(self):
+        return ''.join('''    location %s {
+        proxy_redirect off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_pass http://127.0.0.1:10002;
+    }
+''' % path for path in ('/panel/', '/panel'))
+
+    def test_custom_reality_panel_route_and_invalid_basepath_fail_before_mutation(self):
+        f = self.fixture; archive = f.backup()
+        reality = f.path('/etc/nginx/sites-available/reality.example.com').read_text()
+        for blocks in (self.legacy_panel_blocks().replace('proxy_redirect off;', 'proxy_redirect default;'),
+                       '    location = "/panel/" { proxy_pass https://127.0.0.1:10002; }\n'):
+            bad = self.modified(archive,{f.member('/etc/nginx/sites-available/reality.example.com'):
+                                        reality.replace('    include ',blocks + '    include ',1).encode()})
+            services = json.loads((f.root/'services.json').read_text()); (f.root/'commands').write_text('')
+            result = f.run_tool('restore',bad)
+            self.assert_untouched(result,services)
+            self.assertIn('Unexpected REALITY panel location',result.stderr)
+        for value in (None, '/panel/unsafe/', '/panel/duplicate/'):
+            dbfile = Path(f.temp.name)/'invalid-path.db'; shutil.copy2(f.path('/etc/x-ui/x-ui.db'),dbfile)
+            with sqlite3.connect(dbfile) as db:
+                if value is None: db.execute("DELETE FROM settings WHERE key='webBasePath'")
+                elif value.endswith('duplicate/'): db.execute("INSERT INTO settings VALUES('webBasePath',?)",(value,))
+                else: db.execute("UPDATE settings SET value=? WHERE key='webBasePath'",(value,))
+            bad = self.modified(archive,{f.member('/etc/x-ui/x-ui.db'):dbfile.read_bytes()})
+            services = json.loads((f.root/'services.json').read_text()); (f.root/'commands').write_text('')
+            self.assert_untouched(f.run_tool('restore',bad),services)
 
     def test_broken_staged_nginx_rejected_before_any_service_stop(self):
         f = self.fixture; archive = f.backup()
@@ -273,6 +349,13 @@ class AuditRecovery(unittest.TestCase):
 
     def test_old_v3_normalization_and_new_v3_idempotency(self):
         f = self.fixture
+        reality_path = f.path('/etc/nginx/sites-available/reality.example.com')
+        normalized_reality = reality_path.read_text()
+        reality_path.write_text(normalized_reality.replace('    include ',self.legacy_panel_blocks() + '    include ',1))
+        main = f.path('/etc/nginx/nginx.conf').read_bytes()
+        with f.path('/etc/nginx/snippets/includes.conf').open('a') as includes:
+            includes.write('location ^~ /Session7AbC/ { grpc_pass unix:/dev/shm/uds2023.sock; }\n')
+        shared = f.path('/etc/nginx/snippets/includes.conf').read_text()
         # Original v1.5.0 hook lacks the new runtime health, but its exact managed body is trusted.
         result = subprocess.run(['bash','-eu','-c',f.script.read_text().split('cmd_restore() {')[0] +
                                  '\nrender_certificate_hook example.com reality.example.com legacy\n'],env=f.env,capture_output=True)
@@ -287,6 +370,10 @@ class AuditRecovery(unittest.TestCase):
             includes = f.path('/etc/nginx/snippets/includes.conf').read_text()
             self.assertEqual(includes.count('proxy_pass http://127.0.0.1:10003;'),7)
             self.assertNotIn('proxy_pass https://127.0.0.1:10003;',includes)
+            self.assertEqual(includes,shared.replace('proxy_pass https://','proxy_pass http://'))
+            self.assertEqual(reality_path.read_text(),normalized_reality)
+            self.assertNotIn('location /panel',reality_path.read_text())
+            self.assertEqual(f.path('/etc/nginx/nginx.conf').read_bytes(),main)
             self.assertIn('proxy_pass https://127.0.0.1:10002;',f.path('/etc/nginx/nginx.conf').read_text())
             self.assertIn('check_xray_runtime',f.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx').read_text())
             self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)

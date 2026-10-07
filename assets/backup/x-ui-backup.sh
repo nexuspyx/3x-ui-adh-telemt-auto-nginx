@@ -957,7 +957,7 @@ for domain in (panel, reality):
 with sqlite3.connect(staged(dbpath)) as db:
     rows = db.execute('SELECT key,value FROM settings').fetchall()
     settings = dict(rows)
-    for name in ('webListen','webPort','webCertFile','webKeyFile','subPort','subPath','subJsonPath'):
+    for name in ('webListen','webPort','webBasePath','webCertFile','webKeyFile','subPort','subPath','subJsonPath'):
         if sum(k == name for k,v in rows) != 1: raise ValueError('Missing/duplicate setting: ' + name)
     if settings['webListen'] not in ('','127.0.0.1'): raise ValueError('Unexpected panel listen setting')
     if settings.get('subListen') != '127.0.0.1' or settings.get('subCertFile','') or settings.get('subKeyFile',''):
@@ -973,6 +973,11 @@ with sqlite3.connect(staged(dbpath)) as db:
         if staged(expected).read_bytes() != staged(letsencrypt + '/live/' + panel + '/' + filename).read_bytes():
             raise ValueError('Panel certificate reference does not match project lineage')
     port, panel_port = settings['subPort'], settings['webPort']
+    if not re.fullmatch(r'[0-9]{1,5}',panel_port) or not 1 <= int(panel_port) <= 65535:
+        raise ValueError('Invalid panel port')
+    panel_base = settings['webBasePath']
+    if not re.fullmatch(r'/[A-Za-z0-9]+/',panel_base):
+        raise ValueError('Unexpected managed panel base path')
     if not re.fullmatch(r'[0-9]{1,5}',port) or not 1 <= int(port) <= 65535 or port == panel_port:
         raise ValueError('Invalid subscription port')
     sub, jsonpath = settings['subPath'], settings['subJsonPath']
@@ -1002,6 +1007,27 @@ with sqlite3.connect(staged(dbpath)) as db:
     if depth or seen != expected: raise ValueError('Incomplete managed subscription routes')
     include.write_text(''.join(lines))
     db.execute("UPDATE settings SET value='127.0.0.1' WHERE key='webListen' AND value='' ")
+# Remove only the two exact old managed panel proxies from the staged camouflage vhost.
+# The main panel vhost and shared include are intentionally outside this migration.
+camouflage = staged(nginx + '/sites-available/' + reality)
+text = camouflage.read_text()
+for path in (panel_base, panel_base.rstrip('/')):
+    block = f'''    location {path} {{
+        proxy_redirect off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_pass http://127.0.0.1:{panel_port};
+    }}
+'''
+    if text.count(block) > 1:
+        raise ValueError('Duplicate legacy REALITY panel location')
+    text = text.replace(block, '', 1)
+for location in re.findall(r'\blocation\s+([^{};\n]+?)\s*\{',text):
+    # A custom/mismatched panel route is not safe to guess or silently preserve.
+    if re.search(re.escape(panel_base.rstrip('/')) + r'(?:[^A-Za-z0-9_-]|$)',location):
+        raise ValueError('Unexpected REALITY panel location; staged migration refused')
+camouflage.write_text(text)
 # Private nginx representation, including absolute archived cert/module symlinks.
 validation.mkdir(mode=0o700)
 for base in (nginx, letsencrypt, certroot):

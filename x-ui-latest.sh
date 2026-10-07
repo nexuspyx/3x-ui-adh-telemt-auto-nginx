@@ -818,21 +818,6 @@ server {
     error_page 400 401 402 403 500 501 502 503 504 =404 /404;
     proxy_intercept_errors on;
 
-    location /${panel_path}/ {
-        proxy_redirect off;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_pass http://127.0.0.1:${panel_port};
-    }
-    location /${panel_path} {
-        proxy_redirect off;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_pass http://127.0.0.1:${panel_port};
-    }
-
     include /etc/nginx/snippets/includes.conf;
 }
 EOF
@@ -975,9 +960,9 @@ install_panel() {
 # CONFIGURE X-UI DATABASE
 # ─────────────────────────────────────────────────────────────────────────────
 country_flag() {
-    local response
+    local response flag
     response=$(curl -fsS --connect-timeout 5 --max-time 10 https://ipwho.is/ 2>/dev/null) || response=''
-    printf '%s' "$response" | python3 -c '
+    flag=$(printf '%s' "$response" | python3 -c '
 import json, re, sys
 flag = "🌐"
 try:
@@ -985,10 +970,11 @@ try:
     code = data.get("country_code") if data.get("success") is True else None
     if isinstance(code, str) and re.fullmatch(r"[A-Z]{2}", code):
         flag = "".join(chr(0x1F1E6 + ord(c) - ord("A")) for c in code)
-except (ValueError, AttributeError, RecursionError):
+except Exception:
     pass
 sys.stdout.buffer.write(flag.encode("utf-8"))
-'
+' 2>/dev/null) || flag='🌐'
+    printf '%s' "${flag:-🌐}"
 }
 
 configure_xui_db() {

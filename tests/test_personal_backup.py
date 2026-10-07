@@ -271,7 +271,7 @@ class PersonalBackup(unittest.TestCase):
             conn.execute('INSERT INTO settings VALUES (?, ?)',
                          ('webCertFile', str(self.path('/root/cert/example.com/fullchain.pem'))))
             conn.executemany('INSERT INTO settings VALUES (?,?)', [
-                ('webListen',''), ('webPort','10002'),
+                ('webListen',''), ('webPort','10002'), ('webBasePath','/panel/'),
                 ('webKeyFile',str(self.path('/root/cert/example.com/privkey.pem'))),
                 ('subListen','127.0.0.1'), ('subPort','10003'), ('subPath','/subscription/'),
                 ('subJsonPath','/jsonsub'), ('subCertFile',''), ('subKeyFile','')])
@@ -291,6 +291,10 @@ class PersonalBackup(unittest.TestCase):
                      '/assets', '/assets/', '/jsonsub', '/jsonsub/')
         includes = '\n'.join('location ' + name + ' { proxy_pass https://127.0.0.1:10003; }' for name in locations)
         self.write('/etc/nginx/snippets/includes.conf', includes + '\n')
+        from test_personal_xhttp import render
+        self.write('/etc/nginx/sites-available/reality.example.com', relocated(
+            render('cat > "/etc/nginx/sites-available/${reality_domain}"',
+                   domain='example.com', reality_domain='reality.example.com'), self.root))
         self.write('/etc/nginx/nginx.conf', f'pid {self.root}/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{ server {{ listen 127.0.0.1:10080; include {self.root}/etc/nginx/snippets/includes.conf; location /panel/ {{ proxy_pass https://127.0.0.1:10002; }} }} }}\n')
         self.write('/var/www/html/index.html', '192.0.2.10 unchanged')
         self.write('/var/www/subpage/clash.yaml', '192.0.2.10 unchanged')

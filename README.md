@@ -76,7 +76,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 Установка **опциональна, по умолчанию N**. Третий домен не нужен: используется существующий домен панели. Admin UI доступен под случайным `/adg-.../`, DoH endpoint — `https://panel.example.com/dns-query`.
 
-AGH web и native DNS слушают только loopback; публичный TCP/UDP 53 не открывается. TLS завершается nginx. Конфигурация, данные и sessions AGH включаются в **Backup / Restore v3**.
+AGH web и native DNS слушают только loopback; публичный TCP/UDP 53 не открывается. TLS завершается nginx. Конфигурация и данные AGH включаются в **Backup / Restore v3**.
 
 <a id="telemt-web-manager"></a>
 
@@ -98,6 +98,8 @@ x-ui-backup list
 ```
 
 Текущий backup format — **v3**. Архивы v2 новым tool не поддерживаются: восстановите их утилитой из matching older release.
+
+Восстанавливайте только доверенные архивы, созданные этой утилитой и хранившиеся под вашим контролем. Проверки restore выявляют повреждённое или несовместимое managed state, но не проверяют происхождение архива.
 
 Архивы сохраняются в `/var/backups/x-ui/` с доступом только для root. Внутри — состояние клиентов/базы, сертификаты/private keys и runtime secrets. **Обязательно скопируйте архив с VPS** на ПК, NAS или в другое безопасное хранилище.
 
