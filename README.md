@@ -1,10 +1,10 @@
 <div align="center">
 
-# 🚀 3x-ui Auto Nginx
+# 🚀 3X-UI AUTO NGINX
 
-### Автоматическое развёртывание 3x-ui / Xray на собственном VPS
+### Автоматическое развёртывание 3X-UII / XRAY-CORE на собственном VPS
 
-**REALITY · XHTTP · Hysteria2 · WebSocket · gRPC · nginx · HTTPS · Backup / Restore**
+**REALITY · XHTTP · HYSTERIA2 · WebSocket · gRPC · NGINX · HTTPS · BACKUP / RESTORE**
 
 Два домена, чистый VPS и несколько минут на установку.
 
@@ -17,7 +17,7 @@
 
 </div>
 
-**3x-ui Auto Nginx** устанавливает [3x-ui](https://github.com/MHSanaei/3x-ui) и Xray, настраивает nginx, HTTPS, подключения, подписки, диагностику и Backup / Restore. AdGuard Home с DoH — по желанию.
+**3X-UI AUTO NGINX** устанавливает [3x-ui](https://github.com/MHSanaei/3x-ui) и Xray, настраивает nginx, HTTPS, подключения, подписки, диагностику и Backup / Restore. AdGuard Home с DoH — по желанию.
 
 Нужны два домена и чистый VPS. Сайт-прикрытие установщик выбирает и разворачивает автоматически.
 
@@ -128,9 +128,9 @@ SSH, настройки ОС и базовый firewall остаются отв�
 
 ## ✈️ Telegram Web Proxy Manager
 
-[Companion-проект](https://github.com/xPROMSx/telegram-web-proxy-manager) для собственного Telegram WEB Proxy: HTTPS, сайт-прикрытие и обновления с откатом.
+[Мой дополнительный проект](https://github.com/xPROMSx/telegram-web-proxy-manager) для собственного Telegram WEB Proxy: HTTPS, сайт-прикрытие и обновления с аварийным откатом.
 
-Проекты независимы; **этот установщик не устанавливает Telegram Web Proxy Manager**.
+Проекты независимы; **этот установщик 3X-UI не устанавливает Telegram Web Proxy Manager**.
 
 ## 🤝 Происхождение и авторы
 
