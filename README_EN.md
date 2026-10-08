@@ -28,14 +28,14 @@ Bring two domains and a clean VPS. A cover website is selected and deployed auto
 | | |
 | --- | --- |
 | **Preconfigured connections**<br>REALITY, XHTTP, Hysteria2, WebSocket, and Trojan gRPC are already set up. | **Private internal services**<br>The panel and subscription service don't expose their internal ports to the internet. |
-| **Restricted nginx routing**<br>Requests cannot be forwarded to arbitrary local ports. | **Backup / Restore v3**<br>Roll back your VPS or recover after reinstalling the OS. |
+| **Restricted nginx routing**<br>Requests cannot be forwarded to arbitrary local ports. | **Backup / Restore v3**<br>Roll back your VPS or restore to a new server, including one from another hosting provider. |
 | **Automatic certificates**<br>Let's Encrypt issuance and renewal need no manual configuration. | **AdGuard Home + DoH**<br>Opt in during setup; no third domain needed. |
 
 <a id="installation"></a>
 
 ## 🚀 Quick start
 
-Point **two domains** at a clean VPS: one for the panel, one for REALITY. Connect via SSH as **root** and allow TCP **80/443**, UDP **443**. [Supported systems](#technical-details).
+Point the DNS records of **two domains** to your VPS IP address: one for the panel, one for REALITY. Connect via SSH as **root** and allow TCP **80/443**, UDP **443**. [Supported systems](#technical-details).
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh
@@ -134,7 +134,7 @@ The projects are independent; **this installer does not install Telegram Web Pro
 
 ## 🤝 Credits / Origins
 
-Based on [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro). Since the fork, nginx/SNI routing, XHTTP, certificates, and Backup / Restore have been reworked; Hysteria2 was added and identified security issues fixed. The project is developed independently.
+Based on [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), this project is maintained independently. Since the fork, nginx/SNI routing and XHTTP configuration have been substantially reworked, TLS certificate issuance and automatic renewal redesigned, and Backup / Restore v3 introduced with recovery and rollback capabilities. Hysteria2 on UDP/443 was added, and identified security issues were fixed.
 
 The panel comes from [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Third-party authors retain their rights and existing licenses.
 
