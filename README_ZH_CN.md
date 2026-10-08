@@ -28,14 +28,14 @@
 | | |
 | --- | --- |
 | **预配置的连接方式**<br>REALITY、XHTTP、Hysteria2、WebSocket 和 Trojan gRPC 均已配置。 | **内部服务不直接暴露**<br>面板和订阅服务的内部端口不会直接暴露到互联网。 |
-| **受限的 nginx 路由**<br>外部请求无法被代理到任意本地端口。 | **Backup / Restore v3**<br>回滚 VPS 或在重装系统后恢复配置。 |
+| **受限的 nginx 路由**<br>外部请求无法被代理到任意本地端口。 | **Backup / Restore v3**<br>回滚当前 VPS，或将备份恢复到新服务器，包括其他 VPS 服务商的服务器。 |
 | **自动管理证书**<br>自动申请和续期 Let's Encrypt 证书，无需手动配置。 | **AdGuard Home + DoH**<br>按需启用，无需第三个域名。 |
 
 <a id="installation"></a>
 
 ## 🚀 快速开始
 
-将**两个域名**解析到一台全新的 VPS，分别用于面板和 REALITY。通过 SSH 以 **root** 身份登录，并开放 TCP **80/443** 和 UDP **443**。查看[支持的系统](#technical-details)。
+将**两个域名**的 DNS 记录指向你的 VPS IP 地址，分别用于面板和 REALITY。通过 SSH 以 **root** 身份登录，并开放 TCP **80/443** 和 UDP **443**。查看[支持的系统](#technical-details)。
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh
@@ -134,7 +134,7 @@ SSH、系统配置及基础防火墙仍由管理员负责。对于 v2 备份，�
 
 ## 🤝 致谢与项目来源
 
-本项目基于 [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) 开发，并独立持续维护。nginx/SNI 路由、XHTTP、证书和 Backup / Restore 已经过重新设计，新增 Hysteria2，并修复了已发现的安全问题。
+本项目基于 [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) 开发，并独立维护。Fork 之后，对 nginx/SNI 路由和 XHTTP 配置进行了大幅重构，重新设计了 TLS 证书签发与自动续期流程，并引入支持恢复和回滚的 Backup / Restore v3。此外还增加了运行于 UDP/443 的 Hysteria2，并修复了已发现的安全问题。
 
 面板本身来自 [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui)。第三方组件的权利及其现有许可仍归原作者所有。
 
