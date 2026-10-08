@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 import unittest
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from test_personal_xhttp import ROOT, FIXTURE, render, seed, SHARED, MAIN
 
@@ -153,7 +153,7 @@ class RealIntegration(unittest.TestCase):
                 # Deliberately separate header fragments and body. No delay or retry.
                 for chunk in (headers[:5], headers[5:23], headers[23:], marker):
                     handler.request.sendall(chunk)
-        origin_type = socketserver.ThreadingTCPServer if 'grpc_fragmented' in self._testMethodName else ThreadingHTTPServer
+        origin_type = socketserver.ThreadingTCPServer if ('grpc_fragmented' in self._testMethodName or 'mihomo' in self._testMethodName) else ThreadingHTTPServer
         self.origin = origin_type(('127.0.0.1',0),FragmentedOrigin if origin_type is socketserver.ThreadingTCPServer else Origin)
         if origin_type is socketserver.ThreadingTCPServer:
             self.origin.server_port = self.origin.server_address[1]
@@ -555,3 +555,102 @@ http {{ access_log off; {temp} {maps} {main} {cover} }}
         # provider=1 intentionally returns base64 URIs, not a standalone YAML config.
         self.assertEqual(len(base64.b64decode(self.provider,validate=True).decode().splitlines()),5)
         self.passed.append('Mihomo validation')
+        self.nginx_config()
+        xray=self.launch([self.xray,'run','-c',self.root/'server.json'],'mihomo-xray')
+        self.ready(xray,('127.0.0.1',self.backends['trojan-grpc']))
+        # The real x-ui provider remains the input; only public test endpoints are relocated.
+        provider=base64.b64decode(self.provider,validate=True).decode()
+        self.assertEqual(provider.count('@deploy.example:443'),5)
+        payload=base64.b64encode(provider.replace('@deploy.example:443',f'@deploy.example:{self.public}').encode())
+        class Provider(BaseHTTPRequestHandler):
+            def do_GET(handler):
+                handler.send_response(200); handler.send_header('Content-Length',str(len(payload)))
+                handler.end_headers(); handler.wfile.write(payload)
+            def log_message(handler,*args): pass
+        provider_server=ThreadingHTTPServer(('127.0.0.1',0),Provider)
+        threading.Thread(target=provider_server.serve_forever,daemon=True).start()
+        self.addCleanup(provider_server.server_close);self.addCleanup(provider_server.shutdown)
+        expression='(select(.network == "grpc") | .["grpc-opts"]["grpc-service-name"]) |= (split("|") | .[0])'
+        snapshots=[]
+        for enabled in (False,True):
+            socks,controller=port(self.allocated_ports),port(self.allocated_ports)
+            # Keep the actual generated template/provider overrides/groups. Replace external DNS/rules
+            # and automatic probes only in this offline fixture, forcing the selected provider route.
+            runtime=yaml.decode()
+            for section in ('dns','rule-providers','rules'):
+                runtime=re.sub(r'^'+section+r':.*?(?=^[A-Za-z][^\n]*:|\Z)','',runtime,flags=re.M|re.S)
+            runtime=runtime.replace('mixed-port: 10000',f'mixed-port: {socks}').replace('allow-lan: true','allow-lan: false')
+            runtime=runtime.replace('https://deploy.example/subscription/fixture?provider=1',
+                                    f'http://127.0.0.1:{provider_server.server_port}/provider')
+            runtime=runtime.replace('      enable: true','      enable: false').replace('    type: url-test','    type: select')
+            runtime=re.sub(r'(url: )https://(?:www.gstatic.com|cp.cloudflare.com)/generate_204',
+                           rf'\g<1>http://127.0.0.1:{self.origin.server_port}/health',runtime)
+            if not enabled:
+                runtime=runtime.replace("        - '"+expression+"'\n",'')
+            # Read the *actual post-override mapping* through a harmless test-only name export.
+            # Both variants use the same export. No test-side subscription/YAML proxy generator.
+            runtime=runtime.replace('    health-check:',"        - '.name = tostring'\n    health-check:",1)
+            runtime+=f'\nexternal-controller: 127.0.0.1:{controller}\nbind-address: 127.0.0.1\nrules:\n  - MATCH,🌍 VPN\n'
+            runtime+='hosts:\n  deploy.example: 127.0.0.1\n'
+            runtime+='tls:\n  custom-certifactes:\n    - '+json.dumps(self.cert.read_text())+'\n'
+            path=self.root/f'mihomo-{enabled}.yaml';path.write_text(runtime)
+            process=self.launch([self.mihomo,'-d',self.root/f'mihomo-{enabled}','-f',path],f'mihomo-{enabled}')
+            self.ready(process,('127.0.0.1',controller));self.ready(process,('127.0.0.1',socks))
+            def api(route,body=None):
+                args=['curl','-fsS','--noproxy','*','--max-time','10']
+                if body is not None: args+=['-X','PUT','--data-binary','@-','-H','Content-Type: application/json']
+                return subprocess.check_output(args+[f'http://127.0.0.1:{controller}'+route],
+                                               input=json.dumps(body).encode() if body is not None else None,timeout=15)
+            deadline=time.monotonic()+15
+            while True:
+                proxies=json.loads(api('/providers/proxies/sub'))['proxies']
+                if proxies: break
+                self.assertIsNone(process.poll(),'Mihomo exited before provider readiness')
+                if time.monotonic()>=deadline:
+                    log=(self.root/f'mihomo-{enabled}.log').read_text().replace(self.auth,'[redacted]').replace(self.uuid,'[redacted]')
+                    self.fail('Mihomo provider readiness deadline expired: '+log[-3000:])
+                time.sleep(0.05)
+            self.assertEqual(len(proxies),5)
+            mappings={p['name'].split('\nname: ',1)[-1].split('\n',1)[0]:p['name'] for p in proxies}
+            snapshots.append(mappings)
+            grpc=next(p['name'] for p in proxies if 'type: trojan' in p['name'])
+            api('/proxies/'+quote('🌍 VPN',safe=''),{'name':grpc})
+            try:
+                for iteration in range(10 if enabled else 1):
+                    nonce='/mihomo-'+str(enabled)+'-'+str(iteration)+'-'+os.urandom(8).hex()
+                    with socket.create_connection(('127.0.0.1',socks),timeout=5) as connection:
+                        connection.settimeout(15)
+                        def exact(size):
+                            data=b''
+                            while len(data)<size:
+                                chunk=connection.recv(size-len(data))
+                                if not chunk: raise EOFError('Mihomo SOCKS handshake EOF')
+                                data+=chunk
+                            return data
+                        connection.sendall(b'\x05\x01\x00');self.assertEqual(exact(2),b'\x05\x00')
+                        connection.sendall(b'\x05\x01\x00\x01'+socket.inet_aton('127.0.0.1')+self.origin.server_port.to_bytes(2,'big'))
+                        reply=exact(4);self.assertEqual(reply[:2],b'\x05\x00')
+                        exact(4 if reply[3]==1 else 16 if reply[3]==4 else exact(1)[0]);exact(2)
+                        connection.sendall(f'GET {nonce} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n'.encode())
+                        received=b''
+                        while chunk:=connection.recv(65536): received+=chunk
+                    if enabled:
+                        self.assertIn(nonce,self.origin_responses,'Mihomo did not reach origin')
+                        self.assertEqual(received,self.origin_responses[nonce],'Mihomo fragmented response differs')
+                        self.assertEqual(self.origin_requests.count(nonce),1)
+                    else:
+                        self.assertNotIn(nonce,self.origin_requests,'Unmodified pipe must not reach Tun-only nginx route')
+                        self.assertNotIn(self.marker.encode(),received)
+            finally: stop(process)
+        self.assertEqual(snapshots[0].keys(),snapshots[1].keys())
+        for name,before in snapshots[0].items():
+            after=snapshots[1][name]
+            # Mihomo's URI converter injects a random WS User-Agent before either override.
+            # Compare every supplied/profile field; normalize only that consumer-generated default.
+            if 'network: ws\n' in before:
+                before=re.sub(r'(?m)^        User-Agent: .+$','        User-Agent: [consumer-random]',before)
+                after=re.sub(r'(?m)^        User-Agent: .+$','        User-Agent: [consumer-random]',after)
+            expected=before.replace('grpc-service-name: /10004/trojan|trojan-multi','grpc-service-name: /10004/trojan') if 'type: trojan' in before else before
+            self.assertTrue(after==expected,'Provider changed unrelated settings: '+name)
+        self.assertTrue(any('grpc-service-name: /10004/trojan\n' in m for m in snapshots[1].values()))
+        self.passed.append('Mihomo provider gRPC: 10 byte-exact responses; other profiles unchanged')

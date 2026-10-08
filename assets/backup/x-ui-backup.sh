@@ -1006,11 +1006,21 @@ with sqlite3.connect(staged(dbpath)) as db:
         # Correct/custom non-empty encryption needs no identity migration or Host restriction.
         associated = {row[0] for row in hosts}
         needed = set()
-        for cid, number, tag, stream_json, settings_json in db.execute(
-                "SELECT id,port,tag,stream_settings,settings FROM inbounds WHERE protocol='vless'"):
+        for cid, listen, number, tag, stream_json, settings_json in db.execute(
+                "SELECT id,listen,port,tag,stream_settings,settings FROM inbounds WHERE protocol='vless'"):
+            stream = json.loads(stream_json)
+            ws = stream.get('wsSettings',{})
+            linked = db.execute('SELECT 1 FROM hosts WHERE inbound_id=? LIMIT 1',(cid,)).fetchone()
+            # A numeric tag/network alone also describes ordinary user WS profiles.
+            # Orphaned exact managed topology still fails closed; unrelated Hosts do not identify it.
+            ws_family = (listen == '127.0.0.1' and str(number).isdigit() and 1024 <= int(number) <= 65535 and
+                         tag == 'inbound-' + str(number) and stream.get('network') == 'ws' and
+                         stream.get('security') == 'none' and ws.get('host') == panel and
+                         ws.get('acceptProxyProtocol') is False and isinstance(ws.get('path'),str) and
+                         bool(re.fullmatch('/'+str(number)+r'/[A-Za-z0-9]+',ws['path'])) and
+                         not linked)
             family = (tag == 'inbound-8443' if profile == 'reality' else
-                      tag == 'inbound-/dev/shm/uds2023.sock,0666:0|' if profile == 'xhttp' else
-                      tag == 'inbound-' + str(number) and json.loads(stream_json).get('network') == 'ws')
+                      tag == 'inbound-/dev/shm/uds2023.sock,0666:0|' if profile == 'xhttp' else ws_family)
             if cid not in associated and not family: continue
             value = json.loads(settings_json).get('encryption','')
             if not isinstance(value,str) or value == '': needed.add(cid)

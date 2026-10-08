@@ -463,6 +463,45 @@ class AuditRecovery(unittest.TestCase):
             states = json.loads((f.root/'services.json').read_text())
             self.assertTrue(all(states[name]=='active' for name in ('x-ui','nginx','mtr-backend','certbot.timer')))
 
+    def test_custom_ws_missing_encryption_is_not_a_managed_candidate(self):
+        from test_personal_backup import PersonalBackup
+        for old_managed in (False, True):
+            with self.subTest(old_managed=old_managed):
+                f = PersonalBackup('runTest'); f.setUp()
+                self.addCleanup(f.doCleanups)
+                f.env['NGINX_BIN'] = self.fixture.env['NGINX_BIN']
+                with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                    iid = db.execute("SELECT inbound_id FROM hosts WHERE remark='ws'").fetchone()[0]
+                    row = db.execute('SELECT * FROM inbounds WHERE id=?',(iid,)).fetchone()
+                    custom = dict(zip([c[0] for c in db.execute('SELECT * FROM inbounds').description],row))
+                    stream = json.loads(custom['stream_settings'])
+                    stream['wsSettings']['path']='/39000/userpath'
+                    if old_managed: stream['wsSettings']['host']='user.example'
+                    custom.update(id=77,tag='inbound-39000',port=39000,remark='user ws',
+                                  stream_settings=json.dumps(stream),settings='{"clients":[],"custom":true}')
+                    db.execute('INSERT INTO inbounds VALUES ('+','.join('?' for _ in custom)+')',list(custom.values()))
+                    host = dict(zip([c[0] for c in db.execute('SELECT * FROM hosts').description],
+                                    db.execute('SELECT * FROM hosts WHERE inbound_id=?',(iid,)).fetchone()))
+                    host.update(id=77,inbound_id=77,remark='user ws')
+                    if old_managed: host['address']='user.example'
+                    db.execute('INSERT INTO hosts VALUES ('+','.join('?' for _ in host)+')',list(host.values()))
+                    if old_managed:
+                        settings=json.loads(db.execute('SELECT settings FROM inbounds WHERE id=?',(iid,)).fetchone()[0])
+                        settings.pop('encryption')
+                        db.execute('UPDATE inbounds SET settings=? WHERE id=?',(json.dumps(settings),iid))
+                    before_custom=db.execute('SELECT * FROM inbounds WHERE id=77').fetchone()
+                    before_hosts=db.execute('SELECT * FROM hosts').fetchall()
+                archive=f.backup(); original=archive.read_bytes()
+                for _ in range(2):
+                    result=f.run_tool('restore',archive)
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                    with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                        self.assertEqual(db.execute('SELECT * FROM inbounds WHERE id=77').fetchone(),before_custom)
+                        self.assertEqual(db.execute('SELECT * FROM hosts').fetchall(),before_hosts)
+                        self.assertEqual(json.loads(db.execute('SELECT settings FROM inbounds WHERE id=?',(iid,)).fetchone()[0])['encryption'],'none')
+                        self.assertEqual(db.execute('PRAGMA quick_check').fetchone()[0],'ok')
+                    self.assertEqual(archive.read_bytes(),original)
+
     def test_nonempty_managed_vless_encryption_is_preserved(self):
         f = self.fixture
         with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
