@@ -16,6 +16,7 @@ SUITES = {
         'test_adguard.AdGuardInstaller',
         'test_audit_findings.AuditInstaller',
     ),
+    'integration': ('test_real_integration.RealIntegration',),
     'root': (
         'test_personal_backup.PersonalBackup',
         'test_adguard_backup.AdGuardBackup',

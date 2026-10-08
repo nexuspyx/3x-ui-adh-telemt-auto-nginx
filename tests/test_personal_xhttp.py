@@ -105,6 +105,47 @@ def function(name):
 
 
 class PersonalXHTTP(unittest.TestCase):
+    def test_vless_seed_supplies_json_subscription_encryption(self):
+        # v3.9.0 genVless reads the outbound encryption from these inbound settings.
+        for name in ('reality', 'ws', 'xhttp'):
+            with self.subTest(profile=name):
+                self.assertEqual(json.loads(inbounds()[name]['settings']).get('encryption'), 'none')
+
+    def test_panel_directory_errors_abort_before_following_operations(self):
+        # Run the original function, including its caller's `||` context (no errexit).
+        for failed in (1, 2):
+            with self.subTest(cd=failed), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                calls = root/'calls'
+                panel = function('install_panel').replace('/usr/local', str(root/'local'))
+                mock = '''
+record() { printf '%s\\n' "$*" >> "$CALLS"; }
+cd() { (( CD_COUNT+=1 )); record "cd $CD_COUNT"; [[ "$CD_COUNT" != "$FAIL_CD" ]]; }
+apt-get() { :; }
+curl() { :; }
+_validate_panel_version() { :; }
+_arch() { echo amd64; }
+mktemp() { echo "$ROOT/archive"; }
+_download_panel_archive() { record download; }
+rm() { record remove; }
+tar() { record extract; }
+chmod() { record chmod; }
+install() { record install-cli; }
+_panel_initial_config() { record initial-config; }
+cp() { record copy-service; }
+systemctl() { record systemctl; }
+msg_ok() { record success; }
+CD_COUNT=0
+'''
+                result = subprocess.run(['bash','-u','-c', mock+panel+'\ninstall_panel || exit 1'],
+                                        env={**os.environ,'PANEL_VERSION':'v3.9.0','FAIL_CD':str(failed),
+                                             'ROOT':str(root),'CALLS':str(calls)}, text=True, capture_output=True)
+                events = calls.read_text().splitlines()
+                self.assertIn(f'cd {failed}', events, 'chdir failure must actually be reached')
+                self.assertNotEqual(result.returncode, 0, f'continued after failed cd: {events}')
+                self.assertEqual(events[-1], f'cd {failed}', 'no operation may follow failed chdir')
+                self.assertNotIn('success', events)
+
     def test_shell_syntax(self):
         subprocess.run(["bash", "-n", str(ROOT / "x-ui-latest.sh")], check=True)
 
@@ -554,7 +595,7 @@ sleep() { :; }
     def test_reality_profile_is_preserved(self):
         row = inbounds()["reality"]
         self.assertEqual((row["port"], row["listen"], row["tag"]), ("8443", "127.0.0.1", "inbound-8443"))
-        self.assertEqual(json.loads(row["settings"]), {"clients": [], "decryption": "none", "fallbacks": []})
+        self.assertEqual(json.loads(row["settings"]), {"clients": [], "decryption": "none", "encryption": "none", "fallbacks": []})
         self.assertEqual(json.loads(row["stream_settings"]), {
             "network": "tcp", "security": "reality",
             "realitySettings": {
@@ -606,7 +647,8 @@ sleep() { :; }
         self.assertFalse(grpc["multiMode"])
         # Xray 26.9.30 grpc/config.go + encoding/customSeviceName.go:
         # custom /service/method paths are used verbatim, without a /Tun suffix.
-        grpc_path = grpc["serviceName"]
+        grpc_path, multi_method = grpc["serviceName"].split("|")
+        self.assertEqual(multi_method,grpc_path.rsplit("/",1)[1]+"-multi")
         allowed_ports = {FIXTURE[key] for key in ("ws_port", "trojan_port", "panel_port", "sub_port", "mtr_backend_port")}
         for source in (SOURCE, PATCH):
             with self.subTest(script="installer" if source == SOURCE else "patch"):
@@ -650,7 +692,7 @@ sleep() { :; }
         mock = '''db() { python3 -c 'import os,sqlite3,sys; db=sqlite3.connect(os.environ["ROUTE_TEST_DB"]); print("\\n".join("|".join(map(str,row)) for row in db.execute(sys.argv[1])))' "$1"; }
 die() { echo "$*" >&2; exit 1; }
 '''
-        for invalid in (None, "missing", "/3000/wrong", "/10003/path;bad"):
+        for invalid in (None, "legacy-grpc", "grpc-suffix", "missing", "/3000/wrong", "/10003/path;bad"):
             with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "x-ui.db"
                 with sqlite3.connect(path) as db:
@@ -659,14 +701,16 @@ die() { echo "$*" >&2; exit 1; }
                         if invalid == "missing" and row["protocol"] == "trojan":
                             continue
                         stream = json.loads(row["stream_settings"])
-                        if invalid and invalid != "missing" and stream["network"] == "ws":
+                        if invalid in ("legacy-grpc","grpc-suffix") and stream["network"] == "grpc":
+                            stream['grpcSettings']['serviceName'] = '/10004/trojan' + ('|wrong' if invalid=='grpc-suffix' else '')
+                        if invalid and invalid not in ("missing","legacy-grpc","grpc-suffix") and stream["network"] == "ws":
                             stream["wsSettings"]["path"] = invalid
                         db.execute("INSERT INTO inbounds VALUES (?,?,?,?,?)", (row["id"], row["port"], row["protocol"], row["tag"], json.dumps(stream)))
                 before = path.read_bytes()
                 result = subprocess.run(["bash", "-eu", "-c", mock + block + '\nprintf "%s %s %s %s\\n" "$ws_port" "$ws_route" "$trojan_port" "$trojan_route"'],
                                         text=True, capture_output=True, env={**os.environ, "ROUTE_TEST_DB": str(path)})
-                self.assertEqual(result.returncode, 0 if invalid is None else 1, result.stdout + result.stderr)
-                if invalid is None:
+                self.assertEqual(result.returncode, 0 if invalid in (None,"legacy-grpc") else 1, result.stdout + result.stderr)
+                if invalid in (None,"legacy-grpc"):
                     self.assertEqual(result.stdout.strip(), "10003 /10003/websocket 10004 /10004/trojan")
                 self.assertEqual(path.read_bytes(), before, "Patch route discovery must be read-only")
 

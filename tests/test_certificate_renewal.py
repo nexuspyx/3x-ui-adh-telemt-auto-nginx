@@ -240,6 +240,8 @@ COPY
 '''
         names=('check_certificate_identity','check_webroot_lineage','get_ssl_certs')
         for state in ('fresh','valid-webroot','legacy','wrong-webroot'):
+            shutil.rmtree(self.root/'etc/letsencrypt', ignore_errors=True)
+            shutil.rmtree(self.root/'root/cert', ignore_errors=True)
             if state!='fresh':
                 certificates(self.root)
                 if state in ('legacy','wrong-webroot'):
@@ -317,6 +319,8 @@ COPY
             result=self.run_functions(RENEWAL,'check_certificate_renewal "$domain" "$reality_domain"')
             self.assertEqual(result.returncode,0,result.stderr)
         for failure in ('is-enabled --quiet certbot.timer','is-active --quiet certbot.timer','nginx','acme','owner'):
+            certificates(self.root)
+            self.calls.unlink(missing_ok=True)
             result=self.run_functions(RENEWAL,'check_certificate_renewal "$domain" "$reality_domain"',FAIL_CERT=failure)
             self.assertNotEqual(result.returncode,0,failure)
             self.assertEqual(list((self.root/'var/www/acme/.well-known/acme-challenge').iterdir()),[])

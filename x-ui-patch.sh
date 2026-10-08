@@ -55,9 +55,12 @@ printf "    json_path  = %s\n" "$json_path"
 read -r ws_port ws_route <<< "$(db "SELECT port, json_extract(stream_settings,'$.wsSettings.path')
     FROM inbounds WHERE protocol='vless' AND tag='inbound-' || port
     AND json_extract(stream_settings,'$.network')='ws' ORDER BY id LIMIT 1;" | tr '|' ' ')"
-read -r trojan_port trojan_route <<< "$(db "SELECT port, json_extract(stream_settings,'$.grpcSettings.serviceName')
+IFS=$'\t' read -r trojan_port trojan_service <<< "$(db "SELECT port || char(9) || json_extract(stream_settings,'$.grpcSettings.serviceName')
     FROM inbounds WHERE protocol='trojan' AND tag='inbound-' || port
-    AND json_extract(stream_settings,'$.network')='grpc' ORDER BY id LIMIT 1;" | tr '|' ' ')"
+    AND json_extract(stream_settings,'$.network')='grpc' ORDER BY id LIMIT 1;")"
+trojan_route=${trojan_service%%|*}
+[[ "$trojan_service" == "$trojan_route" || "$trojan_service" == "${trojan_route}|${trojan_route##*/}-multi" ]] \
+    || die "Cannot detect the installer-managed Trojan gRPC methods"
 [[ "$ws_port" =~ ^[0-9]{1,5}$ ]] && (( 10#$ws_port >= 1 && 10#$ws_port <= 65535 )) \
     && [[ "$ws_route" =~ ^/${ws_port}/[a-zA-Z0-9]+$ ]] || die "Cannot detect the installer-managed WS route"
 [[ "$trojan_port" =~ ^[0-9]{1,5}$ ]] && (( 10#$trojan_port >= 1 && 10#$trojan_port <= 65535 )) \

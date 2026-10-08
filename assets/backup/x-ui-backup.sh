@@ -998,6 +998,110 @@ with sqlite3.connect(staged(dbpath)) as db:
         db.execute("INSERT INTO settings(key,value) VALUES('subJsonEnable','true')")
     elif settings['subJsonURI'] != modern_json_uri or enabled != ['true']:
         raise ValueError('Unexpected managed JSON subscription state; staged migration refused')
+    # Only the three exact installer-managed Host/inbound topologies may be migrated.
+    managed_ids = set()
+    for profile in ('reality','ws','xhttp'):
+        hosts = db.execute('SELECT inbound_id,sort_order,address,port,security FROM hosts WHERE remark=?',
+                           (profile,)).fetchall()
+        # Correct/custom non-empty encryption needs no identity migration or Host restriction.
+        associated = {row[0] for row in hosts}
+        needed = set()
+        for cid, listen, number, tag, stream_json, settings_json in db.execute(
+                "SELECT id,listen,port,tag,stream_settings,settings FROM inbounds WHERE protocol='vless'"):
+            stream = json.loads(stream_json)
+            ws = stream.get('wsSettings',{})
+            linked = db.execute('SELECT 1 FROM hosts WHERE inbound_id=? LIMIT 1',(cid,)).fetchone()
+            # A numeric tag/network alone also describes ordinary user WS profiles.
+            # Orphaned exact managed topology still fails closed; unrelated Hosts do not identify it.
+            ws_family = (listen == '127.0.0.1' and str(number).isdigit() and 1024 <= int(number) <= 65535 and
+                         tag == 'inbound-' + str(number) and stream.get('network') == 'ws' and
+                         stream.get('security') == 'none' and ws.get('host') == panel and
+                         ws.get('acceptProxyProtocol') is False and isinstance(ws.get('path'),str) and
+                         bool(re.fullmatch('/'+str(number)+r'/[A-Za-z0-9]+',ws['path'])) and
+                         not linked)
+            family = (tag == 'inbound-8443' if profile == 'reality' else
+                      tag == 'inbound-/dev/shm/uds2023.sock,0666:0|' if profile == 'xhttp' else ws_family)
+            if cid not in associated and not family: continue
+            value = json.loads(settings_json).get('encryption','')
+            if not isinstance(value,str) or value == '': needed.add(cid)
+        if not needed:
+            continue
+        if len(hosts) != 1 or needed != {hosts[0][0]}:
+            raise ValueError('Ambiguous/missing managed VLESS Host: ' + profile)
+        iid, order, address, public_port, security = hosts[0]
+        if (iid in managed_ids or order != 0 or address != panel or public_port != 443 or
+                security != ('same' if profile == 'reality' else 'tls')):
+            raise ValueError('Inconsistent managed VLESS Host: ' + profile)
+        inbound = db.execute('SELECT protocol,listen,port,tag,stream_settings,settings FROM inbounds WHERE id=?',
+                             (iid,)).fetchall()
+        if len(inbound) != 1: raise ValueError('Ambiguous managed VLESS inbound: ' + profile)
+        protocol, listen, number, tag, stream_json, settings_json = inbound[0]
+        stream, inbound_settings = json.loads(stream_json), json.loads(settings_json)
+        valid = protocol == 'vless' and isinstance(stream, dict) and isinstance(inbound_settings, dict)
+        if profile == 'reality':
+            valid = valid and (listen,str(number),tag,stream.get('network'),stream.get('security')) == (
+                '127.0.0.1','8443','inbound-8443','tcp','reality')
+            valid = valid and stream.get('realitySettings',{}).get('target') == '127.0.0.1:9443'
+            valid = valid and stream.get('realitySettings',{}).get('serverNames') == [reality]
+            valid = valid and stream.get('tcpSettings',{}).get('acceptProxyProtocol') is True
+        elif profile == 'ws':
+            valid = valid and listen == '127.0.0.1' and str(number).isdigit() and 1024 <= int(number) <= 65535
+            valid = valid and tag == 'inbound-' + str(number) and stream.get('network') == 'ws' and stream.get('security') == 'none'
+            ws = stream.get('wsSettings',{})
+            valid = valid and ws.get('host') == panel and ws.get('acceptProxyProtocol') is False
+            valid = valid and isinstance(ws.get('path'),str) and bool(re.fullmatch('/'+str(number)+r'/[A-Za-z0-9]+',ws['path']))
+        else:
+            socket = '/dev/shm/uds2023.sock,0666'
+            valid = valid and (listen,str(number),tag,stream.get('network'),stream.get('security')) == (
+                socket,'0','inbound-'+socket+':0|','xhttp','none')
+            xhttp = stream.get('xhttpSettings',{})
+            valid = valid and xhttp.get('mode') == 'stream-up' and isinstance(xhttp.get('path'),str)
+            valid = valid and bool(re.fullmatch(r'/[A-Za-z0-9]+',xhttp['path']))
+        if not valid or db.execute('SELECT count(*) FROM inbounds WHERE tag=?',(tag,)).fetchone()[0] != 1:
+            raise ValueError('Unexpected managed VLESS topology; staged migration refused: ' + profile)
+        encryption = inbound_settings.get('encryption','')
+        if not isinstance(encryption,str): raise ValueError('Invalid managed VLESS encryption: ' + profile)
+        if not encryption:
+            inbound_settings['encryption'] = 'none'
+            db.execute('UPDATE inbounds SET settings=? WHERE id=?',(json.dumps(inbound_settings),iid))
+        managed_ids.add(iid)
+    # Only an exact old project Trojan/Host/route relationship is repaired in staging.
+    # Custom profiles and already-separated method names are left untouched.
+    shared = staged(nginx + '/snippets/includes.conf').read_text()
+    for iid, listen, number, tag, stream_json in db.execute(
+            "SELECT id,listen,port,tag,stream_settings FROM inbounds WHERE protocol='trojan'").fetchall():
+        stream = json.loads(stream_json)
+        if not isinstance(stream,dict): continue
+        grpc = stream.get('grpcSettings',{})
+        if not isinstance(grpc,dict): continue
+        service = grpc.get('serviceName','')
+        if (listen != '127.0.0.1' or not str(number).isdigit() or not 1024 <= int(number) <= 65535 or
+                tag != 'inbound-' + str(number) or stream.get('network') != 'grpc' or
+                stream.get('security') != 'none' or grpc.get('authority') != panel or
+                grpc.get('multiMode') is not False or not isinstance(service,str) or
+                not re.fullmatch('/'+str(number)+r'/[A-Za-z0-9]+',service)):
+            continue
+        hosts = db.execute('SELECT sort_order,address,port,security FROM hosts '
+                           "WHERE inbound_id=? AND remark='trojan'",(iid,)).fetchall()
+        if (0,panel,443,'tls') not in hosts: continue
+        if hosts.count((0,panel,443,'tls')) != 1:
+            raise ValueError('Ambiguous managed gRPC Host; staged migration refused')
+        if db.execute('SELECT count(*) FROM inbounds WHERE tag=?',(tag,)).fetchone()[0] != 1:
+            raise ValueError('Ambiguous managed gRPC tag; staged migration refused')
+        blocks = re.findall(r'^\s*location\s+=\s+'+re.escape(service)+r'\s*\{.*?^\s*\}',shared,re.M|re.S)
+        expected = '''location = %s {
+        if ($hack = 1) { return 404; }
+        client_max_body_size 0;
+        client_body_timeout 1d;
+        grpc_read_timeout 1d;
+        grpc_socket_keepalive on;
+        grpc_set_header Host $host;
+        grpc_pass grpc://127.0.0.1:%s;
+    }''' % (service, number)
+        if len(blocks) != 1 or ' '.join(blocks[0].split()) != ' '.join(expected.split()):
+            raise ValueError('Unexpected managed gRPC route; staged migration refused')
+        grpc['serviceName'] = service + '|' + service.rsplit('/',1)[1] + '-multi'
+        db.execute('UPDATE inbounds SET stream_settings=? WHERE id=?',(json.dumps(stream),iid))
     jsonpath = jsonpath.rstrip('/')
     expected = {sub, '= ' + sub.rstrip('/'), '~ ^' + sub + '(?<clash_sub_id>[^/]+)$',
                 '/assets','/assets/',jsonpath,jsonpath + '/'}
