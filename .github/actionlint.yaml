@@ -1,0 +1,6 @@
+# actionlint 1.7.12 predates the official hosted ubuntu-26.04 label.
+# https://github.com/actions/runner-images/blob/main/README.md
+# This extends its accepted labels; the workflow still selects a hosted runner.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
