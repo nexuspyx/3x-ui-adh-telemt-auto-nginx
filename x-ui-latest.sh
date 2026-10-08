@@ -80,7 +80,7 @@ configure_project_source() {
     GITHUB_RAW="https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/${PROJECT_REF}"
 }
 configure_project_source || exit 1
-FAKE_SITE_COUNT=50
+FAKE_SITE_COUNT=10
 LEGACY_CERTBOT_CRON='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
 
 # ─── Default argument values ─────────────────────────────────────────────────
