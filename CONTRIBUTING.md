@@ -4,7 +4,7 @@
 
 `main` is the maintained production line. Create `feat/*`, `fix/*`, `docs/*` or `chore/*` branches and open pull requests against `main`. Upstream is a reference source; do not automatically synchronize it.
 
-Keep Russian and English README files consistent. Preserve upstream attribution. Do not introduce a new license for inherited code as part of repository maintenance.
+Keep Russian and English README files consistent. Preserve upstream attribution. The maintainer has adopted `GPL-3.0-only` for original xPROMSx developments and changes. Follow the partial scope in `LICENSE` and `THIRD_PARTY_NOTICES.md`; do not claim permission to relicense inherited material.
 
 ## Required checks
 
