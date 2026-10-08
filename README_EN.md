@@ -1,5 +1,7 @@
 <div align="center">
 
+[🇷🇺 Русский](README.md) · 🇬🇧 **English** · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md)
+
 # 🚀 3x-ui Auto Nginx
 
 ### Automated 3x-ui / Xray deployment on your own VPS
@@ -13,7 +15,7 @@ Two domains, a clean VPS, and a few minutes to install.
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[Русский](README.md) · [Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Telegram Web Proxy Manager](#telemt-web-manager) · [Issues](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
+[Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Telegram Web Proxy Manager](#telemt-web-manager) · [Issues](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
 
 </div>
 
@@ -99,8 +101,6 @@ Service interfaces are not exposed directly to the internet. The panel, subscrip
 
 There is no generic proxy to arbitrary localhost ports. Critical errors stop installation or restore rather than starting an incomplete configuration.
 
-New releases undergo automated checks and full installation and restore testing on a real VPS.
-
 <a id="technical-details"></a>
 
 <details>
@@ -134,13 +134,15 @@ The projects are independent; **this installer does not install Telegram Web Pro
 
 ## 🤝 Credits / Origins
 
-Based on [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), with more than half of the core logic reworked or replaced since the fork. XHTTP/nginx routing, certificates, and Backup / Restore were reworked; Hysteria2 was added and identified security issues fixed. The project is developed independently.
+Based on [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro). Since the fork, nginx/SNI routing, XHTTP, certificates, and Backup / Restore have been reworked; Hysteria2 was added and identified security issues fixed. The project is developed independently.
 
 The panel comes from [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Third-party authors retain their rights and existing licenses.
 
 <div align="center">
 
 **Two domains. A few minutes. Your own 3x-ui / Xray server.**
+
+⭐ If this installer helped you, consider giving it a [Star on GitHub](https://github.com/xPROMSx/3x-ui-auto-nginx). It helps others discover the project.
 
 [Install](#installation) · [Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Issues](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
 
