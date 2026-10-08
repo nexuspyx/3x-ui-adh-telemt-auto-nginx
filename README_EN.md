@@ -1,5 +1,7 @@
 <div align="center">
 
+[🇷🇺 Русский](README.md) · 🇬🇧 **English** · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md)
+
 # 🚀 3x-ui Auto Nginx
 
 ### Automated 3x-ui / Xray deployment on your own VPS
@@ -13,7 +15,7 @@ Two domains, a clean VPS, and a few minutes to install.
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[Русский](README.md) · [Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Telegram Web Proxy Manager](#telemt-web-manager) · [Issues](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
+[Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Telegram Web Proxy Manager](#telemt-web-manager) · [Issues](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
 
 </div>
 
@@ -26,14 +28,14 @@ Bring two domains and a clean VPS. A cover website is selected and deployed auto
 | | |
 | --- | --- |
 | **Preconfigured connections**<br>REALITY, XHTTP, Hysteria2, WebSocket, and Trojan gRPC are already set up. | **Private internal services**<br>The panel and subscription service don't expose their internal ports to the internet. |
-| **Restricted nginx routing**<br>Requests cannot be forwarded to arbitrary local ports. | **Backup / Restore v3**<br>Roll back your VPS or recover after reinstalling the OS. |
+| **Restricted nginx routing**<br>Requests cannot be forwarded to arbitrary local ports. | **Backup / Restore v3**<br>Roll back your VPS or restore to a new server, including one from another hosting provider. |
 | **Automatic certificates**<br>Let's Encrypt issuance and renewal need no manual configuration. | **AdGuard Home + DoH**<br>Opt in during setup; no third domain needed. |
 
 <a id="installation"></a>
 
 ## 🚀 Quick start
 
-Point **two domains** at a clean VPS: one for the panel, one for REALITY. Connect via SSH as **root** and allow TCP **80/443**, UDP **443**. [Supported systems](#technical-details).
+Configure the DNS records for **two domains** to point to your VPS IP address: one for the panel, one for REALITY. Connect via SSH as **root** and allow TCP **80/443**, UDP **443**. [Supported systems](#technical-details).
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh
@@ -99,8 +101,6 @@ Service interfaces are not exposed directly to the internet. The panel, subscrip
 
 There is no generic proxy to arbitrary localhost ports. Critical errors stop installation or restore rather than starting an incomplete configuration.
 
-New releases undergo automated checks and full installation and restore testing on a real VPS.
-
 <a id="technical-details"></a>
 
 <details>
@@ -109,7 +109,7 @@ New releases undergo automated checks and full installation and restore testing 
 - **Systems:** Ubuntu 24.04, Ubuntu 26.04, and Debian 13. Debian 12 is unsupported.
 - **UFW:** adds 80/tcp, 443/tcp, and 443/udp. Inactive UFW is enabled only after the SSH port is detected and allowed; otherwise it remains inactive with a warning. Restore never enables UFW.
 - **Certificates:** Let's Encrypt webroot and `certbot.timer` renew certificates automatically without stopping nginx.
-- **3x-ui version:** the default is verified v3.9.0 with Xray 26.9.30. Explicitly select another stable release with `-version <tag>` (minimum v3.8.0); the installer warns that compatibility has not been confirmed. The archive is verified before removing the previous installation.
+- **3x-ui version:** by default, the installer uses the latest version thoroughly tested for compatibility with 3X-UI AUTO NGINX, which may not be the latest upstream release. After installation, you can update 3x-ui using its built-in update mechanism, but the new version may not yet be verified against this configuration. You can also explicitly select another stable release with `-version <tag>` (minimum supported version: v3.8.0); the installer will warn that compatibility has not been verified.
 
 **Recovery on a new VPS:** match the backup's OS, OS version, and architecture. Update DNS if the IP changes. Do not run `x-ui-latest.sh` — install only the utility, then restore a trusted archive:
 
@@ -134,13 +134,15 @@ The projects are independent; **this installer does not install Telegram Web Pro
 
 ## 🤝 Credits / Origins
 
-Based on [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), with more than half of the core logic reworked or replaced since the fork. XHTTP/nginx routing, certificates, and Backup / Restore were reworked; Hysteria2 was added and identified security issues fixed. The project is developed independently.
+Based on [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), this project is maintained independently. Since the fork, nginx/SNI routing and XHTTP configuration have been substantially reworked, TLS certificate issuance and automatic renewal redesigned, and Backup / Restore v3 introduced with recovery and rollback capabilities. Hysteria2 on UDP/443 was added, and identified security issues were fixed.
 
 The panel comes from [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Third-party authors retain their rights and existing licenses.
 
 <div align="center">
 
 **Two domains. A few minutes. Your own 3x-ui / Xray server.**
+
+⭐ If this installer helped you, consider giving it a [Star on GitHub](https://github.com/xPROMSx/3x-ui-auto-nginx). It helps others discover the project.
 
 [Install](#installation) · [Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Issues](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
 
