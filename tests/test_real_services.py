@@ -9,6 +9,8 @@ import re
 import shutil
 import socket
 import socketserver
+import ssl
+import sys
 import struct
 import subprocess
 import tarfile
@@ -81,7 +83,7 @@ class RealServices(unittest.TestCase):
                 labels.append(packet[offset:offset+length].decode('ascii'));offset+=length
             offset+=1;kind,klass=struct.unpack('!HH',packet[offset:offset+4]);end=offset+4
             name='.'.join(labels);requests.append((name,kind))
-            address='127.0.0.1' if name in ('panel.example.test','reality.example.test','broken.example.test','example.com','reality.example.com') else '198.51.100.42'
+            address='127.0.0.1' if name in ('panel.example.test','reality.example.test','broken.example.test','unrelated.example.test','example.com','reality.example.com') else '198.51.100.42'
             data=struct.pack('!6H',int.from_bytes(packet[:2],'big'),0x8180,1,1 if kind==1 else 0,0,0)+packet[12:end]
             if kind==1:data+=b'\xc0\x0c'+struct.pack('!HHIH',1,klass,60,4)+socket.inet_aton(address)
             return data
@@ -260,7 +262,7 @@ class RealServices(unittest.TestCase):
         command=['certbot','--non-interactive','--server',f'https://localhost:{self.acme}/dir',
                  '--config-dir',str(self.root/'etc/letsencrypt'),'--work-dir',str(self.root/'certbot-work'),
                  '--logs-dir',str(self.root/'certbot-logs'),*map(str,args)]
-        env={**os.environ,'REQUESTS_CA_BUNDLE':str(self.cert),'NO_PROXY':'localhost,127.0.0.1'}
+        env={**os.environ,'REQUESTS_CA_BUNDLE':str(self.cert),'NO_PROXY':'localhost,127.0.0.1',**getattr(self,'certbot_extra_env',{})}
         result=subprocess.run(command,env=env,capture_output=True,text=True,timeout=120)
         if success:self.assertEqual(result.returncode,0,(result.stdout+result.stderr)[-2500:])
         else:self.assertNotEqual(result.returncode,0)
@@ -308,3 +310,80 @@ class RealServices(unittest.TestCase):
         self.assertIn(('broken.example.test',1),self.upstream_requests)
         self.assertRegex((self.root/'access.log').read_text(),r'GET /\.well-known/acme-challenge/[^ ]+ HTTP/1.1" 404')
         self.assertFalse((self.root/'etc/letsencrypt/live/broken.example.test').exists())
+
+    def test_real_project_deploy_hook_and_nginx_reload(self):
+        from certificate_fixtures import certificates,relocate
+        nginx=self.start_nginx();self.start_pebble()
+        for domain in (self.domain,self.reality,'unrelated.example.test'):self.issue(domain)
+        # Existing Xray process/socket fixture remains explicitly FIXTURE: Phase 2 does not rerun Xray.
+        context=self.root/'hook-context';context.mkdir()
+        certificates(context)
+        for directory in ('usr/local/x-ui','proc','health-bin'):
+            shutil.copytree(context/directory,self.root/directory,symlinks=True)
+        link=self.root/'proc/43210/exe';link.unlink();link.symlink_to(self.root/'usr/local/x-ui/bin/xray-linux-amd64')
+        health=self.root/'health-bin'
+        ss=health/'ss';ss.write_text(ss.read_text().replace(str(context),str(self.root)))
+        source='\n'.join(relocate(function(name),self.root) for name in ('check_xray_runtime','render_certificate_hook'))
+        hook=self.root/'etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx'
+        hook.parent.mkdir(parents=True,exist_ok=True)
+        hook.write_text(self.shell(source+'\nrender_certificate_hook "$1" "$2"',self.domain,self.reality));hook.chmod(0o755)
+        config=self.root/'nginx.conf'
+        current=config.read_text().replace(str(self.cert),str(self.root/'etc/letsencrypt/live'/self.domain/'fullchain.pem')).replace(str(self.key),str(self.root/'etc/letsencrypt/live'/self.domain/'privkey.pem'))
+        config.write_text(current)
+        subprocess.run([self.nginx,'-p',str(self.root)+'/', '-c',config,'-s','reload'],check=True,capture_output=True,timeout=15)
+        calls=self.root/'hook-calls'
+        wrapper=health/'nginx'
+        wrapper.write_text(f'#!/bin/sh\nexec "{self.nginx}" -p "{self.root}/" -c "{config}" "$@"\n');wrapper.chmod(0o755)
+        controller=health/'systemctl'
+        controller.write_text('#!'+sys.executable+'\n'+f"""import json,os,pathlib,subprocess,sys
+root=pathlib.Path({str(self.root)!r});args=sys.argv[1:]
+with open(root/'hook-calls','a') as log:log.write(json.dumps(args)+'\\n')
+if args==['reload','nginx']:
+    sys.exit(subprocess.call([{self.nginx!r},'-p',str(root)+'/', '-c',str(root/'nginx.conf'),'-s','reload']))
+if args[0]=='is-active' and args[-1]=='nginx':
+    if (root/'fail-service').exists():sys.exit(1)
+    os.kill({nginx.pid},0)
+elif args not in (['restart','x-ui'],['is-active','--quiet','x-ui']):sys.exit(1)
+""");controller.chmod(0o755)
+        self.certbot_extra_env={'PATH':str(health)+':'+os.environ['PATH']}
+        roots=subprocess.check_output(['curl','-fsS','--noproxy','*','--max-time','10','--cacert',str(self.cert),
+                                      f'https://localhost:{self.management}/roots/0'],timeout=15)
+        trust=self.root/'pebble-ca.pem';trust.write_bytes(roots)
+        def served(serial):
+            deadline=time.monotonic()+15
+            while time.monotonic()<deadline:
+                ctx=ssl.create_default_context(cafile=str(trust))
+                with socket.create_connection(('127.0.0.1',self.https),timeout=5) as raw:
+                    with ctx.wrap_socket(raw,server_hostname=self.domain) as connection:
+                        from cryptography import x509
+                        if x509.load_der_x509_certificate(connection.getpeercert(binary_form=True)).serial_number==serial:return
+                time.sleep(.05)
+            self.fail('nginx reload did not serve the renewed certificate')
+        served(self.lineage(self.domain))
+        for names in ((self.domain,),(self.reality,),(self.domain,self.reality),('unrelated.example.test',)):
+            calls.unlink(missing_ok=True)
+            for name in names:
+                self.certbot('renew','--force-renewal','--no-random-sleep-on-renew','--cert-name',name)
+            recorded=[json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+            self.assertEqual(recorded.count(['reload','nginx']),0 if names==('unrelated.example.test',) else len(names))
+            self.assertEqual(recorded.count(['restart','x-ui']),int(self.domain in names))
+            self.assertFalse(any(call[0]=='stop' for call in recorded));self.assertIsNone(nginx.poll())
+            served(self.lineage(self.domain))
+        for fault in ('fail-nginx','fail-service'):
+            marker=self.root/fault;marker.touch();calls.unlink(missing_ok=True)
+            valid=config.read_text()
+            if fault=='fail-nginx':config.write_text(valid+'\ninvalid_directive;\n')
+            result=subprocess.run([hook],env={**os.environ,**self.certbot_extra_env,
+                'RENEWED_LINEAGE':str(self.root/'etc/letsencrypt/live'/self.domain)},capture_output=True,timeout=30)
+            self.assertNotEqual(result.returncode,0)
+            recorded=[json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+            self.assertNotIn(['restart','x-ui'],recorded)
+            if fault=='fail-nginx':self.assertNotIn(['reload','nginx'],recorded)
+            config.write_text(valid);marker.unlink();self.assertIsNone(nginx.poll())
+
+    def test_private_backup_restore_with_real_adguard_and_failure_recovery(self):
+        result=subprocess.run(['sudo','--preserve-env=NGINX_BIN',sys.executable,
+            str(ROOT/'tests/services_restore.py'),str(self.tools)],capture_output=True,text=True,timeout=240)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('PRIVATE RESTORE:',result.stdout)
+        print(result.stdout.strip(),flush=True)
