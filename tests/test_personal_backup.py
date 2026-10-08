@@ -296,6 +296,16 @@ class PersonalBackup(unittest.TestCase):
                 ('subKeyFile',str(self.path('/root/cert/example.com/privkey.pem')))])
             conn.execute('CREATE TABLE clients (uuid TEXT)')
             conn.execute("INSERT INTO clients VALUES ('fixture-secret-not-for-output')")
+            # Real installer-derived managed transport/Host state, as restored on a v1.6 host.
+            from test_personal_xhttp import seed
+            inbounds, hosts = seed(domain='example.com', reality_domain='reality.example.com')
+            for table, records in (('inbounds', list(inbounds.values())), ('hosts', hosts)):
+                keys = list(records[0])
+                conn.execute('CREATE TABLE '+table+' ('+','.join(keys)+')')
+                for row in records:
+                    conn.execute('INSERT INTO '+table+' VALUES ('+','.join('?' for _ in keys)+')',
+                                 [relocated(value, self.root) if isinstance(value,str) else value
+                                  for value in row.values()])
         self.write('/usr/local/x-ui/x-ui', '#!/bin/sh\necho 3.9.0\n', 0o755)
         self.write('/usr/local/x-ui/bin/xray-linux-amd64', '#!/bin/sh\necho Xray 26.9.30\n', 0o755)
         self.write('/usr/bin/x-ui', '#!/bin/sh\necho 3.9.0\n', 0o755)

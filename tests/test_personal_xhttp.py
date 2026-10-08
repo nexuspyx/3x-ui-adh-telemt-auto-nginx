@@ -647,7 +647,8 @@ sleep() { :; }
         self.assertFalse(grpc["multiMode"])
         # Xray 26.9.30 grpc/config.go + encoding/customSeviceName.go:
         # custom /service/method paths are used verbatim, without a /Tun suffix.
-        grpc_path = grpc["serviceName"]
+        grpc_path, multi_method = grpc["serviceName"].split("|")
+        self.assertEqual(multi_method,grpc_path.rsplit("/",1)[1]+"-multi")
         allowed_ports = {FIXTURE[key] for key in ("ws_port", "trojan_port", "panel_port", "sub_port", "mtr_backend_port")}
         for source in (SOURCE, PATCH):
             with self.subTest(script="installer" if source == SOURCE else "patch"):
@@ -691,7 +692,7 @@ sleep() { :; }
         mock = '''db() { python3 -c 'import os,sqlite3,sys; db=sqlite3.connect(os.environ["ROUTE_TEST_DB"]); print("\\n".join("|".join(map(str,row)) for row in db.execute(sys.argv[1])))' "$1"; }
 die() { echo "$*" >&2; exit 1; }
 '''
-        for invalid in (None, "missing", "/3000/wrong", "/10003/path;bad"):
+        for invalid in (None, "legacy-grpc", "grpc-suffix", "missing", "/3000/wrong", "/10003/path;bad"):
             with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "x-ui.db"
                 with sqlite3.connect(path) as db:
@@ -700,14 +701,16 @@ die() { echo "$*" >&2; exit 1; }
                         if invalid == "missing" and row["protocol"] == "trojan":
                             continue
                         stream = json.loads(row["stream_settings"])
-                        if invalid and invalid != "missing" and stream["network"] == "ws":
+                        if invalid in ("legacy-grpc","grpc-suffix") and stream["network"] == "grpc":
+                            stream['grpcSettings']['serviceName'] = '/10004/trojan' + ('|wrong' if invalid=='grpc-suffix' else '')
+                        if invalid and invalid not in ("missing","legacy-grpc","grpc-suffix") and stream["network"] == "ws":
                             stream["wsSettings"]["path"] = invalid
                         db.execute("INSERT INTO inbounds VALUES (?,?,?,?,?)", (row["id"], row["port"], row["protocol"], row["tag"], json.dumps(stream)))
                 before = path.read_bytes()
                 result = subprocess.run(["bash", "-eu", "-c", mock + block + '\nprintf "%s %s %s %s\\n" "$ws_port" "$ws_route" "$trojan_port" "$trojan_route"'],
                                         text=True, capture_output=True, env={**os.environ, "ROUTE_TEST_DB": str(path)})
-                self.assertEqual(result.returncode, 0 if invalid is None else 1, result.stdout + result.stderr)
-                if invalid is None:
+                self.assertEqual(result.returncode, 0 if invalid in (None,"legacy-grpc") else 1, result.stdout + result.stderr)
+                if invalid in (None,"legacy-grpc"):
                     self.assertEqual(result.stdout.strip(), "10003 /10003/websocket 10004 /10004/trojan")
                 self.assertEqual(path.read_bytes(), before, "Patch route discovery must be read-only")
 

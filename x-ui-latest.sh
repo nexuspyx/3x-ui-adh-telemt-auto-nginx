@@ -1163,7 +1163,7 @@ VALUES (
   "network": "grpc",
   "security": "none",
   "grpcSettings": {
-    "serviceName": "/${trojan_port}/${trojan_path}",
+    "serviceName": "/${trojan_port}/${trojan_path}|${trojan_path}-multi",
     "authority": "${domain}",
     "multiMode": false
   }

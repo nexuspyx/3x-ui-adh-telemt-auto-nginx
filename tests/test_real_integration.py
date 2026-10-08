@@ -11,6 +11,7 @@ import re
 import shutil
 import signal
 import socket
+import socketserver
 import sqlite3
 import subprocess
 import tarfile
@@ -29,10 +30,15 @@ MIHOMO_VERSION = 'v1.19.32'
 MIHOMO_SHA256 = 'ba3ce607747a07f948fc35780e108a4a7c7f552a38b9bd4d115f313ebcb89c20'
 
 
-def port(udp=False):
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM if udp else socket.SOCK_STREAM) as sock:
-        sock.bind(('127.0.0.1', 0))
-        return sock.getsockname()[1]
+def port(allocated, udp=False):
+    for _ in range(100):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM if udp else socket.SOCK_STREAM) as sock:
+            sock.bind(('127.0.0.1', 0))
+            number = sock.getsockname()[1]
+        if number not in allocated:
+            allocated.add(number)
+            return number
+    raise RuntimeError('Could not allocate a distinct fixture port')
 
 
 def download(url, target):
@@ -117,22 +123,47 @@ class RealIntegration(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='real-core-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.public = port(); self.hysteria_port = port(udp=True)
-        self.backends = {k:port() for k in ('reality','ws','trojan-grpc','tls','cover','panel','sub','api')}
         self.uds = self.root/'xhttp.sock'
         self.marker = 'FREE-INTEGRATION-'+os.urandom(12).hex()
         marker = self.marker.encode()
         self.origin_requests = []
+        self.origin_responses = {}
         requests = self.origin_requests
+        responses = self.origin_responses
         class Origin(BaseHTTPRequestHandler):
             def do_GET(self):
                 requests.append(self.path)
                 self.send_response(200); self.send_header('Content-Length',str(len(marker)))
                 self.end_headers(); self.wfile.write(marker)
             def log_message(self,*args): pass
-        self.origin = ThreadingHTTPServer(('127.0.0.1',0),Origin)
+        class FragmentedOrigin(socketserver.BaseRequestHandler):
+            def handle(handler):
+                handler.request.settimeout(15)
+                request = b''
+                while b'\r\n\r\n' not in request:
+                    chunk = handler.request.recv(4096)
+                    if not chunk: return
+                    request += chunk
+                    if len(request) > 65536: raise ValueError('Oversized origin request')
+                nonce = request.split(b' ',2)[1].decode('ascii')
+                requests.append(nonce)
+                headers = (f'HTTP/1.1 200 OK\r\nX-Forensic-Nonce: {nonce}\r\n'
+                           f'Content-Length: {len(marker)}\r\nConnection: close\r\n\r\n').encode()
+                responses[nonce] = headers + marker
+                # Deliberately separate header fragments and body. No delay or retry.
+                for chunk in (headers[:5], headers[5:23], headers[23:], marker):
+                    handler.request.sendall(chunk)
+        origin_type = socketserver.ThreadingTCPServer if 'grpc_fragmented' in self._testMethodName else ThreadingHTTPServer
+        self.origin = origin_type(('127.0.0.1',0),FragmentedOrigin if origin_type is socketserver.ThreadingTCPServer else Origin)
+        if origin_type is socketserver.ThreadingTCPServer:
+            self.origin.server_port = self.origin.server_address[1]
+        self.addCleanup(self.origin.server_close)
+        self.allocated_ports = {self.origin.server_port}
+        self.public = port(self.allocated_ports)
+        self.hysteria_port = port(self.allocated_ports, udp=True)
+        self.backends = {k:port(self.allocated_ports) for k in ('reality','ws','trojan-grpc','tls','cover','panel','sub','api')}
         threading.Thread(target=self.origin.serve_forever,daemon=True).start()
-        self.addCleanup(self.origin.server_close); self.addCleanup(self.origin.shutdown)
+        self.addCleanup(self.origin.shutdown)
         self.cert,self.key = self.root/'cert.pem',self.root/'key.pem'
         subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1',
                         '-subj','/CN=deploy.example','-addext','subjectAltName=DNS:deploy.example,DNS:cover.example',
@@ -158,17 +189,27 @@ class RealIntegration(unittest.TestCase):
         self.addCleanup(stop,process)
         return process
 
-    def ready(self, process, address=None, path=None):
+    def ready(self, process, address=None, path=None, udp_port=None):
         deadline = time.monotonic()+15
+        description = f'pid={process.pid}, TCP={address}, UDS={path}, UDP={udp_port}'
+        udp_state = ''
         while time.monotonic()<deadline:
-            self.assertIsNone(process.poll(), 'component exited before readiness; logs retained until fixture cleanup')
-            if path and path.exists(): return
+            self.assertIsNone(process.poll(), 'component exited before readiness: '+description)
+            if path and path.is_socket(): return
+            if udp_port:
+                result = subprocess.run(['ss','-H','-lunp','sport = :'+str(udp_port)],
+                                        capture_output=True,text=True,check=True,timeout=2)
+                udp_state = result.stdout
+                # Linux socket table plus owning PID proves a bound listener, not UDP connect().
+                if any(len(fields := line.split()) >= 5 and fields[3] == f'127.0.0.1:{udp_port}'
+                       and f'pid={process.pid},' in line for line in udp_state.splitlines()):
+                    return
             if address:
                 try:
                     with socket.create_connection(address,timeout=0.2): return
                 except OSError: pass
             time.sleep(0.05)
-        self.fail('component readiness deadline expired')
+        self.fail('component readiness deadline expired: '+description+'; ss: '+udp_state)
 
     def validate(self, config, name):
         path = self.root/(name+'.json'); path.write_text(json.dumps(config))
@@ -309,7 +350,7 @@ http {{ access_log off; {temp} {maps} {main} {cover} }}
             elif name=='ws': stream['wsSettings']['path']='/wrong-path'
             elif name=='trojan-grpc': stream['grpcSettings']['serviceName']='/wrong-service'
             else: stream['hysteriaSettings']['auth']='wrong-auth'
-        socks=port()
+        socks=port(self.allocated_ports)
         config.setdefault('log', {})['loglevel']='debug'
         config['inbounds']=[{'listen':'127.0.0.1','port':socks,'protocol':'socks','settings':{'auth':'noauth'}}]
         config['outbounds']=[outbound]
@@ -334,8 +375,13 @@ http {{ access_log off; {temp} {maps} {main} {cover} }}
     def transport(self,name):
         self.nginx_config()
         process=self.launch([self.xray,'run','-c',self.root/'server.json'],'xray-server')
-        self.ready(process,path=self.uds)
-        self.assertTrue(self.uds.is_socket(),'UDS must be created by the real Xray process')
+        if name == 'xhttp':
+            self.ready(process,path=self.uds)
+            self.assertTrue(self.uds.is_socket(),'UDS must be created by the real Xray process')
+        elif name == 'hysteria2':
+            self.ready(process,udp_port=self.hysteria_port)
+        else:
+            self.ready(process,('127.0.0.1',self.backends[name]))
         self.client(name)
         self.client(name,negative=True)
         self.passed.append(name+' positive/negative')
@@ -344,6 +390,70 @@ http {{ access_log off; {temp} {maps} {main} {cover} }}
     def test_xhttp(self): self.transport('xhttp')
     def test_websocket(self): self.transport('ws')
     def test_trojan_grpc(self): self.transport('trojan-grpc')
+
+    def grpc_fragmented(self, direct, count):
+        if not direct: self.nginx_config()
+        server = self.launch([self.xray,'run','-c',self.root/'server.json'],'xray-server')
+        self.ready(server,('127.0.0.1',self.backends['trojan-grpc']))
+        raw_link = next(urlsplit(line) for line in base64.b64decode(self.raw).decode().splitlines()
+                        if urlsplit(line).scheme == 'trojan')
+        query = parse_qs(raw_link.query)
+        for consumer in ('JSON','RAW') if not direct else ('JSON',):
+            config = copy.deepcopy(self.clients['trojan-grpc'])
+            outbound = next(o for o in config['outbounds'] if o['protocol']=='trojan')
+            endpoint, stream = outbound['settings']['servers'][0], outbound['streamSettings']
+            if consumer == 'RAW':
+                self.assertEqual(query['type'],['grpc'])
+                self.assertEqual((raw_link.hostname,raw_link.port),('deploy.example',443))
+                self.assertEqual(raw_link.username,endpoint['password'])
+                self.assertEqual(query['serviceName'],[stream['grpcSettings']['serviceName']])
+                endpoint['password'] = raw_link.username
+                stream['grpcSettings']['serviceName'] = query['serviceName'][0]
+            endpoint.update(address='127.0.0.1',port=self.backends['trojan-grpc'] if direct else self.public)
+            if direct:
+                stream['security']='none'; stream.pop('tlsSettings',None)
+            else:
+                stream['tlsSettings'].update(serverName='deploy.example',allowInsecure=False,
+                                             certificates=[{'certificateFile':str(self.cert),'usage':'verify'}])
+            socks = port(self.allocated_ports)
+            config['inbounds']=[{'listen':'127.0.0.1','port':socks,'protocol':'socks','settings':{'auth':'noauth'}}]
+            config['outbounds']=[outbound]; config.pop('routing',None); config.pop('dns',None)
+            path = self.validate(config,'fragmented-'+consumer)
+            client = self.launch([self.xray,'run','-c',path],'fragmented-'+consumer)
+            self.ready(client,('127.0.0.1',socks))
+            try:
+                for iteration in range(count if direct else count//2):
+                    nonce = '/'+consumer+'-'+str(iteration)+'-'+os.urandom(8).hex()
+                    def exact(connection,size):
+                        data=b''
+                        while len(data)<size:
+                            chunk=connection.recv(size-len(data))
+                            if not chunk: raise EOFError('SOCKS handshake EOF')
+                            data+=chunk
+                        return data
+                    with socket.create_connection(('127.0.0.1',socks),timeout=5) as connection:
+                        connection.settimeout(15)
+                        connection.sendall(b'\x05\x01\x00')
+                        self.assertEqual(exact(connection,2),b'\x05\x00')
+                        connection.sendall(b'\x05\x01\x00\x01'+socket.inet_aton('127.0.0.1')+
+                                           self.origin.server_port.to_bytes(2,'big'))
+                        reply=exact(connection,4); self.assertEqual(reply[:2],b'\x05\x00')
+                        exact(connection,4 if reply[3]==1 else 16 if reply[3]==4 else exact(connection,1)[0])
+                        exact(connection,2)
+                        connection.sendall(f'GET {nonce} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n'.encode())
+                        received=b''
+                        while chunk:=connection.recv(65536): received+=chunk
+                    # Save the unparsed response before any assertion/HTTP interpretation.
+                    (self.root/'fragmented-received.bin').write_bytes(received)
+                    expected=self.origin_responses[nonce]
+                    (self.root/'fragmented-expected.bin').write_bytes(expected)
+                    self.assertEqual(received,expected,f'{consumer} fragmented iteration {iteration+1}')
+                    self.assertEqual(self.origin_requests.count(nonce),1)
+            finally: stop(client)
+        self.passed.append(f'gRPC fragmented {"direct" if direct else "nginx RAW/JSON"}: {count}')
+
+    def test_grpc_fragmented_full(self): self.grpc_fragmented(False,100)
+    def test_grpc_fragmented_direct(self): self.grpc_fragmented(True,50)
     def test_hysteria2(self):
         self.transport('hysteria2')
         self.assertIn(f'dialing to udp:127.0.0.1:{self.hysteria_port}',
@@ -361,12 +471,13 @@ http {{ access_log off; {temp} {maps} {main} {cover} }}
             self.assertEqual((link.hostname,link.port),('deploy.example',443))
             self.assertTrue(link.username == (self.uuid if link.scheme=='vless' else self.auth), 'public credential mismatch')
             query=parse_qs(link.query)
+            if link.scheme == 'vless': self.assertEqual(query.get('encryption'),['none'])
             self.assertIn(query.get('sni',[link.hostname])[0] or link.hostname,('deploy.example','cover.example'))
             if query.get('security')==['reality']:
                 self.assertEqual(query['pbk'],[self.public_key]);self.assertIn(query['sid'][0],json.loads(self.rows['reality']['stream_settings'])['realitySettings']['shortIds'])
             if query.get('type')==['ws']: self.assertEqual(query['path'],['/10003/websocket'])
             if query.get('type')==['xhttp']: self.assertEqual(query['path'],['/Session7AbC'])
-            if query.get('type')==['grpc']: self.assertEqual(query['serviceName'],['/10004/trojan'])
+            if query.get('type')==['grpc']: self.assertEqual(query['serviceName'],['/10004/trojan|trojan-multi'])
         for name, config in self.clients.items():
             outbound=next(o for o in config['outbounds'] if o['protocol'] in ('vless','trojan','hysteria'))
             settings=outbound['settings'];stream=outbound['streamSettings']
@@ -394,7 +505,8 @@ http {{ access_log off; {temp} {maps} {main} {cover} }}
                     self.assertEqual(stream['xhttpSettings']['mode'],'stream-up')
                 elif name=='trojan-grpc':
                     self.assertEqual(stream['network'],'grpc')
-                    self.assertEqual(stream['grpcSettings']['serviceName'],'/10004/trojan')
+                    self.assertEqual(stream['grpcSettings']['serviceName'],'/10004/trojan|trojan-multi')
+                    self.assertIs(stream['grpcSettings']['multiMode'],False)
                     self.assertTrue(endpoint['password']==self.auth,'JSON Trojan credential mismatch')
                 else:
                     self.assertEqual(stream['network'],'hysteria')

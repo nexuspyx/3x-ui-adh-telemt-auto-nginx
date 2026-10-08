@@ -420,6 +420,157 @@ class AuditRecovery(unittest.TestCase):
     }
 ''' % path for path in ('/panel/', '/panel'))
 
+    def test_old_managed_vless_encryption_is_normalized_only_in_staging(self):
+        f = self.fixture
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            managed = [row[0] for row in db.execute(
+                "SELECT inbound_id FROM hosts WHERE remark IN ('reality','ws','xhttp') ORDER BY id")]
+            for index, iid in enumerate(managed):
+                settings = json.loads(db.execute('SELECT settings FROM inbounds WHERE id=?',(iid,)).fetchone()[0])
+                settings.pop('encryption')
+                if index == 1: settings['encryption'] = ''
+                settings['clients'] = [{'id':'preserved-client','flow':'custom-field'}]
+                settings['custom'] = {'preserved':True}
+                db.execute('UPDATE inbounds SET settings=? WHERE id=?',(json.dumps(settings),iid))
+            # Custom VLESS is intentionally outside the managed Host/tag/transport topology.
+            custom = dict(zip([c[0] for c in db.execute('SELECT * FROM inbounds').description],
+                              db.execute('SELECT * FROM inbounds WHERE id=?',(managed[1],)).fetchone()))
+            custom.update(id=77, tag='custom-vless', port=39000, remark='custom ws',
+                          settings='{"clients":[{"id":"custom-client"}],"custom":true}')
+            db.execute('INSERT INTO inbounds VALUES ('+','.join('?' for _ in custom)+')',list(custom.values()))
+            before = {row[0]:row[1:] for row in db.execute('SELECT * FROM inbounds')}
+            columns = [c[0] for c in db.execute('SELECT * FROM inbounds').description]
+            settings_index = columns.index('settings') - 1
+        archive = f.backup(); original = archive.read_bytes()
+        digest = hashlib.sha256(original).hexdigest()
+        for _ in range(2):
+            result = f.run_tool('restore',archive)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertIn('Restore completed successfully.',result.stdout)
+            with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                self.assertEqual(db.execute('PRAGMA quick_check').fetchone()[0],'ok')
+                after = {row[0]:row[1:] for row in db.execute('SELECT * FROM inbounds')}
+                for iid, original_row in before.items():
+                    expected = list(original_row)
+                    if iid in managed:
+                        settings = json.loads(expected[settings_index]); settings['encryption'] = 'none'
+                        self.assertEqual(json.loads(after[iid][settings_index]),settings)
+                        expected[settings_index] = after[iid][settings_index]
+                    self.assertEqual(after[iid],tuple(expected),'unrelated inbound state changed')
+            self.assertEqual(archive.read_bytes(),original)
+            self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
+            self.assertFalse(list(f.path('/var/backups/x-ui').glob('.rollback-*')))
+            states = json.loads((f.root/'services.json').read_text())
+            self.assertTrue(all(states[name]=='active' for name in ('x-ui','nginx','mtr-backend','certbot.timer')))
+
+    def test_nonempty_managed_vless_encryption_is_preserved(self):
+        f = self.fixture
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            iid = db.execute("SELECT inbound_id FROM hosts WHERE remark='ws'").fetchone()[0]
+            settings = json.loads(db.execute('SELECT settings FROM inbounds WHERE id=?',(iid,)).fetchone()[0])
+            settings['encryption'] = 'custom-nonempty-value'
+            original = json.dumps(settings)
+            db.execute('UPDATE inbounds SET settings=? WHERE id=?',(original,iid))
+        result = f.run_tool('restore',f.backup())
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            self.assertEqual(db.execute('SELECT settings FROM inbounds WHERE id=?',(iid,)).fetchone()[0],original)
+
+    def test_valid_vless_with_user_modified_hosts_needs_no_migration(self):
+        f = self.fixture
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            db.execute("UPDATE hosts SET address='user.example',remark='user-host',port=2443 WHERE remark='ws'")
+            db.execute("UPDATE hosts SET address='alternate.example' WHERE remark='xhttp'")
+            before = db.execute('SELECT * FROM hosts').fetchall()
+            inbounds = db.execute('SELECT * FROM inbounds').fetchall()
+        archive = f.backup(); original = archive.read_bytes()
+        for _ in range(2):
+            result = f.run_tool('restore',archive)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                self.assertEqual(db.execute('SELECT * FROM hosts').fetchall(),before)
+                self.assertEqual(db.execute('SELECT * FROM inbounds').fetchall(),inbounds)
+            self.assertEqual(archive.read_bytes(),original)
+
+    def legacy_grpc(self):
+        from test_personal_xhttp import render, SHARED
+        f = self.fixture
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            iid = db.execute("SELECT inbound_id FROM hosts WHERE remark='trojan'").fetchone()[0]
+            stream = json.loads(db.execute('SELECT stream_settings FROM inbounds WHERE id=?',(iid,)).fetchone()[0])
+            stream['grpcSettings']['serviceName'] = '/10004/trojan'
+            db.execute('UPDATE inbounds SET stream_settings=? WHERE id=?',(json.dumps(stream),iid))
+        block = re.search(r'^    location = /10004/trojan \{.*?^    \}',render(SHARED),re.M|re.S)[0]
+        include = f.path('/etc/nginx/snippets/includes.conf')
+        include.write_text(include.read_text() + block + '\n')
+        config = f.path('/etc/nginx/nginx.conf')
+        config.write_text(config.read_text().replace('http {','http { map $host $hack { default 0; }',1))
+        return iid
+
+    def test_legacy_grpc_is_normalized_only_in_staging_and_custom_is_preserved(self):
+        f = self.fixture; iid = self.legacy_grpc()
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            original_row = db.execute('SELECT * FROM inbounds WHERE id=?',(iid,)).fetchone()
+            columns = [c[0] for c in db.execute('SELECT * FROM inbounds').description]
+            custom = dict(zip(columns,original_row))
+            custom.update(id=77,tag='custom-grpc',remark='custom grpc',port=39000)
+            db.execute('INSERT INTO inbounds VALUES ('+','.join('?' for _ in custom)+')',list(custom.values()))
+            before = db.execute('SELECT * FROM inbounds').fetchall()
+            hosts = db.execute('SELECT * FROM hosts').fetchall()
+        archive=f.backup(); original=archive.read_bytes(); digest=hashlib.sha256(original).hexdigest()
+        for _ in range(2):
+            result=f.run_tool('restore',archive)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+                self.assertEqual(db.execute('PRAGMA quick_check').fetchone()[0],'ok')
+                for row in db.execute('SELECT * FROM inbounds'):
+                    expected=list(next(r for r in before if r[0]==row[0]))
+                    if row[0]==iid:
+                        index=columns.index('stream_settings'); stream=json.loads(expected[index])
+                        stream['grpcSettings']['serviceName']='/10004/trojan|trojan-multi'
+                        self.assertEqual(json.loads(row[index]),stream); expected[index]=row[index]
+                    self.assertEqual(row,tuple(expected))
+                self.assertEqual(db.execute('SELECT * FROM hosts').fetchall(),hosts)
+            self.assertEqual(archive.read_bytes(),original)
+            self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
+            self.assertIn('location = /10004/trojan {',f.path('/etc/nginx/snippets/includes.conf').read_text())
+            self.assertTrue(all(json.loads((f.root/'services.json').read_text())[name]=='active'
+                                for name in ('x-ui','nginx','mtr-backend','certbot.timer')))
+
+    def test_ambiguous_legacy_grpc_identity_fails_before_mutation(self):
+        f=self.fixture; self.legacy_grpc()
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            db.execute("INSERT INTO hosts SELECT * FROM hosts WHERE remark='trojan'")
+        archive=f.backup(); original=f.path('/etc/x-ui/x-ui.db').read_bytes()
+        services=json.loads((f.root/'services.json').read_text()); (f.root/'commands').write_text('')
+        result=f.run_tool('restore',archive)
+        self.assert_untouched(result,services)
+        self.assertEqual(f.path('/etc/x-ui/x-ui.db').read_bytes(),original)
+        self.assertIn('managed gRPC',result.stderr)
+
+    def test_ambiguous_managed_vless_identity_fails_before_mutation(self):
+        f = self.fixture
+        with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
+            for iid, text in db.execute("SELECT id,settings FROM inbounds WHERE protocol='vless'").fetchall():
+                settings=json.loads(text); settings.pop('encryption')
+                db.execute('UPDATE inbounds SET settings=? WHERE id=?',(json.dumps(settings),iid))
+        archive = f.backup()
+        original = f.path('/etc/x-ui/x-ui.db').read_bytes()
+        services = json.loads((f.root/'services.json').read_text())
+        for sql in ("INSERT INTO hosts SELECT * FROM hosts WHERE remark='ws'",
+                    "DELETE FROM hosts WHERE remark='ws'",
+                    "UPDATE inbounds SET tag='custom-tag' WHERE id=(SELECT inbound_id FROM hosts WHERE remark='ws')",
+                    "UPDATE hosts SET address='custom.example' WHERE remark='xhttp'"):
+            with self.subTest(sql=sql):
+                dbfile = Path(f.temp.name)/'ambiguous.db'; dbfile.write_bytes(original)
+                with sqlite3.connect(dbfile) as db: db.execute(sql)
+                bad = self.modified(archive,{f.member('/etc/x-ui/x-ui.db'):dbfile.read_bytes()})
+                (f.root/'commands').write_text('')
+                result = f.run_tool('restore',bad)
+                self.assert_untouched(result,services)
+                self.assertEqual(f.path('/etc/x-ui/x-ui.db').read_bytes(),original)
+                self.assertIn('managed VLESS',result.stderr)
+
     def test_custom_reality_panel_route_and_invalid_basepath_fail_before_mutation(self):
         f = self.fixture; archive = f.backup()
         reality = f.path('/etc/nginx/sites-available/reality.example.com').read_text()
