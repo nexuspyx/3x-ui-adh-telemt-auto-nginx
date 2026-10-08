@@ -1,5 +1,7 @@
 <div align="center">
 
+🇷🇺 **Русский** · [🇬🇧 English](README_EN.md) · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md)
+
 # 🚀 3X-UI AUTO NGINX
 
 ### Автоматическое развёртывание 3X-UI / XRAY-CORE на собственном VPS
@@ -13,7 +15,7 @@
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
-[English](README_EN.md) · [Релизы](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Telegram Web Proxy Manager](#telemt-web-manager) · [Ошибки](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
+[Релизы](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Telegram Web Proxy Manager](#telemt-web-manager) · [Ошибки](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
 
 </div>
 
@@ -40,13 +42,13 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 bash x-ui-latest.sh
 ```
 
-Скрипт запросит два домена и согласие на установку adguard home. Домены можно передать сразу:
+Скрипт запросит два домена и согласие на установку AdGuard Home. Домены можно передать сразу:
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
 ```
 
-> **⚠️ Чистая установка или полная переустановка.** `x-ui-latest.sh` удаляет прежнюю базу 3x-ui и конфигурацию nginx — **это не команда обновления рабочего VPS**. Перед переустановкой сохраните Backup вне сервера. Переустановка обнаруженной установки и удаление проекта требуют точного `YES` в верхнем регистре, что бы избежать ошибок при случайном запуске скрипта.
+> **⚠️ Чистая установка или полная переустановка.** `x-ui-latest.sh` удаляет прежнюю базу 3x-ui и конфигурацию nginx — **это не команда обновления рабочего VPS**. Перед переустановкой сохраните Backup вне сервера. Переустановка обнаруженной установки и удаление проекта требуют точного `YES` в верхнем регистре, чтобы избежать ошибок при случайном запуске скрипта.
 
 В конце — **URL панели, случайные логин/пароль и адрес диагностики** (MTR/LibreSpeed с авторизацией через 3x-ui). При выборе AdGuard Home — его адрес, пароль и DoH.
 
@@ -99,8 +101,6 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 
 Нет универсального proxy на произвольные localhost-порты. Критическая ошибка останавливает установку или восстановление вместо запуска неполной конфигурации.
 
-Новые релизы проходят автоматические проверки и полноценное тестирование установки и восстановления на реальном VPS.
-
 <a id="technical-details"></a>
 
 <details>
@@ -134,13 +134,15 @@ SSH, настройки ОС и базовый firewall остаются отв�
 
 ## 🤝 Происхождение и авторы
 
-За основу был взят [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), однако с момента форка более половины основной логики переработано или заменено. Обновлены схема XHTTP, nginx, сертификаты и Backup / Restore; добавлен Hysteria2, устранены выявленные проблемы безопасности. Проект развивается независимо.
+За основу был взят [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro). С тех пор переработаны схема nginx/SNI, XHTTP, сертификаты и Backup / Restore; добавлен Hysteria2, устранены выявленные проблемы безопасности. Проект развивается независимо.
 
 Панель предоставляет [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Права авторов сторонних компонентов и существующие лицензии сохраняются.
 
 <div align="center">
 
 **Два домена. Несколько минут. Собственный 3x-ui / Xray сервер.**
+
+⭐ Если установщик оказался полезен, [поставьте Star](https://github.com/xPROMSx/3x-ui-auto-nginx). Это поможет другим найти проект.
 
 [Установка](#installation) · [Релизы](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [Ошибки](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
 
