@@ -15,6 +15,7 @@ SUITES = {
         'test_certificate_renewal.CertificateRenewal',
         'test_adguard.AdGuardInstaller',
         'test_audit_findings.AuditInstaller',
+        'test_verified_release.VerifiedRelease',
     ),
     'integration': ('test_real_integration.RealIntegration',),
     'services': ('test_real_services.RealServices',),

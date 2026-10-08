@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import shlex
 import signal
 import socket
 import socketserver
@@ -21,11 +22,9 @@ import time
 import unittest
 from urllib.parse import parse_qs, quote, urlsplit
 
-from test_personal_xhttp import ROOT, FIXTURE, render, seed, SHARED, MAIN
+from test_personal_xhttp import ROOT, FIXTURE, render, seed, SHARED, MAIN, function as installer_function
+from release_contract import selection, verify
 
-BASELINE = 'v3.9.0'
-XRAY_VERSION = '26.9.30'
-XUI_SHA256 = 'd7cbe0bf6358ee0d2117c24fd2efb483502e411d38e2ea59bd0bf5e7a3e39390'
 MIHOMO_VERSION = 'v1.19.32'
 MIHOMO_SHA256 = 'ba3ce607747a07f948fc35780e108a4a7c7f552a38b9bd4d115f313ebcb89c20'
 
@@ -74,21 +73,22 @@ class RealIntegration(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory(prefix='real-tools-')
         cls.addClassCleanup(cls.temp.cleanup)
         cls.tools = Path(cls.temp.name)
+        cls.release = selection()
+        version, digest = cls.release['version'], cls.release['sha256']
         cached = os.environ.get('INTEGRATION_ARTIFACTS')
         archive, sidecar, mihomo = [cls.tools/n for n in ('x-ui.tar.gz','x-ui.sha256','mihomo.gz')]
         urls = (
-            f'https://github.com/MHSanaei/3x-ui/releases/download/{BASELINE}/x-ui-linux-amd64.tar.gz',
-            f'https://github.com/MHSanaei/3x-ui/releases/download/{BASELINE}/x-ui-linux-amd64.tar.gz.sha256',
+            f'https://github.com/MHSanaei/3x-ui/releases/download/{version}/x-ui-linux-amd64.tar.gz',
+            f'https://github.com/MHSanaei/3x-ui/releases/download/{version}/x-ui-linux-amd64.tar.gz.sha256',
             f'https://github.com/MetaCubeX/mihomo/releases/download/{MIHOMO_VERSION}/mihomo-linux-amd64-compatible-{MIHOMO_VERSION}.gz')
         for target, url in zip((archive,sidecar,mihomo),urls):
-            if cached:
+            if cls.release['candidate'] and target != mihomo:
+                shutil.copyfile(Path(os.environ['UPSTREAM_CANDIDATE']).parent/target.name, target)
+            elif cached:
                 shutil.copyfile(Path(cached)/target.name, target)
             else:
                 download(url, target)
-        if hashlib.sha256(archive.read_bytes()).hexdigest() != XUI_SHA256:
-            raise ValueError('Pinned 3x-ui archive checksum mismatch')
-        if not re.fullmatch(XUI_SHA256+r'\s+\*?x-ui-linux-amd64.tar.gz\s*', sidecar.read_text()):
-            raise ValueError('Upstream release checksum mismatch')
+        verify(archive, sidecar, digest)
         if hashlib.sha256(mihomo.read_bytes()).hexdigest() != MIHOMO_SHA256:
             raise ValueError('Pinned Mihomo checksum mismatch')
         if os.uname().machine != 'x86_64':
@@ -107,12 +107,19 @@ class RealIntegration(unittest.TestCase):
         cls.nginx = os.environ.get('NGINX_BIN') or shutil.which('nginx')
         if not cls.nginx:
             raise RuntimeError('Real nginx is required')
-        xray_version = subprocess.check_output([cls.xray,'version'], text=True)
-        if not xray_version.startswith('Xray '+XRAY_VERSION+' '):
+        xray_version = subprocess.check_output([cls.xray,'version'], text=True,timeout=20)
+        if cls.release['xray'] and not xray_version.startswith('Xray '+cls.release['xray']+' '):
             raise ValueError('Unexpected bundled Xray version')
-        print('\n3x-ui baseline:',BASELINE, '\n'+xray_version.splitlines()[0])
-        print(subprocess.check_output([cls.mihomo,'-v'],text=True).strip())
-        print(subprocess.run([cls.nginx,'-v'],capture_output=True,text=True,check=True).stderr.strip(),flush=True)
+        xui_version = subprocess.check_output([cls.xui,'-v'], text=True,timeout=20).strip()
+        if xui_version != version[1:]:
+            raise ValueError('Archive binary version does not match selected 3x-ui release: '+xui_version)
+        versions = {'3x-ui':xui_version, 'bundled_xray':xray_version.splitlines()[0]}
+        if os.environ.get('UPSTREAM_REPORT'):
+            Path(os.environ['UPSTREAM_REPORT']).write_text(json.dumps(versions)+'\n')
+        print('\n3x-ui '+('CANARY candidate' if cls.release['candidate'] else 'verified baseline')+':',version,
+              '\nArchive SHA-256:',digest, '\n'+xray_version.splitlines()[0])
+        print(subprocess.check_output([cls.mihomo,'-v'],text=True,timeout=20).strip())
+        print(subprocess.run([cls.nginx,'-v'],capture_output=True,text=True,check=True,timeout=20).stderr.strip(),flush=True)
         cls.passed = []
 
     @classmethod
@@ -224,10 +231,21 @@ class RealIntegration(unittest.TestCase):
         for directory in (dbdir,bindir,logs): directory.mkdir()
         shutil.copyfile(self.xray,bindir/self.xray.name); (bindir/self.xray.name).chmod(0o755)
         env = {**os.environ,'XUI_DB_FOLDER':str(dbdir),'XUI_BIN_FOLDER':str(bindir),'XUI_LOG_FOLDER':str(logs)}
-        subprocess.run([self.xui,'setting','-username','integration','-password',self.auth,
-                        '-port',str(self.backends['panel']),'-webBasePath','/panel/'],env=env,
-                       check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
+        initial = installer_function('_panel_initial_config').replace('/usr/local/x-ui/x-ui', shlex.quote(str(self.xui)))
+        env.update(XUIDB=str(dbdir/'x-ui.db'), config_username='integration',
+                   config_password=self.auth, panel_port=str(self.backends['panel']), panel_path='panel')
+        subprocess.run(['bash','-u','-c', 'msg_err() { echo "$*" >&2; }\n'+initial+'\n_panel_initial_config'],
+                       env=env, check=True, stdout=subprocess.DEVNULL, timeout=30)
         with sqlite3.connect(dbdir/'x-ui.db') as db:
+            # Native CLI exit 0 alone does not prove setting persistence. Validate
+            # the exact bootstrap contract before any test-runtime substitutions.
+            self.assertEqual(db.execute('PRAGMA quick_check').fetchone(), ('ok',))
+            values = dict(db.execute("SELECT key,value FROM settings WHERE key IN ('webPort','webBasePath','webListen')"))
+            self.assertEqual(values, {'webPort':str(self.backends['panel']), 'webBasePath':'/panel/', 'webListen':'127.0.0.1'})
+            user = db.execute('SELECT username,password FROM users ORDER BY id LIMIT 1').fetchone()
+            self.assertEqual(user[0], 'integration')
+            self.assertNotEqual(user[1], self.auth)
+            self.assertTrue(user[1].startswith(('$2a$','$2b$','$2y$')), 'Expected persisted bcrypt credentials')
             sql = render('sqlite3 $XUIDB',private_key=self.private,public_key=self.public_key)
             for placeholder, short_id in zip('abcdefgh', self.short_ids):
                 sql = sql.replace('\"'+placeholder+'\"', '\"'+short_id+'\"')

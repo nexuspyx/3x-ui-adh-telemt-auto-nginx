@@ -1,0 +1,83 @@
+name: Upstream 3x-ui Canary
+
+on:
+  # Validate changes to Canary itself before merge; this remains non-required.
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/upstream-canary.yml'
+      - 'tests/upstream_canary.py'
+      - 'tests/release_contract.py'
+      - 'tests/test_real_integration.py'
+      - 'tests/test_verified_release.py'
+  schedule:
+    - cron: '37 5 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Optional exact stable tag (empty: latest stable); manual runs always retest'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    name: Upstream Canary (not a required PR check)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Identify official candidate and test implementation
+        id: probe
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          args=()
+          if [[ -n "$REQUESTED_VERSION" ]]; then args+=(--version "$REQUESTED_VERSION"); fi
+          python3 tests/upstream_canary.py probe --directory "$RUNNER_TEMP/canary" "${args[@]}"
+      - name: Find previously tested unchanged candidate
+        id: previous
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/canary/result.json
+          key: ${{ steps.probe.outputs.key }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ steps.probe.outputs.key }}-
+      - name: Install explicit integration dependencies
+        if: github.event_name == 'workflow_dispatch' || steps.previous.outputs.cache-matched-key == ''
+        run: |
+          timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          timeout 8m sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends nginx libnginx-mod-stream sqlite3 openssl curl ca-certificates python3 python3-configobj python3-cryptography iproute2 tar gzip
+      - name: Test candidate's own x-ui and bundled Xray
+        id: integration
+        if: github.event_name == 'workflow_dispatch' || steps.previous.outputs.cache-matched-key == ''
+        env:
+          NGINX_BIN: /usr/sbin/nginx
+        run: python3 tests/upstream_canary.py run --directory "$RUNNER_TEMP/canary"
+      - name: Remember tested result (PASS or FAIL)
+        if: always() && (steps.integration.outcome == 'success' || steps.integration.outcome == 'failure') && steps.probe.outcome == 'success' && steps.integration.outputs.tested == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/canary/result.json
+          key: ${{ steps.probe.outputs.key }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Candidate report
+        if: always()
+        run: python3 tests/upstream_canary.py report --directory "$RUNNER_TEMP/canary"
+      - name: Preserve candidate report and integration log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-canary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/canary/candidate.json
+            ${{ runner.temp }}/canary/result.json
+            ${{ runner.temp }}/canary/integration.log
+          retention-days: 30

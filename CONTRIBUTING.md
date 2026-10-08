@@ -8,10 +8,12 @@ Keep Russian and English README files consistent. Preserve upstream attribution.
 
 ## Required checks
 
-Both checks must pass on the current PR revision:
+All four checks must pass on the current PR revision:
 
 - `Stack XHTTP and security` (`.github/workflows/stack-xhttp.yml`)
 - `Stack Backup and restore` (`.github/workflows/stack-backup.yml`)
+- `Real services (ubuntu-24.04)` (`.github/workflows/stack-services.yml`)
+- `Real services (ubuntu-26.04)` (`.github/workflows/stack-services.yml`)
 
 The jobs have unique names so GitHub can require them separately. The workflows run for pushes to `main`, pull requests targeting `main`, and manual `workflow_dispatch`. They have read-only repository permissions and no repository-secret dependency.
 
@@ -50,11 +52,31 @@ The repository owner must add the exact checks `Real services (ubuntu-24.04)` an
 
 Live VPS acceptance is still required for public DNS, Let's Encrypt, systemd boot, kernel firewall behavior, reboot and full external-network acceptance. Do not run `x-ui-latest.sh` to test syntax: it removes an existing installation. CI does not certify real network/client acceptance. Use a disposable VPS for live checks.
 
+## Verified upstream baseline and Canary
+
+`verified_panel_release()` in `x-ui-latest.sh` is the single version/digest source for production and real integration. The default is 3x-ui v3.9.0 / bundled Xray 26.9.30. Archive pins cover every supported download architecture; functional integration currently covers **amd64 only**. A pinned checksum does not certify architecture-specific runtime behavior.
+
+The installer bootstraps only release-preflight dependencies, then verifies the selected official archive, sidecar and pinned/API digest and validates its layout **before managed cleanup**. Installation consumes that same private archive. Explicit `-version <tag>` requires a published stable release >= v3.8.0 with verifiable assets, and warns when outside the baseline. A manual version choice is not an automatic promotion.
+
+`upstream-canary.yml` runs daily or manually on free Ubuntu 24.04 runners; PRs changing Canary infrastructure also validate it as a non-required check. It runs the existing integration suite with the candidate's own official x-ui and bundled Xray, including native CLI/migration/SQLite persistence, actual RAW/JSON subscriptions, five transport positive/negative pairs and Mihomo. Its report records version, archive SHA-256, bundled Xray and failure diagnostics. It is **not a required PR check**, never writes the baseline, and has no repository-secret or VPS dependency.
+
+A small Actions cache stores only the tested result, keyed by version, digest and test-implementation fingerprint. Unchanged daily candidates reuse the latest tested PASS/FAIL report; preparation/download failures are reported but not cached as tested; changed artifacts/code and every manual run retest. Each fresh result gets a unique cache key, so manual retesting supersedes previous results. Cache eviction causes a fresh run, not a skip. Reports/logs are retained as artifacts for 30 days.
+
+For an explicit local candidate run (non-root, integration dependencies installed):
+
+```bash
+python3 tests/upstream_canary.py probe --directory /tmp/xui-canary --version v3.9.0
+NGINX_BIN=/usr/sbin/nginx python3 tests/upstream_canary.py run --directory /tmp/xui-canary
+python3 tests/upstream_canary.py report --directory /tmp/xui-canary
+```
+
+Promote upstream only in a separate reviewed PR: independently confirm all official archive pins, update the single baseline, run all four required jobs, and record full installer/live acceptance. Canary **integration PASS is not full installer acceptance**: systemd lifecycle, public ACME/DNS, kernel UFW, reboot/recovery and non-amd64 behavior still require their own acceptance. Canary failures must be investigated, not hidden by changing assertions or silently substituting baseline binaries.
+
 ## Main protection
 
-The main branch protection requires PRs, both checks and an up-to-date PR branch, with zero required external approvals. Force pushes and deletion are disallowed. Protection applies to administrators; no standing bypass actor is configured.
+The main branch protection requires PRs, the required checks and an up-to-date PR branch, with zero required external approvals. Force pushes and deletion are disallowed. Protection applies to administrators; no standing bypass actor is configured.
 
-Emergency recovery is an explicit maintainer action: preserve the current commit, document the incident and exact intended change, and prefer a repair PR. If CI or protection configuration itself blocks recovery, the repository owner may temporarily amend the protection settings, perform the smallest repair, immediately restore the protections, rerun both checks and record the outcome. This is not permission for routine direct pushes or a permanently exempt automation account.
+Emergency recovery is an explicit maintainer action: preserve the current commit, document the incident and exact intended change, and prefer a repair PR. If CI or protection configuration itself blocks recovery, the repository owner may temporarily amend the protection settings, perform the smallest repair, immediately restore the protections, rerun all required checks and record the outcome. This is not permission for routine direct pushes or a permanently exempt automation account.
 
 ## Migration compatibility
 
