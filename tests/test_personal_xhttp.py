@@ -117,6 +117,7 @@ class PersonalXHTTP(unittest.TestCase):
             with self.subTest(cd=failed), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 calls = root/'calls'
+                (root/'archive').write_text('verified fixture')
                 panel = function('install_panel').replace('/usr/local', str(root/'local'))
                 mock = '''
 record() { printf '%s\\n' "$*" >> "$CALLS"; }
@@ -139,7 +140,7 @@ CD_COUNT=0
 '''
                 result = subprocess.run(['bash','-u','-c', mock+panel+'\ninstall_panel || exit 1'],
                                         env={**os.environ,'PANEL_VERSION':'v3.9.0','FAIL_CD':str(failed),
-                                             'ROOT':str(root),'CALLS':str(calls)}, text=True, capture_output=True)
+                                             'ROOT':str(root),'CALLS':str(calls),'PANEL_TAG':'v3.9.0','PANEL_ARCHIVE':str(root/'archive')}, text=True, capture_output=True)
                 events = calls.read_text().splitlines()
                 self.assertIn(f'cd {failed}', events, 'chdir failure must actually be reached')
                 self.assertNotEqual(result.returncode, 0, f'continued after failed cd: {events}')
@@ -236,7 +237,7 @@ printf 'CPU_STATE|%s|%s\n' "$CPU_SUPPORT_LEVEL" "$CPU_SUPPORT_TEXT"
         helpers = '\n'.join(re.findall(r'^msg_\w+\(\).*$', SOURCE, re.M))
         # Run the actual main ordering/summary on files; installer operations are no-ops.
         mocks = '\n'.join(name + '() { :; }' for name in (
-            "select_adguard", "cleanup_adguard", "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
+            "preflight_panel_release", "select_adguard", "cleanup_adguard", "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
             "get_ssl_certs", "install_panel", "configure_nginx", "configure_xui_db", "install_clash_sub",
             "install_fake_site", "install_diagnostics", "tune_system", "install_backup_tool", "setup_certificate_renewal", "setup_acme_http", "confirm_destructive_reinstall",
         )) + r'''
@@ -441,20 +442,15 @@ msg_err() { echo "$1" >&2; }
 
     def test_panel_and_cli_download_use_the_same_release_tag(self):
         panel = function("install_panel")
-        self.assertNotIn("raw.githubusercontent.com/MHSanaei/3x-ui", panel)
+        self.assertNotIn("curl", panel)
+        self.assertNotIn("_download_panel_archive", panel)
         self.assertIn('install -m 0755 x-ui.sh /usr/bin/x-ui', panel)
-        self.assertLess(panel.index("_download_panel_archive"), panel.index("tar zxvf"))
         self.assertLess(panel.index("tar zxvf"), panel.index("install -m 0755 x-ui.sh"))
-        download = re.search(r"    _download_panel_archive .*?\n        \"\$archive\" \|\| return 1", panel, re.S).group()
-        mock = '''_arch() { echo amd64; }
-_download_panel_archive() { printf '%s\\n' "$1"; }
-check() {
-'''
-        for tag in ("v3.8.0", "v3.9.0", "v9.8.7"):
-            with self.subTest(tag=tag):
-                result = subprocess.check_output(["bash", "-eu", "-c", mock + download + "\n}\ncheck"], text=True,
-                                                 env={**os.environ, "tag_version": tag, "archive": "/fixture/archive"})
-                self.assertEqual(result.strip(), f"https://github.com/MHSanaei/3x-ui/releases/download/{tag}/x-ui-linux-amd64.tar.gz")
+        self.assertIn('${PANEL_ARCHIVE:?Release preflight is required}', panel)
+        preflight = function('preflight_panel_release')
+        self.assertIn('https://github.com/MHSanaei/3x-ui/releases/download/${PANEL_TAG}/$asset', preflight)
+        self.assertLess(preflight.index('_download_panel_archive'),preflight.index('_validate_panel_archive'))
+
 
     def test_ws_host_uses_only_http11_alpn(self):
         for grouped in (False, True):
@@ -988,14 +984,18 @@ sys.exit(1 if sys.argv[1] == os.environ["FAIL_PANEL_COMMAND"] else 0)
             cli.write_text("#!/bin/bash\necho verified-release\n")
             archive = root / "fixture.tar.gz"
             with tarfile.open(archive, "w:gz") as bundle:
-                bundle.add(cli, arcname="x-ui/x-ui.sh")
+                for name in ('x-ui.sh','x-ui','x-ui.service.debian','bin/xray-linux-amd64'):
+                    bundle.add(cli, arcname="x-ui/"+name)
             checksum = root / "fixture.sha256"
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             checksum.write_text(("0" * 64 if failure == "mismatch" else "bad-hash" if failure == "malformed" else digest) + "  x-ui-linux-amd64.tar.gz\n")
             log = root / "calls"
             log.write_text("")
             panel = function("install_panel")
-            block = panel[panel.index('    archive=$(mktemp'):panel.index('    cd x-ui')]
+            block = ('    archive=$(mktemp /usr/local/x-ui-release.XXXXXX.tar.gz) || return 1\n'
+                     '    _download_panel_archive "https://github.com/MHSanaei/3x-ui/releases/download/${tag_version}/x-ui-linux-amd64.tar.gz" "$archive" || return 1\n'
+                     '    _validate_panel_archive "$archive" amd64 || return 1\n'
+                     + panel[panel.index('    [[ -d /usr/local/x-ui/ ]]'):panel.index('    cd x-ui')])
             block = block.replace("/usr/local", str(destination))
             mock = '''_arch() { echo amd64; }
 msg_err() { echo "$*" >&2; }
@@ -1021,7 +1021,7 @@ curl() {
 tar() { echo extract >> "$RELEASE_LOG"; command tar "$@"; }
 stage() {
 '''
-            result = subprocess.run(["bash", "-u", "-c", mock + function("_download_panel_archive") + "\n" + block + "\n}\nstage"],
+            result = subprocess.run(["bash", "-u", "-c", mock + function("_download_panel_archive") + "\n" + function('_validate_panel_archive') + "\n" + block + "\n}\nstage"],
                                     capture_output=True, text=True, env={**os.environ,
                                     "RELEASE_LOG": str(log), "RELEASE_FAILURE": failure,
                                     "ARCHIVE_FIXTURE": str(archive), "CHECKSUM_FIXTURE": str(checksum), "tag_version": "v3.9.0"})

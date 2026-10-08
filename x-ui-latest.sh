@@ -876,59 +876,157 @@ _panel_initial_config() {
     }
 }
 
-# Verify the release sidecar before extracting any root-owned executable.
+# Single release baseline for the installer and real integration/Canary tooling.
+# Pinned archive integrity is not functional acceptance on every architecture.
+verified_panel_release() {
+    cat <<'VERIFIED_RELEASE_JSON'
+{
+  "version": "v3.9.0",
+  "xray": "26.9.30",
+  "archives": {
+    "386": "437d08e5257e97fed1ffd24ea0119cb330c0f0ed68155f95dd65bb12e09ccefc",
+    "amd64": "d7cbe0bf6358ee0d2117c24fd2efb483502e411d38e2ea59bd0bf5e7a3e39390",
+    "arm64": "9a2e43c976a2e71618a30d8f38b52476b25ed363c6989599e2f625cc52f51a81",
+    "armv5": "98ba6467bfaaddb9fe443e6d73fafdf939e34fbe38a596f2b77aa3aa80f91eac",
+    "armv6": "e7ea6299c6c3b0dfa15b2fb85e77e27fa551d855e2329fd9094ae70f94c93ffc",
+    "armv7": "01502a20b2e6a312e796e5ca025071562bb56aadb318b451bc7c8d3f505a0c04",
+    "s390x": "b58c3298fe591d2195869dd5f6a5d1f6a2a4e7ab4193c653749ab50daf206cc9"
+  },
+  "integration_architectures": [
+    "amd64"
+  ]
+}
+VERIFIED_RELEASE_JSON
+}
+
+bootstrap_panel_dependencies() {
+    local binary missing=0
+    for binary in curl python3 tar gzip sha256sum; do
+        command -v "$binary" >/dev/null 2>&1 || missing=1
+    done
+    [[ -s /etc/ssl/certs/ca-certificates.crt ]] || missing=1
+    if (( missing )); then
+        apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update || return 1
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            curl ca-certificates python3 tar gzip || return 1
+    fi
+    for binary in curl python3 tar gzip sha256sum; do
+        command -v "$binary" >/dev/null 2>&1 || { msg_err "Release preflight requires $binary."; return 1; }
+    done
+    [[ -s /etc/ssl/certs/ca-certificates.crt ]]
+}
+
+release_panel_preflight() {
+    [[ -z "${PANEL_STAGE:-}" ]] || rm -rf -- "$PANEL_STAGE"
+}
+
+_validate_panel_archive() {
+    python3 - "$1" "$2" <<'PY'
+import sys, tarfile
+from pathlib import PurePosixPath
+with tarfile.open(sys.argv[1], 'r:gz') as archive:
+    members = archive.getmembers()
+    seen = set()
+    for member in members:
+        path = PurePosixPath(member.name)
+        if (path.is_absolute() or '..' in path.parts or not path.parts or
+                path.parts[0] != 'x-ui' or member.name in seen or
+                not (member.isfile() or member.isdir())):
+            raise ValueError('Unsafe 3x-ui archive member: '+member.name)
+        seen.add(member.name)
+    for name in ('x-ui/x-ui', 'x-ui/x-ui.sh', 'x-ui/x-ui.service.debian',
+                 'x-ui/bin/xray-linux-'+sys.argv[2]):
+        entry = archive.getmember(name)
+        if not entry.isfile() or entry.size == 0:
+            raise ValueError('Missing regular release component: '+name)
+PY
+}
+
+# Verify official sidecar and the independently pinned baseline/API digest.
 _download_panel_archive() {
-    local url="$1" archive="$2" checksum="${2}.sha256" expected actual
-    if ! curl -fLsS --connect-timeout 15 --max-time 300 "$url" -o "$archive" ||
-       ! curl -fLsS --connect-timeout 15 --max-time 60 "${url}.sha256" -o "$checksum"; then
+    local url="$1" archive="$2" checksum="${2}.sha256" pinned="${3:-}" expected actual
+    if ! curl -fLsS --retry 3 --connect-timeout 15 --max-time 300 "$url" -o "$archive" ||
+       ! curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 "${url}.sha256" -o "$checksum"; then
         rm -f "$archive" "$checksum"
         msg_err "Failed to download the 3x-ui release or checksum."
         return 1
     fi
-    expected=$(awk 'NR == 1 {print $1}' "$checksum")
+    expected=$(python3 - "$checksum" "${url##*/}" <<'PY'
+import re, sys
+from pathlib import Path
+match = re.fullmatch(r'([0-9a-f]{64})\s+\*?'+re.escape(sys.argv[2])+r'\s*',
+                     Path(sys.argv[1]).read_text())
+if not match:
+    raise ValueError('Invalid official release checksum format')
+print(match[1])
+PY
+    ) || { rm -f "$archive" "$checksum"; return 1; }
     actual=$(sha256sum "$archive") || {
         rm -f "$archive" "$checksum"
         return 1
     }
     actual="${actual%% *}"
     rm -f "$checksum"
-    if [[ ! "$expected" =~ ^[0-9a-f]{64}$ || "$expected" != "$actual" ]]; then
+    if [[ "$expected" != "$actual" || ( -n "$pinned" && "$pinned" != "$actual" ) ]]; then
         rm -f "$archive"
         msg_err "3x-ui release checksum verification failed."
         return 1
     fi
 }
 
-install_panel() {
-    local tag_version archive
-    apt-get update && apt-get install -y -q wget curl tar tzdata
-
-    cd /usr/local/ || return 1
-
-    if [[ -n "$PANEL_VERSION" ]]; then
-        tag_version="v${PANEL_VERSION#v}"
-        if ! curl -fsLo /dev/null "https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/${tag_version}" \
-           && ! curl -4 -fsLo /dev/null "https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/${tag_version}"; then
-            echo "3x-ui release ${tag_version} not found." && exit 1
-        fi
+preflight_panel_release() {
+    bootstrap_panel_dependencies || { msg_err "Release preflight dependency setup failed."; return 1; }
+    PANEL_STAGE=$(mktemp -d /tmp/x-ui-release.XXXXXX) || return 1
+    trap release_panel_preflight EXIT
+    chmod 700 "$PANEL_STAGE" || return 1
+    verified_panel_release > "$PANEL_STAGE/baseline.json" || return 1
+    PANEL_ARCH=$(_arch) || return 1
+    local baseline pinned asset
+    baseline=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$PANEL_STAGE/baseline.json") || return 1
+    PANEL_TAG="${PANEL_VERSION:-$baseline}"
+    PANEL_TAG="v${PANEL_TAG#v}"
+    _validate_panel_version "$PANEL_TAG" || return 1
+    asset="x-ui-linux-${PANEL_ARCH}.tar.gz"
+    if [[ "$PANEL_TAG" == "$baseline" ]]; then
+        pinned=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["archives"][sys.argv[2]])' \
+            "$PANEL_STAGE/baseline.json" "$PANEL_ARCH") || return 1
     else
-        tag_version=$(curl -Ls "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" \
-            | grep -m1 '"tag_name":' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
-        if [[ ! "$tag_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            tag_version=$(curl -4 -Ls "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" \
-                | grep -m1 '"tag_name":' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
-        fi
-        if [[ ! "$tag_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Failed to fetch 3x-ui version." && exit 1
-        fi
+        msg_warn "Explicit 3x-ui $PANEL_TAG selection: not the verified baseline; compatibility and full installer acceptance are not assured."
+        curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 \
+            "https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/${PANEL_TAG}" \
+            -o "$PANEL_STAGE/release.json" || { msg_err "Stable 3x-ui release $PANEL_TAG is unavailable."; return 1; }
+        pinned=$(python3 - "$PANEL_STAGE/release.json" "$PANEL_TAG" "$asset" <<'PY'
+import json, re, sys
+release = json.load(open(sys.argv[1]))
+if (release.get('tag_name') != sys.argv[2] or release.get('draft') is not False or
+        release.get('prerelease') is not False):
+    raise ValueError('Not an official stable release')
+assets = release['assets']
+for name in (sys.argv[3], sys.argv[3]+'.sha256'):
+    matches = [asset for asset in assets if asset.get('name') == name]
+    if len(matches) != 1:
+        raise ValueError('Missing/ambiguous release asset: '+name)
+digest = next(asset for asset in assets if asset['name'] == sys.argv[3]).get('digest')
+if not isinstance(digest, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
+    raise ValueError('Release asset lacks an official SHA-256 digest')
+print(digest[7:])
+PY
+        ) || { msg_err "Unsupported or unverifiable 3x-ui release $PANEL_TAG."; return 1; }
     fi
-
-    _validate_panel_version "$tag_version" || return 1
-    echo "Installing 3x-ui ${tag_version} ..."
-    archive=$(mktemp /usr/local/x-ui-release.XXXXXX.tar.gz) || return 1
+    PANEL_ARCHIVE="$PANEL_STAGE/$asset"
     _download_panel_archive \
-        "https://github.com/MHSanaei/3x-ui/releases/download/${tag_version}/x-ui-linux-$(_arch).tar.gz" \
-        "$archive" || return 1
+        "https://github.com/MHSanaei/3x-ui/releases/download/${PANEL_TAG}/$asset" \
+        "$PANEL_ARCHIVE" "$pinned" || return 1
+    _validate_panel_archive "$PANEL_ARCHIVE" "$PANEL_ARCH" || { msg_err "Invalid 3x-ui release archive."; return 1; }
+    chmod 400 "$PANEL_ARCHIVE" || return 1
+    msg_ok "3x-ui $PANEL_TAG archive verified before deployment cleanup."
+}
+
+install_panel() {
+    local tag_version="${PANEL_TAG:?Release preflight is required}" archive="${PANEL_ARCHIVE:?Release preflight is required}"
+    [[ -f "$archive" ]] || { msg_err "Verified release archive is unavailable."; return 1; }
+    cd /usr/local/ || return 1
+    echo "Installing 3x-ui ${tag_version} ..."
 
     [[ -d /usr/local/x-ui/ ]] && systemctl stop x-ui 2>/dev/null; rm -rf /usr/local/x-ui/
     if ! tar zxvf "$archive" -C /usr/local; then
@@ -1961,6 +2059,7 @@ main() {
     confirm_destructive_reinstall || exit 1
     validate_domains
     select_adguard || exit 1
+    preflight_panel_release || { msg_err "Release preflight failed; existing deployment was not removed."; exit 1; }
     cleanup_adguard || { msg_err "Cannot clean AdGuard Home; core deployment was not removed."; exit 1; }
     clean_previous_install
     install_packages || { msg_err "Dependency setup failed."; exit 1; }

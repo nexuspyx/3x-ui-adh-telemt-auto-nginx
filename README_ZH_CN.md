@@ -109,7 +109,7 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 - **系统：** Ubuntu 24.04、Ubuntu 26.04 和 Debian 13。不支持 Debian 12。
 - **UFW：** 添加 80/tcp、443/tcp 和 443/udp 规则。仅在识别并允许 SSH 端口后才会启用原本未启用的 UFW；否则保持未启用并给出警告。恢复操作不会启用 UFW。
 - **证书：** 通过 Let's Encrypt webroot 和系统 `certbot.timer` 自动续期，无需停止 nginx。
-- **3x-ui 版本：** 默认安装最新稳定版。可使用 `-version v3.9.0` 指定版本；最低支持 v3.8.0。
+- **3x-ui 版本：** 默认安装经过验证的 v3.9.0，内含 Xray 26.9.30。可通过 `-version <tag>` 明确选择其他稳定版（最低 v3.8.0）；安装程序会提示该版本尚未验证兼容性。删除原有安装前会先校验安装压缩包。
 
 **在新 VPS 上恢复：** 操作系统、版本和 CPU 架构应与备份对应。若 IP 改变，请更新 DNS。**不要运行** `x-ui-latest.sh`；仅安装备份工具，然后恢复可信的归档文件：
 
