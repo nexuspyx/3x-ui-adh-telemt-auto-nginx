@@ -138,6 +138,8 @@ Based on [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), this project is main
 
 The panel comes from [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Third-party authors retain their rights and existing licenses.
 
+Original xPROMSx developments and changes are offered under [GNU GPL-3.0-only](LICENSE). Copyright (C) 2026 xPROMSx contributors. The license covers only our rights in those materials; it does not relicense inherited code or establish GPL status for the entire repository. Origins, separate licenses and unconfirmed permissions are described in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 <div align="center">
 
 **Two domains. A few minutes. Your own 3x-ui / Xray server.**
