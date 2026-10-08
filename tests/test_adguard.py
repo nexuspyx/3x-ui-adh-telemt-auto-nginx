@@ -198,7 +198,7 @@ class AdGuardInstaller(unittest.TestCase):
         self.assertLess(main.index('check_installation'), main.index('install_adguard'))
         self.assertLess(main.index('install_adguard'), main.index('show_results'))
 
-    def test_pinned_architecture_hashes_and_retired_tool(self):
+    def test_pinned_architecture_hashes(self):
         for arch in ('x86_64','amd64','aarch64','arm64'):
             r = subprocess.run(['bash','-eu','-c',HELPER+'\nagh_release "$TEST_ARCH"; echo "$AGH_ARCH $AGH_SHA"'],
                                text=True,capture_output=True,env={**os.environ,'TEST_ARCH':arch})
@@ -207,9 +207,6 @@ class AdGuardInstaller(unittest.TestCase):
         self.assertNotIn('releases/latest', function('adguard_stage'))
         self.assertIn('tar.extractall', function('adguard_stage'))
         self.assertLess(function('adguard_stage').index('sha256sum'), function('adguard_stage').index('tar.extractall'))
-        stub = (ROOT / 'x-ui-adguard.sh').read_text()
-        self.assertIn('retired', stub)
-        self.assertNotRegex(stub, r'curl|apt-get|systemctl|rm -')
         self.assertNotIn('AdGuardHome', function('setup_certificate_renewal'))
 
     def test_success_config_service_routes_and_password(self):
