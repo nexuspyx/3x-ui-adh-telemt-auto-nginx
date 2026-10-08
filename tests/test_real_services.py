@@ -348,7 +348,10 @@ elif args not in (['restart','x-ui'],['is-active','--quiet','x-ui']):sys.exit(1)
         self.certbot_extra_env={'PATH':str(health)+':'+os.environ['PATH']}
         roots=subprocess.check_output(['curl','-fsS','--noproxy','*','--max-time','10','--cacert',str(self.cert),
                                       f'https://localhost:{self.management}/roots/0'],timeout=15)
-        trust=self.root/'pebble-ca.pem';trust.write_bytes(roots)
+        # Reload is asynchronous: old workers may still serve the known initial
+        # test certificate. Verify both trusted generations, then require the
+        # new serial below; never disable TLS verification or retry a test.
+        trust=self.root/'pebble-ca.pem';trust.write_bytes(roots+self.cert.read_bytes())
         def served(serial):
             deadline=time.monotonic()+15
             while time.monotonic()<deadline:
