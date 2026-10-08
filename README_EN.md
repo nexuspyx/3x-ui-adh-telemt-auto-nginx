@@ -109,7 +109,7 @@ There is no generic proxy to arbitrary localhost ports. Critical errors stop ins
 - **Systems:** Ubuntu 24.04, Ubuntu 26.04, and Debian 13. Debian 12 is unsupported.
 - **UFW:** adds 80/tcp, 443/tcp, and 443/udp. Inactive UFW is enabled only after the SSH port is detected and allowed; otherwise it remains inactive with a warning. Restore never enables UFW.
 - **Certificates:** Let's Encrypt webroot and `certbot.timer` renew certificates automatically without stopping nginx.
-- **3x-ui version:** the default is verified v3.9.0 with Xray 26.9.30. Explicitly select another stable release with `-version <tag>` (minimum v3.8.0); the installer warns that compatibility has not been confirmed. The archive is verified before removing the previous installation.
+- **3x-ui version:** by default, the installer uses the latest version thoroughly tested for compatibility with 3X-UI AUTO NGINX, which may not be the latest upstream release. After installation, you can update 3x-ui using its built-in update mechanism, but the new version may not yet be verified against this configuration. You can also explicitly select another stable release with `-version <tag>` (minimum supported version: v3.8.0); the installer will warn that compatibility has not been verified.
 
 **Recovery on a new VPS:** match the backup's OS, OS version, and architecture. Update DNS if the IP changes. Do not run `x-ui-latest.sh` — install only the utility, then restore a trusted archive:
 
