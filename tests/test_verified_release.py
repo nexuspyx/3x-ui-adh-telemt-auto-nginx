@@ -195,6 +195,7 @@ _panel_initial_config() { :; }
         release = {'tag_name':'v3.10.0','draft':False,'prerelease':False,'assets':[
             {'name':'x-ui-linux-amd64.tar.gz','digest':'sha256:'+'1'*64},
             {'name':'x-ui-linux-amd64.tar.gz.sha256'}]}
+        original_baseline = baseline()
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
             output=root/'outputs'
@@ -202,7 +203,7 @@ _panel_initial_config() { :; }
                 selected=upstream_canary.probe(root)
             self.assertEqual(selected['version'],'v3.10.0')
             self.assertEqual(selected['sha256'],'1'*64)
-            self.assertEqual(baseline()['version'],'v3.9.0')
+            self.assertEqual(baseline(),original_baseline)
             first=output.read_text()
             with redirect_stdout(io.StringIO()), patch.dict(os.environ,{'GITHUB_OUTPUT':str(output)}), patch.object(upstream_canary,'fetch_json',return_value=release), patch.object(upstream_canary,'fingerprint',return_value='second'):
                 upstream_canary.probe(root)
@@ -225,9 +226,10 @@ _panel_initial_config() { :; }
                 downloads.append(url)
                 target.write_bytes((digest+'  x-ui-linux-amd64.tar.gz\n').encode() if url.endswith('.sha256') else payload)
             class Process:
-                stdout=iter(('FAIL: native setting persistence incompatible\n','FAILED (failures=1)\n'))
+                stdout=io.StringIO('FAIL: native setting persistence incompatible\nFAILED (failures=1)\n')
                 def __init__(self,*args,**kwargs):
-                    pass
+                    Path(kwargs['env']['UPSTREAM_REPORT']).write_text(json.dumps({
+                        '3x-ui':'3.10.0','bundled_xray':'Xray candidate fixture','preparation_complete':True}))
                 def wait(self,timeout): return 1
                 def poll(self): return 1
                 def kill(self): pass
@@ -239,6 +241,7 @@ _panel_initial_config() { :; }
             self.assertEqual(downloads,[f'https://github.com/MHSanaei/3x-ui/releases/download/v3.10.0/x-ui-linux-amd64.tar.gz'+suffix for suffix in ('','.sha256')])
             result=json.loads((root/'result.json').read_text())
             self.assertEqual(result['status'],'FAIL')
+            self.assertTrue(result['integration_started'])
             self.assertIn('setting persistence incompatible',result['reason'])
             (root/'x-ui.tar.gz').write_bytes(b'corruption')
             with self.assertRaises(ValueError): verify(root/'x-ui.tar.gz',root/'x-ui.sha256',digest)
@@ -250,8 +253,13 @@ _panel_initial_config() { :; }
         body=source[source.index('verified_panel_release()'):source.index('bootstrap_panel_dependencies()')]
         emitted=subprocess.check_output(['bash','-u','-c',body+'\nverified_panel_release'],text=True)
         self.assertEqual(json.loads(emitted),value)
-        self.assertEqual(value['version'],'v3.9.0')
-        self.assertEqual(value['xray'],'26.9.30')
+        from release_contract import selection
+        from unittest.mock import patch
+        with patch.dict(os.environ,{},clear=True):
+            selected = selection()
+        self.assertEqual(selected['version'],value['version'])
+        self.assertEqual(selected['xray'],value['xray'])
+        self.assertEqual(selected['sha256'],value['archives']['amd64'])
         self.assertEqual(set(value['archives']),{'amd64','arm64','386','armv5','armv6','armv7','s390x'})
         self.assertEqual(value['integration_architectures'],['amd64'])
         for digest in value['archives'].values(): self.assertRegex(digest,r'^[0-9a-f]{64}$')
@@ -278,6 +286,107 @@ msg_err() { echo "$*" >&2; }
                     self.assertIn('Release preflight requires curl',result.stderr)
                 else:
                     self.assertNotIn('install',log.read_text())
+
+    def test_baseline_promotion_changes_installer_and_integration_contracts(self):
+        from unittest.mock import patch
+        import release_contract
+        source = (ROOT/'x-ui-latest.sh').read_text()
+        value = release_contract.baseline()
+        promoted = {**value, 'version':'v3.10.0', 'xray':'27.1.1',
+                    'archives':{arch:'a'*64 for arch in value['archives']}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            def write_manifest(manifest):
+                text = re.sub(r"(?<=cat <<'VERIFIED_RELEASE_JSON'\n).*?(?=\nVERIFIED_RELEASE_JSON)",
+                              json.dumps(manifest, indent=2), source, flags=re.S)
+                (root/'x-ui-latest.sh').write_text(text)
+            write_manifest(promoted)
+            with patch.object(release_contract,'ROOT',root), patch.dict(os.environ,{},clear=True), patch.dict(globals(),ROOT=root):
+                # The existing production-contract test must also accept promotion.
+                self.test_baseline_all_archives_are_pinned_but_coverage_is_explicit()
+                selected = release_contract.selection()
+                self.assertEqual(selected['version'],promoted['version'])
+                self.assertEqual(selected['xray'],promoted['xray'])
+                self.assertEqual(selected['sha256'],promoted['archives']['amd64'])
+                for broken in ({**promoted,'xray':''}, {**promoted,'archives':{}},
+                               {**promoted,'archives':{'amd64':'corrupt'}},
+                               {**promoted,'integration_architectures':['unknown']}):
+                    with self.subTest(manifest=broken):
+                        write_manifest(broken)
+                        with self.assertRaises(ValueError): release_contract.baseline()
+
+    def test_real_integration_rejects_nonproduction_archive_layout(self):
+        from unittest.mock import patch
+        import gzip
+        import test_real_integration as integration
+        original_run = subprocess.run
+        def run(argv,**kwargs):
+            return original_run(argv,**kwargs) if argv[0] == 'bash' else subprocess.CompletedProcess([],0,stderr='nginx fixture')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mihomo = gzip.compress(b'fixture executable')
+            (root/'mihomo.gz').write_bytes(mihomo)
+            for missing in (None,'x-ui.sh','x-ui.service.debian','unsafe'):
+                with self.subTest(missing=missing):
+                    archive = root/'x-ui.tar.gz'
+                    with tarfile.open(archive,'w:gz') as bundle:
+                        for name in ('x-ui','x-ui.sh','x-ui.service.debian','bin/xray-linux-amd64'):
+                            if name == missing: continue
+                            entry = tarfile.TarInfo('x-ui/'+name)
+                            data = b'fixture executable'; entry.size = len(data)
+                            bundle.addfile(entry,io.BytesIO(data))
+                        if missing == 'unsafe':
+                            entry = tarfile.TarInfo('../outside'); entry.size = 1
+                            bundle.addfile(entry,io.BytesIO(b'x'))
+                    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+                    (root/'x-ui.sha256').write_text(digest+'  x-ui-linux-amd64.tar.gz\n')
+                    selected = {'version':'v3.10.0','sha256':digest,'xray':'27.1.1','candidate':False}
+                    def version(argv,**kwargs):
+                        return 'Xray 27.1.1 fixture\n' if 'version' in argv else ('3.10.0' if '-v' in argv and str(argv[0]).endswith('/x-ui') else 'Mihomo fixture')
+                    with patch.dict(os.environ,{'INTEGRATION_ARTIFACTS':str(root),'NGINX_BIN':'/fixture/nginx'},clear=True), patch.object(integration,'selection',return_value=selected), patch.object(integration,'MIHOMO_SHA256',hashlib.sha256(mihomo).hexdigest()), patch.object(integration.subprocess,'check_output',side_effect=version) as execute, patch.object(integration.subprocess,'run',side_effect=run):
+                        try:
+                            if missing:
+                                with self.assertRaises((ValueError,subprocess.CalledProcessError)):
+                                    integration.RealIntegration.setUpClass()
+                                execute.assert_not_called()
+                            else:
+                                integration.RealIntegration.setUpClass()
+                                self.assertGreater(execute.call_count,0)
+                        finally:
+                            integration.RealIntegration.doClassCleanups()
+
+    def test_canary_mihomo_setup_failure_is_not_a_tested_compatibility_result(self):
+        from unittest.mock import patch
+        import upstream_canary
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = b'authenticated candidate; setup must fail before extraction'
+            digest = hashlib.sha256(payload).hexdigest()
+            selected = {'version':'v3.10.0','sha256':digest,'arch':'amd64','implementation':'test'}
+            (root/'candidate.json').write_text(json.dumps(selected))
+            def download(url,target):
+                target.write_bytes((digest+'  x-ui-linux-amd64.tar.gz\n').encode() if url.endswith('.sha256') else payload)
+            worker = root/'setup_failure.py'
+            worker.write_text('''import sys, unittest
+from unittest.mock import patch
+import test_real_integration as integration
+with patch.object(integration, 'download', side_effect=RuntimeError('Mihomo preparation unavailable')):
+    suite = unittest.TestSuite([integration.RealIntegration('test_reality')])
+    result = unittest.TextTestRunner().run(suite)
+sys.exit(not result.wasSuccessful())
+''')
+            original = subprocess.Popen
+            def child(argv,**kwargs):
+                kwargs['env']['PYTHONPATH'] = str(ROOT/'tests')
+                return original([argv[0],str(worker)],**kwargs)
+            output = root/'outputs'
+            with redirect_stdout(io.StringIO()), patch.dict(os.environ,{'GITHUB_OUTPUT':str(output)}), patch('test_real_integration.download',side_effect=download), patch.object(upstream_canary.subprocess,'Popen',side_effect=child):
+                self.assertEqual(upstream_canary.run(root),1)
+            result = json.loads((root/'result.json').read_text())
+            self.assertIn('Mihomo preparation unavailable',result['reason'])
+            self.assertFalse(result['integration_started'])
+            self.assertEqual(output.read_text(),'tested=false\n')
+            self.assertFalse((root/'versions.json').exists())
 
     def test_canary_preparation_failure_is_reported_but_not_cached_as_tested(self):
         from unittest.mock import patch

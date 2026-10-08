@@ -74,7 +74,6 @@ def run(directory):
         with (directory/'integration.log').open('w') as log:
             process = subprocess.Popen([sys.executable, str(ROOT/'tests/run_ci.py'),'--suite','integration'],
                                        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            result['integration_started'] = True
             deadline = threading.Timer(20*60, process.kill)
             deadline.daemon = True
             deadline.start()
@@ -92,15 +91,22 @@ def run(directory):
                         process.wait(timeout=10)
                     except subprocess.TimeoutExpired:
                         process.kill(); process.wait(timeout=10)
+                process.stdout.close()
+        if (directory/'versions.json').exists():
+            versions = json.loads((directory/'versions.json').read_text())
+            if versions.get('preparation_complete') is not True or versions.get('3x-ui') != selected['version'][1:]:
+                raise ValueError('Invalid integration preparation report')
+            result['integration_started'] = True
+            result.update({key:versions[key] for key in ('3x-ui','bundled_xray')})
         if code:
             lines = (directory/'integration.log').read_text().splitlines()
             raise RuntimeError('Integration failed (exit '+str(code)+'): '+ '\n'.join(lines[-20:]))
+        if not result['integration_started']:
+            raise ValueError('Integration preparation did not complete')
         result['status'] = 'PASS'
         result['reason'] = 'CLI/SQLite, five transports, real RAW/JSON and Mihomo consumers passed'
     except Exception as error:
         result['reason'] = str(error)
-    if (directory/'versions.json').exists():
-        result.update(json.loads((directory/'versions.json').read_text()))
     (directory/'result.json').write_text(json.dumps(result, indent=2)+'\n')
     with open(os.environ.get('GITHUB_OUTPUT', os.devnull), 'a') as output:
         output.write('tested='+str(result['integration_started']).lower()+'\n')

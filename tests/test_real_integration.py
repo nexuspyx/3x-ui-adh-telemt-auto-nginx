@@ -14,6 +14,7 @@ import signal
 import socket
 import socketserver
 import sqlite3
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -23,7 +24,7 @@ import unittest
 from urllib.parse import parse_qs, quote, urlsplit
 
 from test_personal_xhttp import ROOT, FIXTURE, render, seed, SHARED, MAIN, function as installer_function
-from release_contract import selection, verify
+from release_contract import selection, verify, validate_layout
 
 MIHOMO_VERSION = 'v1.19.32'
 MIHOMO_SHA256 = 'ba3ce607747a07f948fc35780e108a4a7c7f552a38b9bd4d115f313ebcb89c20'
@@ -89,6 +90,8 @@ class RealIntegration(unittest.TestCase):
             else:
                 download(url, target)
         verify(archive, sidecar, digest)
+        validate_layout(archive, 'amd64')
+        print('Production archive layout: PASS', flush=True)
         if hashlib.sha256(mihomo.read_bytes()).hexdigest() != MIHOMO_SHA256:
             raise ValueError('Pinned Mihomo checksum mismatch')
         if os.uname().machine != 'x86_64':
@@ -114,13 +117,14 @@ class RealIntegration(unittest.TestCase):
         if xui_version != version[1:]:
             raise ValueError('Archive binary version does not match selected 3x-ui release: '+xui_version)
         versions = {'3x-ui':xui_version, 'bundled_xray':xray_version.splitlines()[0]}
-        if os.environ.get('UPSTREAM_REPORT'):
-            Path(os.environ['UPSTREAM_REPORT']).write_text(json.dumps(versions)+'\n')
         print('\n3x-ui '+('CANARY candidate' if cls.release['candidate'] else 'verified baseline')+':',version,
               '\nArchive SHA-256:',digest, '\n'+xray_version.splitlines()[0])
         print(subprocess.check_output([cls.mihomo,'-v'],text=True,timeout=20).strip())
         print(subprocess.run([cls.nginx,'-v'],capture_output=True,text=True,check=True,timeout=20).stderr.strip(),flush=True)
         cls.passed = []
+        # Publish readiness only after every required artifact/tool is prepared.
+        if os.environ.get('UPSTREAM_REPORT'):
+            Path(os.environ['UPSTREAM_REPORT']).write_text(json.dumps({**versions,'preparation_complete':True})+'\n')
 
     @classmethod
     def tearDownClass(cls):
@@ -225,6 +229,20 @@ class RealIntegration(unittest.TestCase):
         self.assertEqual(result.returncode,0, name+' rejected: '+(result.stdout+result.stderr)[-2000:])
         return path
 
+    def release_subscription_socket(self):
+        """Release only an inactive UDS left by the stopped private x-ui fixture."""
+        self.assertEqual(self.root,Path(self.temp.name))
+        self.assertEqual(self.uds,self.root/'xhttp.sock')
+        try:
+            mode = self.uds.lstat().st_mode
+        except FileNotFoundError:
+            return
+        self.assertTrue(stat.S_ISSOCK(mode),'Expected a private subscription UDS, not a file/symlink')
+        table = subprocess.check_output(['ss','-H','-xlpn'],text=True,timeout=2)
+        self.assertFalse(any(str(self.uds) in line.split() for line in table.splitlines()),
+                         'Cannot remove active subscription UDS: '+str(self.uds))
+        self.uds.unlink()
+
     def build_subscriptions(self):
         """Real bundled x-ui, native private state overrides, actual installer SQL."""
         dbdir,bindir,logs = [self.root/n for n in ('db','bin','logs')]
@@ -301,7 +319,8 @@ class RealIntegration(unittest.TestCase):
             f"deploy.example:{self.backends['sub']}:127.0.0.1",'--max-time','15',
             f"https://deploy.example:{self.backends['sub']}/subscription/fixture?provider=1"],timeout=20)
         stop(process)
-        # x-ui gracefully stops its real Xray child; the generated config is authoritative.
+        self.release_subscription_socket()
+        # The subscription process group is stopped; use its authoritative generated config.
         self.server = json.loads((bindir/'config.json').read_text())
         self.server.setdefault('log', {})['loglevel']='debug'
         self.validate(self.server,'server')
@@ -408,6 +427,35 @@ http {{ access_log off; {temp} {maps} {main} {cover} }}
     def test_xhttp(self): self.transport('xhttp')
     def test_websocket(self): self.transport('ws')
     def test_trojan_grpc(self): self.transport('trojan-grpc')
+
+    def test_subscription_handoff_removes_only_inactive_private_socket(self):
+        from unittest.mock import patch
+        original_stop = stop
+        fixture = RealIntegration('test_xhttp')
+        def leave_inactive_socket(process):
+            original_stop(process)
+            self.assertEqual(fixture.uds, fixture.root/'xhttp.sock')
+            table = subprocess.check_output(['ss','-H','-xlpn'],text=True,timeout=2)
+            self.assertFalse(any(str(fixture.uds) in line.split() for line in table.splitlines()))
+            if not fixture.uds.exists():
+                with socket.socket(socket.AF_UNIX) as old:
+                    old.bind(str(fixture.uds))
+            self.assertTrue(fixture.uds.is_socket())
+        try:
+            with patch(__name__+'.stop',side_effect=leave_inactive_socket):
+                fixture.setUp()
+            self.assertFalse(fixture.uds.exists(),'Stopped subscription backend left its private UDS')
+        finally:
+            fixture.doCleanups()
+        # An active private socket must be retained, not unlinked to make Xray start.
+        with socket.socket(socket.AF_UNIX) as active:
+            active.bind(str(self.uds)); active.listen(1)
+            with self.assertRaisesRegex(AssertionError,'active subscription UDS'):
+                self.release_subscription_socket()
+            self.assertTrue(self.uds.is_socket())
+            with socket.socket(socket.AF_UNIX) as probe:
+                probe.connect(str(self.uds))
+        self.uds.unlink()
 
     def grpc_fragmented(self, direct, count):
         if not direct: self.nginx_config()

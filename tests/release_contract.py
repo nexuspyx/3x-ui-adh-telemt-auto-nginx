@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -15,10 +16,32 @@ def baseline():
         raise ValueError('Missing installer release baseline')
     value = json.loads(match[1])
     stable_version(value['version'])
-    for digest in value['archives'].values():
-        if not re.fullmatch('[0-9a-f]{64}', digest):
+    if not isinstance(value.get('xray'), str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', value['xray']):
+        raise ValueError('Invalid bundled Xray version')
+    archives = value.get('archives')
+    if not isinstance(archives, dict) or not archives:
+        raise ValueError('Missing pinned archives')
+    for arch, digest in archives.items():
+        if not isinstance(arch, str) or not re.fullmatch('[a-z0-9]+', arch) or not isinstance(digest, str) or not re.fullmatch('[0-9a-f]{64}', digest):
             raise ValueError('Invalid pinned archive digest')
+    coverage = value.get('integration_architectures')
+    if not isinstance(coverage, list) or not coverage or any(not isinstance(arch, str) or arch not in archives for arch in coverage) or len(set(coverage)) != len(coverage):
+        raise ValueError('Invalid integration architecture coverage')
+    if 'amd64' not in archives:
+        raise ValueError('Missing default integration archive')
     return value
+
+
+def validate_layout(archive, arch):
+    """Run the trusted installer's exact layout contract on the verified archive."""
+    source = (ROOT/'x-ui-latest.sh').read_text()
+    match = re.search(r'^_validate_panel_archive\(\)\s*\{.*?^\}', source, re.M | re.S)
+    if not match:
+        raise ValueError('Missing production archive layout validator')
+    result = subprocess.run(['bash','-u','-c',match[0]+'\n_validate_panel_archive "$1" "$2"',
+                             'archive-validation',str(archive),arch],capture_output=True,text=True,timeout=60)
+    if result.returncode:
+        raise ValueError('Production archive layout validation failed: '+result.stderr.strip())
 
 
 def stable_version(tag):
