@@ -38,8 +38,7 @@
 Настройте DNS-записи **двух доменов**, указав IP-адрес вашего VPS: один для панели, другой для REALITY. Подключитесь по SSH под **root**; [поддерживаемые ОС](#technical-details).
 
 ```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh
-bash x-ui-latest.sh
+curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
 Скрипт запросит два домена и согласие на установку AdGuard Home. Домены можно передать сразу:
