@@ -35,7 +35,7 @@
 
 ## 🚀 شروع سریع
 
-رکوردهای DNS **دو دامنه** را به نشانی IP سرور VPS خود هدایت کنید: یکی برای پنل و دیگری برای REALITY. با SSH و کاربر **root** وارد شوید و پورت‌های TCP **80/443** و UDP **443** را باز کنید. [سیستم‌عامل‌های پشتیبانی‌شده](#technical-details).
+رکوردهای DNS **دو دامنه** را طوری تنظیم کنید که به نشانی IP سرور VPS شما اشاره کنند: یکی برای پنل و دیگری برای REALITY. با SSH و کاربر **root** وارد شوید و پورت‌های TCP **80/443** و UDP **443** را باز کنید. [سیستم‌عامل‌های پشتیبانی‌شده](#technical-details).
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh

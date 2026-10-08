@@ -35,7 +35,7 @@ Bring two domains and a clean VPS. A cover website is selected and deployed auto
 
 ## 🚀 Quick start
 
-Point the DNS records of **two domains** to your VPS IP address: one for the panel, one for REALITY. Connect via SSH as **root** and allow TCP **80/443**, UDP **443**. [Supported systems](#technical-details).
+Configure the DNS records for **two domains** to point to your VPS IP address: one for the panel, one for REALITY. Connect via SSH as **root** and allow TCP **80/443**, UDP **443**. [Supported systems](#technical-details).
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh

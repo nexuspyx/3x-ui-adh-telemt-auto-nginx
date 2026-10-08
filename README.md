@@ -35,7 +35,7 @@
 
 ## 🚀 Быстрый старт
 
-Направьте DNS-записи **двух доменов** на IP-адрес вашего VPS: один для панели, другой для REALITY. Подключитесь по SSH под **root**; [поддерживаемые ОС](#technical-details).
+Настройте DNS-записи **двух доменов**, указав IP-адрес вашего VPS: один для панели, другой для REALITY. Подключитесь по SSH под **root**; [поддерживаемые ОС](#technical-details).
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh
