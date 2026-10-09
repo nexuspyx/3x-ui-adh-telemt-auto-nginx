@@ -2,7 +2,7 @@
 
 [🇷🇺 Русский](README_RU.md) · 🇬🇧 **English** · [🇪🇬 العربية](README_AR.md) · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
 
-# 🚀 3X-UI AUTO NGINX
+<h1 align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></h1>
 
 ### Automated deployment of 3X-UI / XRAY-CORE on your own VPS
 
