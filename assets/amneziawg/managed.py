@@ -53,7 +53,7 @@ class Panel:
         self.token = self.request('csrf-token')['obj']
 
     def request(self, path, data=None):
-        argv = ['curl','--fail','--silent','--show-error','--noproxy','*',
+        argv = ['curl','-q','--fail','--silent','--show-error','--noproxy','*',
                 '--connect-timeout','5','--max-time','20',*self.options,
                 '--cookie',str(self.cookie),'--cookie-jar',str(self.cookie)]
         if self.token:
@@ -85,17 +85,13 @@ class Panel:
 
 
 def configure(panel, domain):
-    rules = subprocess.run(['ufw','show','added'],capture_output=True,text=True,timeout=20,check=True).stdout
-    existed = 'ufw allow 8443/udp' in rules.splitlines()
     inbound = panel.create(domain)
     try:
         subprocess.run(['ufw','allow','8443/udp'],capture_output=True,timeout=20,check=True)
     except Exception:
-        try:
-            panel.request('panel/api/inbounds/del/'+str(inbound['id']), {})
-        finally:
-            if not existed:
-                subprocess.run(['ufw','--force','delete','allow','8443/udp'],capture_output=True,timeout=20,check=True)
+        # A failed allow does not establish ownership of a firewall rule. Never
+        # compensate with delete: it can remove an equivalent administrator rule.
+        panel.request('panel/api/inbounds/del/'+str(inbound['id']), {})
         raise ValueError('Cannot configure AmneziaWG firewall; inbound removed')
     return inbound
 

@@ -1776,25 +1776,19 @@ preflight_amneziawg() {
     [[ "${INSTALL_AWG:-n}" == y ]] || return 0
     [[ "${PANEL_TAG:-}" == v3.9.0 ]] || { msg_err "AmneziaWG 3.1 integration requires verified 3x-ui v3.9.0."; return 1; }
     # Python is guaranteed by release preflight even on a clean OS.
-    python3 - <<'PYPORT'
+    python3 - <<'PYPORT' || return 1
 import socket
 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listener:
     listener.bind(('0.0.0.0',8443))
 PYPORT
+    AWG_HELPER="${PANEL_STAGE:?Release preflight is required}/managed-amneziawg.py"
+    curl -fsSL --connect-timeout 15 --max-time 60 "${GITHUB_RAW}/assets/amneziawg/managed.py" -o "$AWG_HELPER" || return 1
 }
 
 install_amneziawg() {
     [[ "${INSTALL_AWG:-n}" == y ]] || return 0
-    local directory inbound_id
-    directory=$(mktemp -d) || return 1
-    chmod 700 "$directory" || { rm -rf "$directory"; return 1; }
-    if ! curl -fsSL --connect-timeout 15 --max-time 60 "${GITHUB_RAW}/assets/amneziawg/managed.py" -o "$directory/managed.py"; then
-        rm -rf "$directory"; return 1
-    fi
-    inbound_id=$(printf '%s' "$config_password" | python3 "$directory/managed.py" "$domain" "$panel_path" "$config_username") || {
-        rm -rf "$directory"; return 1;
-    }
-    rm -rf "$directory"
+    local inbound_id
+    inbound_id=$(printf '%s' "$config_password" | python3 "${AWG_HELPER:?AmneziaWG preflight is required}" "$domain" "$panel_path" "$config_username") || return 1
     [[ "$inbound_id" =~ ^[1-9][0-9]*$ ]] || return 1
     AWG_RESULT=configured
 }
