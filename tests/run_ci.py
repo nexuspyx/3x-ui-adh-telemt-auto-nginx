@@ -12,6 +12,7 @@ import unittest
 SUITES = {
     'nonroot': (
         'test_personal_xhttp.PersonalXHTTP',
+        'test_amneziawg.AmneziaWG',
         'test_certificate_renewal.CertificateRenewal',
         'test_adguard.AdGuardInstaller',
         'test_audit_findings.AuditInstaller',

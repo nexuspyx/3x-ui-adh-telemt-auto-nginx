@@ -67,6 +67,10 @@ All five profiles are preconfigured. Enable whichever you need in 3x-ui without 
 
 Standard subscriptions, JSON, and **Mihomo / Clash** use nginx and HTTPS. `provider=1` returns the original subscription for proxy providers instead of a full Clash configuration.
 
+### AmneziaWG 3.1
+
+During installation you can opt into **AmneziaWG 3.1 on UDP/8443** (off by default). It runs inside 3x-ui, uses the panel domain, and needs neither nginx nor a separate certificate. Add clients in the panel to obtain their configurations / `vpn://` links; the installer creates no clients. IPv6 and client port forwarding remain disabled. Backup / Restore v3 preserves its settings and restores the required UFW rule. This integration supports verified 3x-ui v3.9.0.
+
 ## 🛡️ AdGuard Home + DoH
 
 Optional, default **N**. No third domain needed: the admin UI uses a random `/adg-.../` prefix on your panel domain, with DoH at `https://panel.example.com/dns-query`.

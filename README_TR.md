@@ -67,6 +67,10 @@ Beş profilin tamamı önceden hazırlanmıştır. İhtiyacınız olanları ngin
 
 Standart abonelikler, JSON ve **Mihomo / Clash** yapılandırmaları nginx ve HTTPS üzerinden sunulur. `provider=1` parametresi, tam Clash yapılandırması yerine proxy sağlayıcıları için özgün aboneliği döndürür.
 
+### AmneziaWG 3.1
+
+Kurulum sırasında **UDP/8443 üzerinde AmneziaWG 3.1** seçilebilir (varsayılan olarak kapalıdır). 3x-ui içine gömülüdür, panel alan adını kullanır ve nginx veya ayrı sertifika gerektirmez. Yapılandırmaları / `vpn://` bağlantılarını almak için panelden istemci ekleyin; kurucu istemci oluşturmaz. IPv6 ve istemci port yönlendirmesi kapalı kalır. Backup / Restore v3 ayarları korur ve gerekli UFW kuralını geri yükler. Bu entegrasyon doğrulanmış 3x-ui v3.9.0 sürümünü destekler.
+
 ## 🛡️ AdGuard Home + DoH
 
 İsteğe bağlıdır ve varsayılan seçim **N**'dir. Üçüncü bir alan adı gerekmez: yönetim arayüzü panel alan adınız altında rastgele oluşturulan `/adg-.../` yolunu kullanır; DoH adresi ise `https://panel.example.com/dns-query` olur.

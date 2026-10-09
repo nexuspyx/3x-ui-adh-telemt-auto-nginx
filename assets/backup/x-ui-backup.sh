@@ -631,7 +631,9 @@ PY
 
 restore_firewall() {
     for rule in 80/tcp 443/tcp 443/udp; do ufw allow "$rule"; done
-    local status
+    local awg status
+    awg=$(sqlite3 "$DB" "SELECT count(*) FROM inbounds WHERE protocol='amneziawg' AND tag='inbound-8443-udp' AND port=8443 AND enable=1 AND listen='0.0.0.0';") || die 'Cannot read restored AmneziaWG firewall state.'
+    if [[ "$awg" == 1 ]]; then ufw allow 8443/udp || die 'Cannot restore AmneziaWG firewall rule.'; fi
     status=$(LC_ALL=C ufw status) || die 'Cannot read UFW status.'
     if ! grep -q '^Status: active$' <<< "$status"; then
         warn 'UFW is inactive; application rules added without enabling the firewall.'

@@ -31,3 +31,8 @@ jobs:
         env:
           NGINX_BIN: /usr/sbin/nginx
         run: python3 tests/run_ci.py --suite services
+      - name: Real embedded AmneziaWG TCP/UDP and restart
+        env:
+          NGINX_BIN: /usr/sbin/nginx
+          PYTHONPATH: tests
+        run: python3 -m unittest -v test_real_integration.RealIntegration.test_amneziawg_tcp_udp_and_panel_restart
