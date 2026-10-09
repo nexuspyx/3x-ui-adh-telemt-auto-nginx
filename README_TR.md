@@ -19,7 +19,7 @@
 
 </div>
 
-**3X-UI AUTO NGINX**, [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray'i kurar; nginx, HTTPS, bağlantı profilleri, abonelikler, ağ tanılama ve yedekleme/geri yükleme yapılandırmasını hazırlar. İsterseniz kurulum sırasında DoH destekli AdGuard Home'u da seçebilirsiniz.
+**3X-UI AUTO NGINX**, [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray'i kurar; nginx, HTTPS, bağlantı profilleri, abonelikler, ağ tanılama ve yedekleme/geri yükleme yapılandırmasını hazırlar. AmneziaWG 3.1 ve DoH destekli AdGuard Home isteğe bağlıdır.
 
 İki alan adı ve temiz bir VPS yeterlidir. Kurulum aracı bir kamuflaj web sitesini otomatik seçip yayınlar.
 
@@ -41,7 +41,7 @@
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-Kurulum aracı iki alan adını sorar. Dilerseniz bunları komutla da belirtebilirsiniz:
+Kurulum aracı iki alan adını sorar ve isteğe bağlı AmneziaWG ile AdGuard Home kurulumu sunar. Alan adlarını doğrudan da belirtebilirsiniz:
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
@@ -60,22 +60,27 @@ Kurulum sonunda **panel adresi, rastgele oluşturulmuş giriş bilgileri ve tan�
 | Hysteria2 | ✅ Kullanıma hazır |
 | VLESS + WebSocket | ✅ Kullanıma hazır |
 | Trojan + gRPC | ✅ Kullanıma hazır |
+| AmneziaWG 3.1 | ✅ İsteğe bağlı |
 
-Beş profilin tamamı önceden hazırlanmıştır. İhtiyacınız olanları nginx'i değiştirmeden 3x-ui panelinden etkinleştirebilirsiniz. **İstemcileri panelde oluşturun**; uyumluluk kullandığınız istemci uygulamasına ve sürümüne bağlıdır.
+Beş temel profil önceden yapılandırılmıştır; ihtiyacınız olanları nginx'i değiştirmeden 3x-ui panelinden etkinleştirebilirsiniz. AmneziaWG yalnızca kurulum sırasında seçildiğinde eklenir. **İstemcileri panelde oluşturun**; uyumluluk kullandığınız uygulamaya ve sürümüne bağlıdır.
 
-### 🔗 Abonelikler
+### Abonelikler
 
 Standart abonelikler, JSON ve **Mihomo / Clash** yapılandırmaları nginx ve HTTPS üzerinden sunulur. `provider=1` parametresi, tam Clash yapılandırması yerine proxy sağlayıcıları için özgün aboneliği döndürür.
 
+## 🧩 İsteğe bağlı özellikler
+
+Her iki özellik de kurulum sırasında seçilebilir ve varsayılan olarak kapalıdır.
+
+### AdGuard Home + DoH
+
+`Install AdGuard Home with DNS-over-HTTPS? [y/N]:` sorusuna `y` yanıtını verin. Üçüncü bir alan adı gerekmez: yönetim arayüzü panel alan adınız altında rastgele oluşturulan `/adg-.../` yolunu kullanır; DoH adresi `https://panel.example.com/dns-query` olur. Genel erişime açık TCP/UDP **53** portu açılmaz. Yapılandırma ve veriler **Backup / Restore v3** kapsamındadır.
+
+---
+
 ### AmneziaWG 3.1
 
-Kurulum sırasında **UDP/8443 üzerinde AmneziaWG 3.1** seçilebilir (varsayılan olarak kapalıdır). 3x-ui içine gömülüdür, panel alan adını kullanır ve nginx veya ayrı sertifika gerektirmez. Yapılandırmaları / `vpn://` bağlantılarını almak için panelden istemci ekleyin; kurucu istemci oluşturmaz. IPv6 ve istemci port yönlendirmesi kapalı kalır. Backup / Restore v3 ayarları korur ve gerekli UFW kuralını geri yükler. Bu entegrasyon doğrulanmış 3x-ui v3.9.0 sürümünü destekler.
-
-## 🛡️ AdGuard Home + DoH
-
-İsteğe bağlıdır ve varsayılan seçim **N**'dir. Üçüncü bir alan adı gerekmez: yönetim arayüzü panel alan adınız altında rastgele oluşturulan `/adg-.../` yolunu kullanır; DoH adresi ise `https://panel.example.com/dns-query` olur.
-
-Kurulum aracı TCP/UDP **53** portunu internete açmaz. AdGuard Home ayarları ve verileri **Backup / Restore v3** kapsamındadır.
+Kurulum sırasında **UDP/8443 üzerinde AmneziaWG 3.1** yapılandırabilirsiniz (varsayılan olarak kapalıdır). `Install AmneziaWG on UDP port 8443? [y/N]:` sorusuna `y` yanıtını verin. 3x-ui içine gömülüdür ve panel alan adını kullanır. Kurulumdan sonra 3x-ui paneline bir istemci ekleyerek yapılandırmasını veya `vpn://` bağlantısını alın; kurulum aracı kendiliğinden istemci oluşturmaz. UFW, UDP/8443 erişimine otomatik izin verir; **Backup / Restore v3** yapılandırmayı korur ve güvenlik duvarı kuralını geri yükler.
 
 ## 💾 Yedekleme ve geri yükleme
 
@@ -96,7 +101,7 @@ Arşivler `/var/backups/x-ui/` dizinine kaydedilir.
 
 > **Yedekler hassas bilgiler içerir:** istemci veritabanı, parolalar ve sertifika özel anahtarları. Bir kopyayı mutlaka **VPS dışında** saklayın ve yalnızca güvendiğiniz arşivleri geri yükleyin.
 
-[Yeni bir VPS'e geri yükleme](#technical-details).
+[Yeni bir VPS'e geri yükleme](#restore-on-new-vps).
 
 ## 🔐 Güvenlik
 
@@ -104,17 +109,28 @@ Hizmet arayüzleri doğrudan internete açılmaz. Panel, abonelikler ve ek hizme
 
 İstekleri rastgele localhost portlarına ileten genel amaçlı bir proxy yoktur. Kritik hata oluşursa eksik bir yapılandırma başlatılmak yerine kurulum veya geri yükleme durdurulur.
 
+<a id="telemt-web-manager"></a>
+
+## ✈️ Telegram Web Proxy Manager
+
+[Kardeş projemiz](https://github.com/xPROMSx/telegram-web-proxy-manager), kendi Telegram WEB Proxy sunucunuzu HTTPS, kamuflaj sitesi ve geri alma destekli güncellemelerle kurmanızı sağlar.
+
+Projeler birbirinden bağımsızdır; **bu kurulum aracı Telegram Web Proxy Manager'ı yüklemez**.
+
 <a id="technical-details"></a>
 
-<details>
-<summary>⚙️ Teknik ayrıntılar ve uyumluluk</summary>
+## ⚙️ Teknik ayrıntılar ve uyumluluk
 
-- **Sistemler:** Ubuntu 24.04, Ubuntu 26.04 ve Debian 13. Debian 12 desteklenmez.
-- **UFW:** 80/tcp, 443/tcp ve 443/udp kurallarını ekler. UFW kapalıysa SSH portu bulunup erişime izin verilmeden etkinleştirilmez; bu mümkün değilse uyarıyla kapalı kalır. Geri yükleme işlemi UFW'yi hiçbir zaman etkinleştirmez.
+- **Sistemler:** Ubuntu 24.04, Ubuntu 26.04 ve Debian 13.
+- **UFW:** 80/tcp, 443/tcp ve 443/udp portlarına izin verir (AmneziaWG seçilirse isteğe bağlı olarak 8443/udp da eklenir). UFW kapalıysa SSH portu bulunup erişime izin verilmeden etkinleştirilmez; bu mümkün değilse uyarıyla kapalı kalır. **⚠️ Geri yükleme işlemi UFW'yi hiçbir zaman etkinleştirmez.**
 - **Sertifikalar:** Let's Encrypt webroot ve `certbot.timer`, nginx'i durdurmadan sertifikaları otomatik yeniler.
 - **3x-ui sürümü:** kurulum aracı, varsayılan olarak 3x-ui Auto Nginx ile uyumluluğu kapsamlı biçimde doğrulanmış en yeni sürümü yükler. Bu, resmi projenin en son yayımladığı sürüm olmayabilir. Kurulum sonrasında 3x-ui'nin kendi güncelleme mekanizmasını kullanabilirsiniz; ancak yeni sürümün mevcut yapılandırmayla uyumluluğu henüz doğrulanmamış olabilir. `-version <tag>` ile başka bir kararlı sürümü açıkça seçebilirsiniz (desteklenen en düşük sürüm v3.8.0); doğrulanmamış uyumluluk için uyarı gösterilir.
 
-**Yeni bir VPS'e geri yükleme:** işletim sistemi, sürümü ve işlemci mimarisi yedektekiyle aynı olmalıdır. IP adresi değişirse DNS kayıtlarını güncelleyin. **`x-ui-latest.sh` dosyasını çalıştırmayın**; yalnızca yedekleme aracını kurup güvenilir bir arşivi geri yükleyin:
+<a id="restore-on-new-vps"></a>
+
+### Yeni bir VPS'e geri yükleme
+
+İşletim sistemi, sürümü ve işlemci mimarisi yedektekiyle aynı olmalıdır. VPS IP adresi değişirse alan adlarının DNS kayıtlarını güncelleyin. **`x-ui-latest.sh` dosyasını çalıştırmayın**; yalnızca yedekleme aracını kurup güvenilir bir arşivi geri yükleyin:
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
@@ -124,16 +140,6 @@ x-ui-backup restore /root/<archive>.tar.gz
 ```
 
 SSH, işletim sistemi yapılandırması ve temel güvenlik duvarı yöneticinin sorumluluğundadır. v2 yedek arşivleri için ilgili eski sürümün aracını kullanın.
-
-</details>
-
-<a id="telemt-web-manager"></a>
-
-## ✈️ Telegram Web Proxy Manager
-
-[Kardeş projemiz](https://github.com/xPROMSx/telegram-web-proxy-manager), kendi Telegram WEB Proxy sunucunuzu HTTPS, kamuflaj sitesi ve geri alma destekli güncellemelerle kurmanızı sağlar.
-
-Projeler birbirinden bağımsızdır; **bu kurulum aracı Telegram Web Proxy Manager'ı yüklemez**.
 
 ## 🤝 Katkılar ve köken
 

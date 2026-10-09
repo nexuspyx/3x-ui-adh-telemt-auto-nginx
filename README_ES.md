@@ -19,7 +19,7 @@ Dos dominios, un VPS limpio y unos minutos para completar la instalación.
 
 </div>
 
-**3X-UI AUTO NGINX** instala [3x-ui](https://github.com/MHSanaei/3x-ui) y Xray, y configura nginx, HTTPS, perfiles de conexión, suscripciones, diagnósticos de red y copias de seguridad y restauración. Durante la instalación también puedes activar AdGuard Home con DoH.
+**3X-UI AUTO NGINX** instala [3x-ui](https://github.com/MHSanaei/3x-ui) y Xray, y configura nginx, HTTPS, perfiles de conexión, suscripciones, diagnósticos de red y copias de seguridad y restauración. AmneziaWG 3.1 y AdGuard Home con DoH son opcionales.
 
 Solo necesitas dos dominios y un VPS limpio. El instalador selecciona y despliega automáticamente un sitio web de camuflaje.
 
@@ -41,7 +41,7 @@ Configura los registros DNS de **dos dominios** para que apunten a la IP de tu V
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-El instalador te pedirá ambos dominios. También puedes indicarlos directamente:
+El instalador pide ambos dominios y ofrece AmneziaWG y AdGuard Home como opciones. También puedes indicar los dominios directamente:
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
@@ -60,22 +60,27 @@ Al terminar recibirás la **URL del panel, credenciales aleatorias y la URL de d
 | Hysteria2 | ✅ Listo para usar |
 | VLESS + WebSocket | ✅ Listo para usar |
 | Trojan + gRPC | ✅ Listo para usar |
+| AmneziaWG 3.1 | ✅ Opcional |
 
-Los cinco perfiles vienen preconfigurados. Activa en 3x-ui los que necesites sin modificar nginx. **Crea los clientes en el panel**; la compatibilidad depende de la aplicación cliente y de su versión.
+Los cinco perfiles principales ya están configurados. Activa en 3x-ui los que necesites sin modificar nginx. AmneziaWG solo se añade si lo seleccionas durante la instalación. **Crea los clientes en el panel**; la compatibilidad depende de la aplicación y su versión.
 
-### 🔗 Suscripciones
+### Suscripciones
 
 Las suscripciones estándar, JSON y **Mihomo / Clash** se ofrecen mediante nginx y HTTPS. El parámetro `provider=1` devuelve la suscripción original para los proveedores de proxy, en lugar de una configuración Clash completa.
 
+## 🧩 Funciones opcionales
+
+Ambas funciones se pueden seleccionar durante la instalación y vienen desactivadas por defecto.
+
+### AdGuard Home + DoH
+
+Responde `y` a `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. No hace falta un tercer dominio: la interfaz de administración utiliza una ruta aleatoria `/adg-.../` en el dominio del panel, y DoH está disponible en `https://panel.example.com/dns-query`. No se abre el puerto público TCP/UDP **53**. La configuración y los datos se incluyen en **Backup / Restore v3**.
+
+---
+
 ### AmneziaWG 3.1
 
-Durante la instalación puede activar **AmneziaWG 3.1 en UDP/8443** (desactivado por defecto). Está integrado en 3x-ui, usa el dominio del panel y no necesita nginx ni un certificado aparte. Añada clientes en el panel para obtener sus configuraciones / enlaces `vpn://`; el instalador no crea clientes. IPv6 y el reenvío de puertos de clientes permanecen desactivados. Backup / Restore v3 conserva sus ajustes y restaura la regla UFW necesaria. Esta integración admite la versión verificada 3x-ui v3.9.0.
-
-## 🛡️ AdGuard Home + DoH
-
-Es opcional y está desactivado por defecto (**N**). No requiere un tercer dominio: la interfaz de administración utiliza una ruta aleatoria `/adg-.../` bajo el dominio del panel, y DoH está disponible en `https://panel.example.com/dns-query`.
-
-El instalador no abre el puerto público TCP/UDP **53**. La configuración y los datos de AdGuard Home se incluyen en **Backup / Restore v3**.
+Durante la instalación puedes configurar **AmneziaWG 3.1 en UDP/8443** (desactivado por defecto). Responde `y` a `Install AmneziaWG on UDP port 8443? [y/N]:`. Está integrado en 3x-ui y utiliza el dominio del panel. Después, añade un cliente desde 3x-ui para obtener su configuración o enlace `vpn://`; el instalador no crea clientes. UFW permite automáticamente UDP/8443; **Backup / Restore v3** conserva la configuración y restaura la regla.
 
 ## 💾 Copias de seguridad y restauración
 
@@ -96,7 +101,7 @@ Los archivos se guardan en `/var/backups/x-ui/`.
 
 > **Las copias contienen información sensible:** base de datos de clientes, contraseñas y claves privadas de certificados. Conserva una copia **fuera del VPS** y restaura únicamente archivos de confianza.
 
-[Restauración en un VPS nuevo](#technical-details).
+[Restauración en un VPS nuevo](#restore-on-new-vps).
 
 ## 🔐 Seguridad
 
@@ -104,17 +109,28 @@ Las interfaces de los servicios no se exponen directamente a Internet. Se accede
 
 No existe un proxy genérico hacia puertos arbitrarios de localhost. Si se produce un error crítico, la instalación o restauración se detiene en lugar de iniciar una configuración incompleta.
 
+<a id="telemt-web-manager"></a>
+
+## ✈️ Telegram Web Proxy Manager
+
+[Un proyecto complementario](https://github.com/xPROMSx/telegram-web-proxy-manager) para crear tu propio Telegram WEB Proxy con HTTPS, un sitio de camuflaje y actualizaciones con posibilidad de reversión.
+
+Los proyectos son independientes: **este instalador no instala Telegram Web Proxy Manager**.
+
 <a id="technical-details"></a>
 
-<details>
-<summary>⚙️ Detalles técnicos y compatibilidad</summary>
+## ⚙️ Detalles técnicos y compatibilidad
 
-- **Sistemas:** Ubuntu 24.04, Ubuntu 26.04 y Debian 13. Debian 12 no es compatible.
-- **UFW:** añade las reglas 80/tcp, 443/tcp y 443/udp. Si UFW está desactivado, solo se activa después de detectar y permitir el puerto SSH; de lo contrario, permanece desactivado y muestra una advertencia. La restauración nunca activa UFW.
+- **Sistemas:** Ubuntu 24.04, Ubuntu 26.04 y Debian 13.
+- **UFW:** permite 80/tcp, 443/tcp y 443/udp (8443/udp es opcional al seleccionar AmneziaWG). Si UFW está desactivado, solo se activa después de detectar y permitir el puerto SSH; de lo contrario, permanece desactivado con una advertencia. **⚠️ La restauración nunca activa UFW.**
 - **Certificados:** Let's Encrypt con webroot y `certbot.timer` renuevan los certificados automáticamente sin detener nginx.
 - **Versión de 3x-ui:** el instalador utiliza por defecto la versión más reciente cuya compatibilidad con 3x-ui Auto Nginx se ha comprobado exhaustivamente; puede no ser la última versión oficial publicada. Después puedes actualizar 3x-ui con su mecanismo integrado, aunque es posible que la nueva versión todavía no haya sido verificada con esta configuración. También puedes seleccionar expresamente otra versión estable mediante `-version <tag>` (mínimo compatible: v3.8.0); el instalador avisará si no se ha verificado su compatibilidad.
 
-**Restauración en un VPS nuevo:** el sistema operativo, su versión y la arquitectura deben coincidir con los de la copia de seguridad. Si cambia la IP, actualiza el DNS. **No ejecutes** `x-ui-latest.sh`; instala únicamente la herramienta de copia y restaura un archivo de confianza:
+<a id="restore-on-new-vps"></a>
+
+### Restauración en un VPS nuevo
+
+El sistema operativo, su versión y la arquitectura deben coincidir con los de la copia de seguridad. Si cambia la IP del VPS, actualiza los registros DNS de los dominios. **No ejecutes** `x-ui-latest.sh`; instala únicamente la herramienta de copia y restaura un archivo de confianza:
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
@@ -124,16 +140,6 @@ x-ui-backup restore /root/<archive>.tar.gz
 ```
 
 La administración de SSH, el sistema operativo y el firewall básico sigue siendo responsabilidad del administrador. Para archivos v2, utiliza la herramienta de la versión anterior correspondiente.
-
-</details>
-
-<a id="telemt-web-manager"></a>
-
-## ✈️ Telegram Web Proxy Manager
-
-[Un proyecto complementario](https://github.com/xPROMSx/telegram-web-proxy-manager) para crear tu propio Telegram WEB Proxy con HTTPS, un sitio de camuflaje y actualizaciones con posibilidad de reversión.
-
-Los proyectos son independientes: **este instalador no instala Telegram Web Proxy Manager**.
 
 ## 🤝 Créditos y origen
 
