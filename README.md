@@ -117,7 +117,6 @@ There is no generic proxy to arbitrary localhost ports. Critical errors stop ins
 
 The projects are independent; **this installer does not install Telegram Web Proxy Manager**.
 
-
 <a id="technical-details"></a>
 
 ## ⚙️ Technical details and compatibility
@@ -131,7 +130,7 @@ The projects are independent; **this installer does not install Telegram Web Pro
 
 ### Recovery on a new VPS
 
-match the backup's OS, OS version, and architecture. If the VPS IP address changes, update the DNS records for your domains. Do not run `x-ui-latest.sh` — install only the utility, then restore a trusted archive:
+Match the backup's OS, OS version, and architecture. If the VPS IP address changes, update the DNS records for your domains. Do not run `x-ui-latest.sh` — install only the utility, then restore a trusted archive:
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
@@ -141,7 +140,6 @@ x-ui-backup restore /root/<archive>.tar.gz
 ```
 
 SSH, OS configuration, and the base firewall remain the administrator's responsibility. For v2 archives, use the utility from the matching older release.
-
 
 ## 🤝 Credits / Origins
 

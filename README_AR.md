@@ -117,7 +117,6 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 
 المشروعان مستقلان؛ **هذا المُثبّت لا يثبّت Telegram Web Proxy Manager**.
 
-
 <a id="technical-details"></a>
 
 ## ⚙️ التفاصيل التقنية والتوافقية
@@ -141,7 +140,6 @@ x-ui-backup restore /root/<archive>.tar.gz
 ```
 
 تبقى إدارة SSH ونظام التشغيل وجدار الحماية الأساسي مسؤولية مدير الخادم. لاستعادة أرشيفات v2، استخدم أداة الإصدار الأقدم المطابق.
-
 
 ## 🤝 الشكر وأصل المشروع
 

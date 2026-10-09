@@ -117,7 +117,6 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 
 Проекты независимы; **этот установщик 3X-UI не устанавливает Telegram Web Proxy Manager**.
 
-
 <a id="technical-details"></a>
 
 ## ⚙️ Технические подробности и совместимость
@@ -131,7 +130,7 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 
 ### Восстановление на новом VPS
 
-нужны те же ОС, версия и архитектура, что у копии. При смене IP VPS обновите DNS-записи доменов. Не запускайте `x-ui-latest.sh` — установите только утилиту и восстановите доверенный архив:
+Нужны те же ОС, версия и архитектура, что у копии. При смене IP VPS обновите DNS-записи доменов. Не запускайте `x-ui-latest.sh` — установите только утилиту и восстановите доверенный архив:
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
@@ -141,7 +140,6 @@ x-ui-backup restore /root/<archive>.tar.gz
 ```
 
 SSH, настройки ОС и базовый firewall остаются ответственностью администратора. Для архивов v2 нужна утилита из соответствующего старого релиза.
-
 
 ## 🤝 Происхождение и авторы
 

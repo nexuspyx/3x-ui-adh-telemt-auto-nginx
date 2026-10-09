@@ -117,7 +117,6 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 
 两个项目相互独立；**此安装脚本不会安装 Telegram Web Proxy Manager**。
 
-
 <a id="technical-details"></a>
 
 ## ⚙️ 技术细节与兼容性
@@ -141,7 +140,6 @@ x-ui-backup restore /root/<archive>.tar.gz
 ```
 
 SSH、系统配置及基础防火墙仍由管理员负责。对于 v2 备份，请使用对应旧版本中的恢复工具。
-
 
 ## 🤝 致谢与项目来源
 

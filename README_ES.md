@@ -117,7 +117,6 @@ No existe un proxy genérico hacia puertos arbitrarios de localhost. Si se produ
 
 Los proyectos son independientes: **este instalador no instala Telegram Web Proxy Manager**.
 
-
 <a id="technical-details"></a>
 
 ## ⚙️ Detalles técnicos y compatibilidad
@@ -131,7 +130,7 @@ Los proyectos son independientes: **este instalador no instala Telegram Web Prox
 
 ### Restauración en un VPS nuevo
 
-el sistema operativo, su versión y la arquitectura deben coincidir con los de la copia de seguridad. Si cambia la IP del VPS, actualiza los registros DNS de los dominios. **No ejecutes** `x-ui-latest.sh`; instala únicamente la herramienta de copia y restaura un archivo de confianza:
+El sistema operativo, su versión y la arquitectura deben coincidir con los de la copia de seguridad. Si cambia la IP del VPS, actualiza los registros DNS de los dominios. **No ejecutes** `x-ui-latest.sh`; instala únicamente la herramienta de copia y restaura un archivo de confianza:
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
@@ -141,7 +140,6 @@ x-ui-backup restore /root/<archive>.tar.gz
 ```
 
 La administración de SSH, el sistema operativo y el firewall básico sigue siendo responsabilidad del administrador. Para archivos v2, utiliza la herramienta de la versión anterior correspondiente.
-
 
 ## 🤝 Créditos y origen
 
