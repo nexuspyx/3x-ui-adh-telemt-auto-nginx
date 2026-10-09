@@ -2,16 +2,16 @@
 
 [🇷🇺 Русский](README_RU.md) · [🇬🇧 English](README.md) · [🇪🇬 العربية](README_AR.md) · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md) · 🇪🇸 **Español** · [🇹🇷 Türkçe](README_TR.md)
 
-# 🚀 3x-ui Auto Nginx
+# 🚀 3X-UI AUTO NGINX
 
-### Despliegue automático de 3x-ui / Xray en tu propio VPS
+### Despliegue automático de 3X-UI / XRAY-CORE en tu propio VPS
 
-**REALITY · XHTTP · Hysteria2 · WebSocket · gRPC · nginx · HTTPS · Backup / Restore**
+**REALITY · XHTTP · HYSTERIA2 · WebSocket · gRPC · NGINX · HTTPS · BACKUP / RESTORE**
 
 Dos dominios, un VPS limpio y unos minutos para completar la instalación.
 
-[![XHTTP / security](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml)
-[![Backup / Restore](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml)
+[![Security](https://img.shields.io/github/actions/workflow/status/xPROMSx/3x-ui-auto-nginx/stack-xhttp.yml?branch=main&label=Security)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml)
+[![Backup](https://img.shields.io/github/actions/workflow/status/xPROMSx/3x-ui-auto-nginx/stack-backup.yml?branch=main&label=Backup)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
@@ -19,7 +19,7 @@ Dos dominios, un VPS limpio y unos minutos para completar la instalación.
 
 </div>
 
-**3x-ui Auto Nginx** instala [3x-ui](https://github.com/MHSanaei/3x-ui) y Xray, y configura nginx, HTTPS, perfiles de conexión, suscripciones, diagnósticos de red y copias de seguridad y restauración. Durante la instalación también puedes activar AdGuard Home con DoH.
+**3X-UI AUTO NGINX** instala [3x-ui](https://github.com/MHSanaei/3x-ui) y Xray, y configura nginx, HTTPS, perfiles de conexión, suscripciones, diagnósticos de red y copias de seguridad y restauración. Durante la instalación también puedes activar AdGuard Home con DoH.
 
 Solo necesitas dos dominios y un VPS limpio. El instalador selecciona y despliega automáticamente un sitio web de camuflaje.
 

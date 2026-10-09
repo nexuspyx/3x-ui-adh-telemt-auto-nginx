@@ -2,16 +2,16 @@
 
 [🇷🇺 Русский](README_RU.md) · [🇬🇧 English](README.md) · 🇪🇬 **العربية** · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
 
-# 🚀 3x-ui Auto Nginx
+# 🚀 3X-UI AUTO NGINX
 
-### نشر 3x-ui / Xray تلقائيًا على خادم VPS الخاص بك
+### نشر 3X-UI / XRAY-CORE تلقائيًا على خادم VPS الخاص بك
 
-**REALITY · XHTTP · Hysteria2 · WebSocket · gRPC · nginx · HTTPS · Backup / Restore**
+**REALITY · XHTTP · HYSTERIA2 · WebSocket · gRPC · NGINX · HTTPS · BACKUP / RESTORE**
 
 نطاقان وخادم VPS جديد وبضع دقائق لإكمال التثبيت.
 
-[![XHTTP / security](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml)
-[![Backup / Restore](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml/badge.svg?branch=main)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml)
+[![Security](https://img.shields.io/github/actions/workflow/status/xPROMSx/3x-ui-auto-nginx/stack-xhttp.yml?branch=main&label=Security)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-xhttp.yml)
+[![Backup](https://img.shields.io/github/actions/workflow/status/xPROMSx/3x-ui-auto-nginx/stack-backup.yml?branch=main&label=Backup)](https://github.com/xPROMSx/3x-ui-auto-nginx/actions/workflows/stack-backup.yml)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)](#technical-details)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 
@@ -19,7 +19,7 @@
 
 </div>
 
-يُثبّت **3x-ui Auto Nginx** لوحة [3x-ui](https://github.com/MHSanaei/3x-ui) وXray، ويضبط nginx وHTTPS وملفات الاتصال والاشتراكات وأدوات تشخيص الشبكة والنسخ الاحتياطي والاستعادة. ويمكنك اختيار تثبيت AdGuard Home مع DoH أثناء الإعداد.
+يُثبّت **3X-UI AUTO NGINX** لوحة [3x-ui](https://github.com/MHSanaei/3x-ui) وXray، ويضبط nginx وHTTPS وملفات الاتصال والاشتراكات وأدوات تشخيص الشبكة والنسخ الاحتياطي والاستعادة. ويمكنك اختيار تثبيت AdGuard Home مع DoH أثناء الإعداد.
 
 كل ما تحتاج إليه نطاقان وخادم VPS جديد. يختار المُثبّت موقع تمويه وينشره تلقائيًا.
 
