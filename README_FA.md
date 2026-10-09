@@ -1,6 +1,6 @@
 <div align="center">
 
-[🇬🇧 English](README_EN.md) · [🇪🇬 العربية](README_AR.md) · 🇮🇷 **فارسی** · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇷🇺 Русский](README.md) · [🇹🇷 Türkçe](README_TR.md)
+[🇷🇺 Русский](README_RU.md) · [🇬🇧 English](README.md) · [🇪🇬 العربية](README_AR.md) · 🇮🇷 **فارسی** · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
 
 # 🚀 3x-ui Auto Nginx
 
@@ -136,6 +136,8 @@ SSH، تنظیمات سیستم‌عامل و فایروال پایه همچنا
 این پروژه بر پایه [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) ساخته شده و به‌صورت مستقل نگهداری می‌شود. پس از فورک، مسیریابی nginx/SNI و پیکربندی XHTTP به‌طور گسترده بازطراحی شده‌اند، فرایند صدور و تمدید خودکار گواهی‌های TLS اصلاح شده و Backup / Restore v3 با قابلیت بازیابی و بازگشت به وضعیت پیشین ارائه شده است. Hysteria2 روی UDP/443 اضافه شده و مشکلات امنیتی شناسایی‌شده برطرف شده‌اند.
 
 پنل اصلی از [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui) ارائه می‌شود. حقوق نویسندگان اجزای شخص ثالث و مجوزهای موجود آن‌ها محفوظ است.
+
+توسعه‌ها و تغییرات اصیل نویسندگان xPROMSx تحت [GNU GPL-3.0-only](LICENSE) ارائه می‌شوند. Copyright (C) 2026 xPROMSx contributors. این مجوز فقط حقوقی را شامل می‌شود که مشارکت‌کنندگان بر این بخش‌ها دارند؛ کد به‌ارث‌رسیده را مجدداً مجوزدهی نمی‌کند و به معنای تحت GPL بودن کل مخزن نیست. دامنهٔ مجوز و اطلاعیه‌های اجزای شخص ثالث در [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) توضیح داده شده است.
 
 <div align="center">
 
