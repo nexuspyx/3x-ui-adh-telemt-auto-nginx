@@ -19,7 +19,7 @@ Dos dominios, un VPS limpio y unos minutos para completar la instalación.
 
 </div>
 
-**3X-UI AUTO NGINX** instala [3x-ui](https://github.com/MHSanaei/3x-ui) y Xray, y configura nginx, HTTPS, perfiles de conexión, suscripciones, diagnósticos de red y copias de seguridad y restauración. Durante la instalación también puedes activar AdGuard Home con DoH.
+**3X-UI AUTO NGINX** instala [3x-ui](https://github.com/MHSanaei/3x-ui) y Xray, y configura nginx, HTTPS, perfiles de conexión, suscripciones, diagnósticos de red y copias de seguridad y restauración. AmneziaWG 3.1 y AdGuard Home con DoH son opcionales.
 
 Solo necesitas dos dominios y un VPS limpio. El instalador selecciona y despliega automáticamente un sitio web de camuflaje.
 
@@ -41,7 +41,7 @@ Configura los registros DNS de **dos dominios** para que apunten a la IP de tu V
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-El instalador te pedirá ambos dominios. También puedes indicarlos directamente:
+El instalador pide ambos dominios y ofrece AmneziaWG y AdGuard Home como opciones. También puedes indicar los dominios directamente:
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
@@ -60,22 +60,25 @@ Al terminar recibirás la **URL del panel, credenciales aleatorias y la URL de d
 | Hysteria2 | ✅ Listo para usar |
 | VLESS + WebSocket | ✅ Listo para usar |
 | Trojan + gRPC | ✅ Listo para usar |
+| AmneziaWG 3.1 | ✅ Opcional |
 
-Los cinco perfiles vienen preconfigurados. Activa en 3x-ui los que necesites sin modificar nginx. **Crea los clientes en el panel**; la compatibilidad depende de la aplicación cliente y de su versión.
+Los cinco perfiles principales ya están configurados. Activa en 3x-ui los que necesites sin modificar nginx. AmneziaWG solo se añade si lo seleccionas durante la instalación. **Crea los clientes en el panel**; la compatibilidad depende de la aplicación y su versión.
 
 ### 🔗 Suscripciones
 
 Las suscripciones estándar, JSON y **Mihomo / Clash** se ofrecen mediante nginx y HTTPS. El parámetro `provider=1` devuelve la suscripción original para los proveedores de proxy, en lugar de una configuración Clash completa.
 
-### AmneziaWG 3.1
+## 🧩 Funciones opcionales
 
-Durante la instalación puede activar **AmneziaWG 3.1 en UDP/8443** (desactivado por defecto). Está integrado en 3x-ui, usa el dominio del panel y no necesita nginx ni un certificado aparte. Añada clientes en el panel para obtener sus configuraciones / enlaces `vpn://`; el instalador no crea clientes. IPv6 y el reenvío de puertos de clientes permanecen desactivados. Backup / Restore v3 conserva sus ajustes y restaura la regla UFW necesaria. Esta integración admite la versión verificada 3x-ui v3.9.0.
+Ambas funciones se pueden seleccionar durante la instalación y vienen desactivadas por defecto.
 
-## 🛡️ AdGuard Home + DoH
+### 🛡️ AdGuard Home + DoH
 
-Es opcional y está desactivado por defecto (**N**). No requiere un tercer dominio: la interfaz de administración utiliza una ruta aleatoria `/adg-.../` bajo el dominio del panel, y DoH está disponible en `https://panel.example.com/dns-query`.
+Responde `y` a `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. No hace falta un tercer dominio: la interfaz de administración utiliza una ruta aleatoria `/adg-.../` en el dominio del panel, y DoH está disponible en `https://panel.example.com/dns-query`. No se abre el puerto público TCP/UDP **53**. La configuración y los datos se incluyen en **Backup / Restore v3**.
 
-El instalador no abre el puerto público TCP/UDP **53**. La configuración y los datos de AdGuard Home se incluyen en **Backup / Restore v3**.
+### 🔐 AmneziaWG 3.1
+
+Durante la instalación puedes configurar **AmneziaWG 3.1 en UDP/8443** (desactivado por defecto). Responde `y` a `Install AmneziaWG on UDP port 8443? [y/N]:`. Está integrado en 3x-ui y utiliza el dominio del panel. Después, añade un cliente desde 3x-ui para obtener su configuración o enlace `vpn://`; el instalador no crea clientes. UFW permite automáticamente UDP/8443; **Backup / Restore v3** conserva la configuración y restaura la regla.
 
 ## 💾 Copias de seguridad y restauración
 

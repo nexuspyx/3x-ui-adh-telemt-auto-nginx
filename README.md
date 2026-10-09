@@ -19,7 +19,7 @@ Two domains, a clean VPS, and a few minutes to install.
 
 </div>
 
-**3X-UI AUTO NGINX** installs [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray with nginx, HTTPS, connection profiles, subscriptions, diagnostics, and Backup / Restore. Choose AdGuard Home with DoH during setup if needed.
+**3X-UI AUTO NGINX** installs [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray with nginx, HTTPS, connection profiles, subscriptions, diagnostics, and Backup / Restore. AmneziaWG 3.1 and AdGuard Home with DoH are optional.
 
 Bring two domains and a clean VPS. A cover website is selected and deployed automatically.
 
@@ -41,7 +41,7 @@ Configure the DNS records for **two domains** to point to your VPS IP address: o
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-The installer prompts for both domains. You can also supply them directly:
+The installer asks for both domains and offers optional AmneziaWG and AdGuard Home. You can also supply the domains directly:
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
@@ -60,22 +60,25 @@ You receive a **panel URL, random credentials, and diagnostics URL** (3x-ui-auth
 | Hysteria2 | ✅ Ready to use |
 | VLESS + WebSocket | ✅ Ready to use |
 | Trojan + gRPC | ✅ Ready to use |
+| AmneziaWG 3.1 | ✅ Optional |
 
-All five profiles are preconfigured. Enable whichever you need in 3x-ui without editing nginx. **Create clients in the panel**; compatibility depends on your app and version.
+Five standard profiles are preconfigured; enable the ones you need in 3x-ui without editing nginx. AmneziaWG is added only if selected during installation. **Create clients in the panel**; compatibility depends on your app and version.
 
 ### 🔗 Subscriptions
 
 Standard subscriptions, JSON, and **Mihomo / Clash** use nginx and HTTPS. `provider=1` returns the original subscription for proxy providers instead of a full Clash configuration.
 
-### AmneziaWG 3.1
+## 🧩 Optional features
 
-During installation you can opt into **AmneziaWG 3.1 on UDP/8443** (off by default). It runs inside 3x-ui, uses the panel domain, and needs neither nginx nor a separate certificate. Add clients in the panel to obtain their configurations / `vpn://` links; the installer creates no clients. IPv6 and client port forwarding remain disabled. Backup / Restore v3 preserves its settings and restores the required UFW rule. This integration supports verified 3x-ui v3.9.0.
+Both features can be selected during installation and are disabled by default.
 
-## 🛡️ AdGuard Home + DoH
+### 🛡️ AdGuard Home + DoH
 
-Optional, default **N**. No third domain needed: the admin UI uses a random `/adg-.../` prefix on your panel domain, with DoH at `https://panel.example.com/dns-query`.
+Enter `y` when prompted `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. No third domain is needed: the admin UI uses a random `/adg-.../` path on the panel domain, and DoH is available at `https://panel.example.com/dns-query`. Public TCP/UDP port **53** is not opened. Configuration and data are included in **Backup / Restore v3**.
 
-The installer does not open public TCP/UDP **53**. AdGuard Home configuration and data are included in **Backup / Restore v3**.
+### 🔐 AmneziaWG 3.1
+
+You can configure **AmneziaWG 3.1 on UDP/8443** during installation (disabled by default). Enter `y` when prompted `Install AmneziaWG on UDP port 8443? [y/N]:`. It runs inside 3x-ui and uses the panel domain. After installation, add a client in the 3x-ui panel to get a configuration or `vpn://` link; the installer does not create clients. UFW automatically allows UDP/8443; **Backup / Restore v3** preserves the configuration and restores the rule.
 
 ## 💾 Backup / Restore
 

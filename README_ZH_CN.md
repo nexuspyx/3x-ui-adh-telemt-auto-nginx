@@ -19,7 +19,7 @@
 
 </div>
 
-**3X-UI AUTO NGINX** 自动安装 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray，并配置 nginx、HTTPS、连接配置、订阅、网络诊断以及 Backup / Restore。安装时还可以选择启用带 DoH 的 AdGuard Home。
+**3X-UI AUTO NGINX** 自动安装 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray，并配置 nginx、HTTPS、连接配置、订阅、网络诊断以及 Backup / Restore。AmneziaWG 3.1 和支持 DoH 的 AdGuard Home 均为可选功能。
 
 准备两个域名和一台全新的 VPS 即可。安装脚本会自动选择并部署一个伪装网站。
 
@@ -41,7 +41,7 @@
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-安装脚本会交互式询问两个域名，也可以通过参数指定：
+安装程序会询问两个域名，并提供 AmneziaWG 和 AdGuard Home 的可选安装。也可以直接通过参数指定域名：
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
@@ -60,22 +60,25 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 | Hysteria2 | ✅ 可直接使用 |
 | VLESS + WebSocket | ✅ 可直接使用 |
 | Trojan + gRPC | ✅ 可直接使用 |
+| AmneziaWG 3.1 | ✅ 可选 |
 
-五种连接方式均已预配置。按需在 3x-ui 中启用即可，无须修改 nginx。**客户端需要在面板中创建**；实际兼容性取决于客户端应用及其版本。
+五种主要连接方式均已预配置，可按需在 3x-ui 中启用，无须修改 nginx。只有在安装时选择了 AmneziaWG，才会添加该连接。**客户端需要在面板中创建**；实际兼容性取决于客户端应用及其版本。
 
 ### 🔗 订阅
 
 标准订阅、JSON 以及 **Mihomo / Clash** 通过 nginx 和 HTTPS 提供。添加 `provider=1` 参数可返回供代理提供者使用的原始订阅，而非完整的 Clash 配置。
 
-### AmneziaWG 3.1
+## 🧩 可选功能
 
-安装时可选择启用 **AmneziaWG 3.1（UDP/8443）**，默认关闭。它内置于 3x-ui，使用面板域名，不需要 nginx 或独立证书。请在面板中添加客户端并获取配置或 `vpn://` 链接；安装脚本不会创建客户端。IPv6 和客户端端口转发保持关闭。Backup / Restore v3 会保留其设置，并恢复所需的 UFW 规则。 此集成支持经过验证的 3x-ui v3.9.0。
+这两项功能均可在安装时选择，默认关闭。
 
-## 🛡️ AdGuard Home + DoH
+### 🛡️ AdGuard Home + DoH
 
-可选安装，默认选项为 **N**。无需第三个域名：管理界面位于面板域名下随机生成的 `/adg-.../` 路径，DoH 地址为 `https://panel.example.com/dns-query`。
+出现 `Install AdGuard Home with DNS-over-HTTPS? [y/N]:` 提示时输入 `y`。无需第三个域名：管理界面位于面板域名下随机生成的 `/adg-.../` 路径，DoH 地址为 `https://panel.example.com/dns-query`。安装程序不会向公网开放 TCP/UDP **53** 端口。配置和数据均包含在 **Backup / Restore v3** 中。
 
-安装脚本不会开放公网 TCP/UDP **53** 端口。AdGuard Home 的配置与数据包含在 **Backup / Restore v3** 中。
+### 🔐 AmneziaWG 3.1
+
+安装时可选择配置 **AmneziaWG 3.1（UDP/8443）**（默认关闭）。出现 `Install AmneziaWG on UDP port 8443? [y/N]:` 提示时输入 `y`。它内置于 3x-ui，使用面板域名。安装完成后，请在 3x-ui 面板中添加客户端并获取配置文件或 `vpn://` 链接；安装程序不会自动创建客户端。UFW 会自动放行 UDP/8443；**Backup / Restore v3** 会保留配置并恢复相应的防火墙规则。
 
 ## 💾 备份与恢复
 

@@ -19,7 +19,7 @@
 
 </div>
 
-**3X-UI AUTO NGINX**, [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray'i kurar; nginx, HTTPS, bağlantı profilleri, abonelikler, ağ tanılama ve yedekleme/geri yükleme yapılandırmasını hazırlar. İsterseniz kurulum sırasında DoH destekli AdGuard Home'u da seçebilirsiniz.
+**3X-UI AUTO NGINX**, [3x-ui](https://github.com/MHSanaei/3x-ui) ve Xray'i kurar; nginx, HTTPS, bağlantı profilleri, abonelikler, ağ tanılama ve yedekleme/geri yükleme yapılandırmasını hazırlar. AmneziaWG 3.1 ve DoH destekli AdGuard Home isteğe bağlıdır.
 
 İki alan adı ve temiz bir VPS yeterlidir. Kurulum aracı bir kamuflaj web sitesini otomatik seçip yayınlar.
 
@@ -41,7 +41,7 @@
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
-Kurulum aracı iki alan adını sorar. Dilerseniz bunları komutla da belirtebilirsiniz:
+Kurulum aracı iki alan adını sorar ve isteğe bağlı AmneziaWG ile AdGuard Home kurulumu sunar. Alan adlarını doğrudan da belirtebilirsiniz:
 
 ```bash
 bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example.com
@@ -60,22 +60,25 @@ Kurulum sonunda **panel adresi, rastgele oluşturulmuş giriş bilgileri ve tan�
 | Hysteria2 | ✅ Kullanıma hazır |
 | VLESS + WebSocket | ✅ Kullanıma hazır |
 | Trojan + gRPC | ✅ Kullanıma hazır |
+| AmneziaWG 3.1 | ✅ İsteğe bağlı |
 
-Beş profilin tamamı önceden hazırlanmıştır. İhtiyacınız olanları nginx'i değiştirmeden 3x-ui panelinden etkinleştirebilirsiniz. **İstemcileri panelde oluşturun**; uyumluluk kullandığınız istemci uygulamasına ve sürümüne bağlıdır.
+Beş temel profil önceden yapılandırılmıştır; ihtiyacınız olanları nginx'i değiştirmeden 3x-ui panelinden etkinleştirebilirsiniz. AmneziaWG yalnızca kurulum sırasında seçildiğinde eklenir. **İstemcileri panelde oluşturun**; uyumluluk kullandığınız uygulamaya ve sürümüne bağlıdır.
 
 ### 🔗 Abonelikler
 
 Standart abonelikler, JSON ve **Mihomo / Clash** yapılandırmaları nginx ve HTTPS üzerinden sunulur. `provider=1` parametresi, tam Clash yapılandırması yerine proxy sağlayıcıları için özgün aboneliği döndürür.
 
-### AmneziaWG 3.1
+## 🧩 İsteğe bağlı özellikler
 
-Kurulum sırasında **UDP/8443 üzerinde AmneziaWG 3.1** seçilebilir (varsayılan olarak kapalıdır). 3x-ui içine gömülüdür, panel alan adını kullanır ve nginx veya ayrı sertifika gerektirmez. Yapılandırmaları / `vpn://` bağlantılarını almak için panelden istemci ekleyin; kurucu istemci oluşturmaz. IPv6 ve istemci port yönlendirmesi kapalı kalır. Backup / Restore v3 ayarları korur ve gerekli UFW kuralını geri yükler. Bu entegrasyon doğrulanmış 3x-ui v3.9.0 sürümünü destekler.
+Her iki özellik de kurulum sırasında seçilebilir ve varsayılan olarak kapalıdır.
 
-## 🛡️ AdGuard Home + DoH
+### 🛡️ AdGuard Home + DoH
 
-İsteğe bağlıdır ve varsayılan seçim **N**'dir. Üçüncü bir alan adı gerekmez: yönetim arayüzü panel alan adınız altında rastgele oluşturulan `/adg-.../` yolunu kullanır; DoH adresi ise `https://panel.example.com/dns-query` olur.
+`Install AdGuard Home with DNS-over-HTTPS? [y/N]:` sorusuna `y` yanıtını verin. Üçüncü bir alan adı gerekmez: yönetim arayüzü panel alan adınız altında rastgele oluşturulan `/adg-.../` yolunu kullanır; DoH adresi `https://panel.example.com/dns-query` olur. Genel erişime açık TCP/UDP **53** portu açılmaz. Yapılandırma ve veriler **Backup / Restore v3** kapsamındadır.
 
-Kurulum aracı TCP/UDP **53** portunu internete açmaz. AdGuard Home ayarları ve verileri **Backup / Restore v3** kapsamındadır.
+### 🔐 AmneziaWG 3.1
+
+Kurulum sırasında **UDP/8443 üzerinde AmneziaWG 3.1** yapılandırabilirsiniz (varsayılan olarak kapalıdır). `Install AmneziaWG on UDP port 8443? [y/N]:` sorusuna `y` yanıtını verin. 3x-ui içine gömülüdür ve panel alan adını kullanır. Kurulumdan sonra 3x-ui paneline bir istemci ekleyerek yapılandırmasını veya `vpn://` bağlantısını alın; kurulum aracı kendiliğinden istemci oluşturmaz. UFW, UDP/8443 erişimine otomatik izin verir; **Backup / Restore v3** yapılandırmayı korur ve güvenlik duvarı kuralını geri yükler.
 
 ## 💾 Yedekleme ve geri yükleme
 
