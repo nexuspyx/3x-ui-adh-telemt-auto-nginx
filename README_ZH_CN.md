@@ -2,7 +2,7 @@
 
 [🇷🇺 Русский](README_RU.md) · [🇬🇧 English](README.md) · [🇪🇬 العربية](README_AR.md) · [🇮🇷 فارسی](README_FA.md) · 🇨🇳 **简体中文** · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
 
-<h1 align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></h1>
+<p align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></p>
 
 ### 在自己的 VPS 上自动部署 3X-UI / XRAY-CORE
 
@@ -64,7 +64,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 五种主要连接方式均已预配置，可按需在 3x-ui 中启用，无须修改 nginx。只有在安装时选择了 AmneziaWG，才会添加该连接。**客户端需要在面板中创建**；实际兼容性取决于客户端应用及其版本。
 
-### 🔗 订阅
+### 订阅
 
 标准订阅、JSON 以及 **Mihomo / Clash** 通过 nginx 和 HTTPS 提供。添加 `provider=1` 参数可返回供代理提供者使用的原始订阅，而非完整的 Clash 配置。
 
@@ -72,11 +72,13 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 这两项功能均可在安装时选择，默认关闭。
 
-### 🛡️ AdGuard Home + DoH
+### AdGuard Home + DoH
 
 出现 `Install AdGuard Home with DNS-over-HTTPS? [y/N]:` 提示时输入 `y`。无需第三个域名：管理界面位于面板域名下随机生成的 `/adg-.../` 路径，DoH 地址为 `https://panel.example.com/dns-query`。安装程序不会向公网开放 TCP/UDP **53** 端口。配置和数据均包含在 **Backup / Restore v3** 中。
 
-### 🔐 AmneziaWG 3.1
+---
+
+### AmneziaWG 3.1
 
 安装时可选择配置 **AmneziaWG 3.1（UDP/8443）**（默认关闭）。出现 `Install AmneziaWG on UDP port 8443? [y/N]:` 提示时输入 `y`。它内置于 3x-ui，使用面板域名。安装完成后，请在 3x-ui 面板中添加客户端并获取配置文件或 `vpn://` 链接；安装程序不会自动创建客户端。UFW 会自动放行 UDP/8443；**Backup / Restore v3** 会保留配置并恢复相应的防火墙规则。
 

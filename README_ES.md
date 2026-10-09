@@ -2,7 +2,7 @@
 
 [🇷🇺 Русский](README_RU.md) · [🇬🇧 English](README.md) · [🇪🇬 العربية](README_AR.md) · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md) · 🇪🇸 **Español** · [🇹🇷 Türkçe](README_TR.md)
 
-<h1 align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></h1>
+<p align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></p>
 
 ### Despliegue automático de 3X-UI / XRAY-CORE en tu propio VPS
 
@@ -64,7 +64,7 @@ Al terminar recibirás la **URL del panel, credenciales aleatorias y la URL de d
 
 Los cinco perfiles principales ya están configurados. Activa en 3x-ui los que necesites sin modificar nginx. AmneziaWG solo se añade si lo seleccionas durante la instalación. **Crea los clientes en el panel**; la compatibilidad depende de la aplicación y su versión.
 
-### 🔗 Suscripciones
+### Suscripciones
 
 Las suscripciones estándar, JSON y **Mihomo / Clash** se ofrecen mediante nginx y HTTPS. El parámetro `provider=1` devuelve la suscripción original para los proveedores de proxy, en lugar de una configuración Clash completa.
 
@@ -72,11 +72,13 @@ Las suscripciones estándar, JSON y **Mihomo / Clash** se ofrecen mediante nginx
 
 Ambas funciones se pueden seleccionar durante la instalación y vienen desactivadas por defecto.
 
-### 🛡️ AdGuard Home + DoH
+### AdGuard Home + DoH
 
 Responde `y` a `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. No hace falta un tercer dominio: la interfaz de administración utiliza una ruta aleatoria `/adg-.../` en el dominio del panel, y DoH está disponible en `https://panel.example.com/dns-query`. No se abre el puerto público TCP/UDP **53**. La configuración y los datos se incluyen en **Backup / Restore v3**.
 
-### 🔐 AmneziaWG 3.1
+---
+
+### AmneziaWG 3.1
 
 Durante la instalación puedes configurar **AmneziaWG 3.1 en UDP/8443** (desactivado por defecto). Responde `y` a `Install AmneziaWG on UDP port 8443? [y/N]:`. Está integrado en 3x-ui y utiliza el dominio del panel. Después, añade un cliente desde 3x-ui para obtener su configuración o enlace `vpn://`; el instalador no crea clientes. UFW permite automáticamente UDP/8443; **Backup / Restore v3** conserva la configuración y restaura la regla.
 

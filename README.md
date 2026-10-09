@@ -2,7 +2,7 @@
 
 [🇷🇺 Русский](README_RU.md) · 🇬🇧 **English** · [🇪🇬 العربية](README_AR.md) · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
 
-<h1 align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></h1>
+<p align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></p>
 
 ### Automated deployment of 3X-UI / XRAY-CORE on your own VPS
 
@@ -64,7 +64,7 @@ You receive a **panel URL, random credentials, and diagnostics URL** (3x-ui-auth
 
 Five standard profiles are preconfigured; enable the ones you need in 3x-ui without editing nginx. AmneziaWG is added only if selected during installation. **Create clients in the panel**; compatibility depends on your app and version.
 
-### 🔗 Subscriptions
+### Subscriptions
 
 Standard subscriptions, JSON, and **Mihomo / Clash** use nginx and HTTPS. `provider=1` returns the original subscription for proxy providers instead of a full Clash configuration.
 
@@ -72,11 +72,13 @@ Standard subscriptions, JSON, and **Mihomo / Clash** use nginx and HTTPS. `provi
 
 Both features can be selected during installation and are disabled by default.
 
-### 🛡️ AdGuard Home + DoH
+### AdGuard Home + DoH
 
 Enter `y` when prompted `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. No third domain is needed: the admin UI uses a random `/adg-.../` path on the panel domain, and DoH is available at `https://panel.example.com/dns-query`. Public TCP/UDP port **53** is not opened. Configuration and data are included in **Backup / Restore v3**.
 
-### 🔐 AmneziaWG 3.1
+---
+
+### AmneziaWG 3.1
 
 You can configure **AmneziaWG 3.1 on UDP/8443** during installation (disabled by default). Enter `y` when prompted `Install AmneziaWG on UDP port 8443? [y/N]:`. It runs inside 3x-ui and uses the panel domain. After installation, add a client in the 3x-ui panel to get a configuration or `vpn://` link; the installer does not create clients. UFW automatically allows UDP/8443; **Backup / Restore v3** preserves the configuration and restores the rule.
 

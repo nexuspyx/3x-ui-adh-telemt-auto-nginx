@@ -2,7 +2,7 @@
 
 [🇷🇺 Русский](README_RU.md) · [🇬🇧 English](README.md) · [🇪🇬 العربية](README_AR.md) · 🇮🇷 **فارسی** · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
 
-<h1 align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></h1>
+<p align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></p>
 
 ### راه‌اندازی خودکار 3X-UI / XRAY-CORE روی VPS شخصی
 
@@ -64,7 +64,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 پنج پروفایل اصلی از پیش پیکربندی شده‌اند؛ هرکدام را که نیاز دارید در 3x-ui فعال کنید، بدون آنکه لازم باشد nginx را تغییر دهید. AmneziaWG تنها در صورت انتخاب هنگام نصب اضافه می‌شود. **کلاینت‌ها را در پنل ایجاد کنید**؛ سازگاری به برنامهٔ کلاینت و نسخهٔ آن بستگی دارد.
 
-### 🔗 اشتراک‌ها
+### اشتراک‌ها
 
 اشتراک‌های استاندارد، JSON و **Mihomo / Clash** از طریق nginx و HTTPS ارائه می‌شوند. پارامتر `provider=1` به‌جای پیکربندی کامل Clash، اشتراک اصلی مناسب برای proxy provider را برمی‌گرداند.
 
@@ -72,11 +72,13 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 هر دو قابلیت هنگام نصب قابل انتخاب‌اند و به‌صورت پیش‌فرض غیرفعال هستند.
 
-### 🛡️ AdGuard Home + DoH
+### AdGuard Home + DoH
 
 در پاسخ به `Install AdGuard Home with DNS-over-HTTPS? [y/N]:` حرف `y` را وارد کنید. به دامنهٔ سوم نیازی نیست: پنل مدیریت از مسیر تصادفی `/adg-.../` روی دامنهٔ پنل استفاده می‌کند و DoH در `https://panel.example.com/dns-query` در دسترس است. پورت عمومی TCP/UDP **53** باز نمی‌شود. تنظیمات و داده‌ها در **Backup / Restore v3** گنجانده می‌شوند.
 
-### 🔐 AmneziaWG 3.1
+---
+
+### AmneziaWG 3.1
 
 هنگام نصب می‌توانید **AmneziaWG 3.1 روی UDP/8443** را پیکربندی کنید (به‌صورت پیش‌فرض غیرفعال است). در پاسخ به `Install AmneziaWG on UDP port 8443? [y/N]:` حرف `y` را وارد کنید. این قابلیت داخل 3x-ui اجرا می‌شود و از دامنهٔ پنل استفاده می‌کند. پس از نصب، یک کلاینت در پنل 3x-ui اضافه کنید تا پیکربندی یا پیوند `vpn://` آن را دریافت کنید؛ نصب‌کننده به‌صورت خودکار کلاینت نمی‌سازد. UFW به‌طور خودکار UDP/8443 را مجاز می‌کند؛ **Backup / Restore v3** پیکربندی را حفظ کرده و قانون فایروال را بازیابی می‌کند.
 

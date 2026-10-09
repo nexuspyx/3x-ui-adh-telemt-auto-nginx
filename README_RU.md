@@ -2,7 +2,7 @@
 
 🇷🇺 **Русский** · [🇬🇧 English](README.md) · [🇪🇬 العربية](README_AR.md) · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
 
-<h1 align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></h1>
+<p align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></p>
 
 ### Автоматическое развёртывание 3X-UI / XRAY-CORE на собственном VPS
 
@@ -64,7 +64,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 Пять основных профилей уже настроены установщиком: нужный можно включить в 3x-ui без изменения nginx. AmneziaWG добавляется по выбору при установке. **Клиентов создайте в панели**; совместимость зависит от приложения и версии.
 
-### 🔗 Подписки
+### Подписки
 
 Обычная подписка, JSON и **Mihomo / Clash** — через nginx и HTTPS. `provider=1` возвращает исходную подписку для proxy providers вместо полной конфигурации Clash.
 
@@ -72,11 +72,13 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 Обе функции выбираются при установке и по умолчанию отключены.
 
-### 🛡️ AdGuard Home + DoH
+### AdGuard Home + DoH
 
 Ответьте `y` на запрос `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. Третий домен не нужен: панель AdGuard Home доступна по случайному пути `/adg-.../` на домене панели, а DoH — по адресу `https://panel.example.com/dns-query`. Публичный TCP/UDP **53** не открывается. Конфигурация и данные входят в **Backup / Restore v3**.
 
-### 🔐 AmneziaWG 3.1
+---
+
+### AmneziaWG 3.1
 
 При установке можно настроить **AmneziaWG 3.1 на UDP/8443** (по умолчанию отключён). Для этого ответьте `y` на запрос `Install AmneziaWG on UDP port 8443? [y/N]:`. Он встроен в 3x-ui и использует домен панели. После установки добавьте клиента в панели 3x-ui и получите конфигурацию или ссылку `vpn://` — установщик клиентов не создаёт. UFW автоматически разрешает UDP/8443; **Backup / Restore v3** сохраняет конфигурацию и восстанавливает правило.
 

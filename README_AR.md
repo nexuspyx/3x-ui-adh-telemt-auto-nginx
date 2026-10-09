@@ -2,7 +2,7 @@
 
 [🇷🇺 Русский](README_RU.md) · [🇬🇧 English](README.md) · 🇪🇬 **العربية** · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
 
-<h1 align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></h1>
+<p align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></p>
 
 ### نشر 3X-UI / XRAY-CORE تلقائيًا على خادم VPS الخاص بك
 
@@ -64,7 +64,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ملفات الاتصال الأساسية الخمسة مُعدّة مسبقًا؛ فعّل ما تحتاج إليه من لوحة 3x-ui دون تعديل nginx. لا يُضاف AmneziaWG إلا إذا اخترته أثناء التثبيت. **أنشئ العملاء من داخل اللوحة**؛ وتعتمد التوافقية على تطبيق العميل وإصداره.
 
-### 🔗 الاشتراكات
+### الاشتراكات
 
 تُقدَّم الاشتراكات العادية وJSON و**Mihomo / Clash** عبر nginx وHTTPS. يعيد المعامل `provider=1` الاشتراك الأصلي لمزوّدي البروكسي بدلًا من ملف إعداد Clash الكامل.
 
@@ -72,11 +72,13 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 يمكن اختيار الميزتين أثناء التثبيت، وهما معطّلتان افتراضيًا.
 
-### 🛡️ AdGuard Home + DoH
+### AdGuard Home + DoH
 
 أدخل `y` عند ظهور السؤال `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. لا حاجة إلى نطاق ثالث: تستخدم واجهة الإدارة مسارًا عشوائيًا `/adg-.../` على نطاق اللوحة، وتتوفر خدمة DoH على `https://panel.example.com/dns-query`. لا يُفتح منفذ TCP/UDP العام **53**. تُضمَّن إعدادات AdGuard Home وبياناته في **Backup / Restore v3**.
 
-### 🔐 AmneziaWG 3.1
+---
+
+### AmneziaWG 3.1
 
 يمكن إعداد **AmneziaWG 3.1 على UDP/8443** أثناء التثبيت (معطّل افتراضيًا). أدخل `y` عند ظهور السؤال `Install AmneziaWG on UDP port 8443? [y/N]:`. يعمل داخل 3x-ui ويستخدم نطاق اللوحة. بعد التثبيت، أضف عميلًا في لوحة 3x-ui للحصول على ملف إعداد أو رابط `vpn://`؛ لا ينشئ المُثبّت عملاء تلقائيًا. يسمح UFW تلقائيًا بالاتصال عبر UDP/8443؛ ويحفظ **Backup / Restore v3** الإعدادات ويستعيد القاعدة.
 

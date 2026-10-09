@@ -2,7 +2,7 @@
 
 [🇷🇺 Русский](README_RU.md) · [🇬🇧 English](README.md) · [🇪🇬 العربية](README_AR.md) · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · 🇹🇷 **Türkçe**
 
-<h1 align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></h1>
+<p align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="560"></p>
 
 ### Kendi VPS sunucunuzda otomatik 3X-UI / XRAY-CORE kurulumu
 
@@ -64,7 +64,7 @@ Kurulum sonunda **panel adresi, rastgele oluşturulmuş giriş bilgileri ve tan�
 
 Beş temel profil önceden yapılandırılmıştır; ihtiyacınız olanları nginx'i değiştirmeden 3x-ui panelinden etkinleştirebilirsiniz. AmneziaWG yalnızca kurulum sırasında seçildiğinde eklenir. **İstemcileri panelde oluşturun**; uyumluluk kullandığınız uygulamaya ve sürümüne bağlıdır.
 
-### 🔗 Abonelikler
+### Abonelikler
 
 Standart abonelikler, JSON ve **Mihomo / Clash** yapılandırmaları nginx ve HTTPS üzerinden sunulur. `provider=1` parametresi, tam Clash yapılandırması yerine proxy sağlayıcıları için özgün aboneliği döndürür.
 
@@ -72,11 +72,13 @@ Standart abonelikler, JSON ve **Mihomo / Clash** yapılandırmaları nginx ve HT
 
 Her iki özellik de kurulum sırasında seçilebilir ve varsayılan olarak kapalıdır.
 
-### 🛡️ AdGuard Home + DoH
+### AdGuard Home + DoH
 
 `Install AdGuard Home with DNS-over-HTTPS? [y/N]:` sorusuna `y` yanıtını verin. Üçüncü bir alan adı gerekmez: yönetim arayüzü panel alan adınız altında rastgele oluşturulan `/adg-.../` yolunu kullanır; DoH adresi `https://panel.example.com/dns-query` olur. Genel erişime açık TCP/UDP **53** portu açılmaz. Yapılandırma ve veriler **Backup / Restore v3** kapsamındadır.
 
-### 🔐 AmneziaWG 3.1
+---
+
+### AmneziaWG 3.1
 
 Kurulum sırasında **UDP/8443 üzerinde AmneziaWG 3.1** yapılandırabilirsiniz (varsayılan olarak kapalıdır). `Install AmneziaWG on UDP port 8443? [y/N]:` sorusuna `y` yanıtını verin. 3x-ui içine gömülüdür ve panel alan adını kullanır. Kurulumdan sonra 3x-ui paneline bir istemci ekleyerek yapılandırmasını veya `vpn://` bağlantısını alın; kurulum aracı kendiliğinden istemci oluşturmaz. UFW, UDP/8443 erişimine otomatik izin verir; **Backup / Restore v3** yapılandırmayı korur ve güvenlik duvarı kuralını geri yükler.
 
