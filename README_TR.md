@@ -101,7 +101,7 @@ Arşivler `/var/backups/x-ui/` dizinine kaydedilir.
 
 > **Yedekler hassas bilgiler içerir:** istemci veritabanı, parolalar ve sertifika özel anahtarları. Bir kopyayı mutlaka **VPS dışında** saklayın ve yalnızca güvendiğiniz arşivleri geri yükleyin.
 
-[Yeni bir VPS'e geri yükleme](#technical-details).
+[Yeni bir VPS'e geri yükleme](#restore-on-new-vps).
 
 ## 🔐 Güvenlik
 
@@ -109,17 +109,29 @@ Hizmet arayüzleri doğrudan internete açılmaz. Panel, abonelikler ve ek hizme
 
 İstekleri rastgele localhost portlarına ileten genel amaçlı bir proxy yoktur. Kritik hata oluşursa eksik bir yapılandırma başlatılmak yerine kurulum veya geri yükleme durdurulur.
 
+<a id="telemt-web-manager"></a>
+
+## ✈️ Telegram Web Proxy Manager
+
+[Kardeş projemiz](https://github.com/xPROMSx/telegram-web-proxy-manager), kendi Telegram WEB Proxy sunucunuzu HTTPS, kamuflaj sitesi ve geri alma destekli güncellemelerle kurmanızı sağlar.
+
+Projeler birbirinden bağımsızdır; **bu kurulum aracı Telegram Web Proxy Manager'ı yüklemez**.
+
+
 <a id="technical-details"></a>
 
-<details>
-<summary>⚙️ Teknik ayrıntılar ve uyumluluk</summary>
+## ⚙️ Teknik ayrıntılar ve uyumluluk
 
-- **Sistemler:** Ubuntu 24.04, Ubuntu 26.04 ve Debian 13. Debian 12 desteklenmez.
-- **UFW:** 80/tcp, 443/tcp ve 443/udp kurallarını ekler. UFW kapalıysa SSH portu bulunup erişime izin verilmeden etkinleştirilmez; bu mümkün değilse uyarıyla kapalı kalır. Geri yükleme işlemi UFW'yi hiçbir zaman etkinleştirmez.
+- **Sistemler:** Ubuntu 24.04, Ubuntu 26.04 ve Debian 13.
+- **UFW:** 80/tcp, 443/tcp ve 443/udp portlarına izin verir (AmneziaWG seçilirse isteğe bağlı olarak 8443/udp da eklenir). UFW kapalıysa SSH portu bulunup erişime izin verilmeden etkinleştirilmez; bu mümkün değilse uyarıyla kapalı kalır. **⚠️ Geri yükleme işlemi UFW'yi hiçbir zaman etkinleştirmez.**
 - **Sertifikalar:** Let's Encrypt webroot ve `certbot.timer`, nginx'i durdurmadan sertifikaları otomatik yeniler.
 - **3x-ui sürümü:** kurulum aracı, varsayılan olarak 3x-ui Auto Nginx ile uyumluluğu kapsamlı biçimde doğrulanmış en yeni sürümü yükler. Bu, resmi projenin en son yayımladığı sürüm olmayabilir. Kurulum sonrasında 3x-ui'nin kendi güncelleme mekanizmasını kullanabilirsiniz; ancak yeni sürümün mevcut yapılandırmayla uyumluluğu henüz doğrulanmamış olabilir. `-version <tag>` ile başka bir kararlı sürümü açıkça seçebilirsiniz (desteklenen en düşük sürüm v3.8.0); doğrulanmamış uyumluluk için uyarı gösterilir.
 
-**Yeni bir VPS'e geri yükleme:** işletim sistemi, sürümü ve işlemci mimarisi yedektekiyle aynı olmalıdır. IP adresi değişirse DNS kayıtlarını güncelleyin. **`x-ui-latest.sh` dosyasını çalıştırmayın**; yalnızca yedekleme aracını kurup güvenilir bir arşivi geri yükleyin:
+<a id="restore-on-new-vps"></a>
+
+### Yeni bir VPS'e geri yükleme
+
+işletim sistemi, sürümü ve işlemci mimarisi yedektekiyle aynı olmalıdır. VPS IP adresi değişirse alan adlarının DNS kayıtlarını güncelleyin. **`x-ui-latest.sh` dosyasını çalıştırmayın**; yalnızca yedekleme aracını kurup güvenilir bir arşivi geri yükleyin:
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
@@ -130,15 +142,6 @@ x-ui-backup restore /root/<archive>.tar.gz
 
 SSH, işletim sistemi yapılandırması ve temel güvenlik duvarı yöneticinin sorumluluğundadır. v2 yedek arşivleri için ilgili eski sürümün aracını kullanın.
 
-</details>
-
-<a id="telemt-web-manager"></a>
-
-## ✈️ Telegram Web Proxy Manager
-
-[Kardeş projemiz](https://github.com/xPROMSx/telegram-web-proxy-manager), kendi Telegram WEB Proxy sunucunuzu HTTPS, kamuflaj sitesi ve geri alma destekli güncellemelerle kurmanızı sağlar.
-
-Projeler birbirinden bağımsızdır; **bu kurulum aracı Telegram Web Proxy Manager'ı yüklemez**.
 
 ## 🤝 Katkılar ve köken
 

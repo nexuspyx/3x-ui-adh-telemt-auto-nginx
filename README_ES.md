@@ -101,7 +101,7 @@ Los archivos se guardan en `/var/backups/x-ui/`.
 
 > **Las copias contienen información sensible:** base de datos de clientes, contraseñas y claves privadas de certificados. Conserva una copia **fuera del VPS** y restaura únicamente archivos de confianza.
 
-[Restauración en un VPS nuevo](#technical-details).
+[Restauración en un VPS nuevo](#restore-on-new-vps).
 
 ## 🔐 Seguridad
 
@@ -109,17 +109,29 @@ Las interfaces de los servicios no se exponen directamente a Internet. Se accede
 
 No existe un proxy genérico hacia puertos arbitrarios de localhost. Si se produce un error crítico, la instalación o restauración se detiene en lugar de iniciar una configuración incompleta.
 
+<a id="telemt-web-manager"></a>
+
+## ✈️ Telegram Web Proxy Manager
+
+[Un proyecto complementario](https://github.com/xPROMSx/telegram-web-proxy-manager) para crear tu propio Telegram WEB Proxy con HTTPS, un sitio de camuflaje y actualizaciones con posibilidad de reversión.
+
+Los proyectos son independientes: **este instalador no instala Telegram Web Proxy Manager**.
+
+
 <a id="technical-details"></a>
 
-<details>
-<summary>⚙️ Detalles técnicos y compatibilidad</summary>
+## ⚙️ Detalles técnicos y compatibilidad
 
-- **Sistemas:** Ubuntu 24.04, Ubuntu 26.04 y Debian 13. Debian 12 no es compatible.
-- **UFW:** añade las reglas 80/tcp, 443/tcp y 443/udp. Si UFW está desactivado, solo se activa después de detectar y permitir el puerto SSH; de lo contrario, permanece desactivado y muestra una advertencia. La restauración nunca activa UFW.
+- **Sistemas:** Ubuntu 24.04, Ubuntu 26.04 y Debian 13.
+- **UFW:** permite 80/tcp, 443/tcp y 443/udp (8443/udp es opcional al seleccionar AmneziaWG). Si UFW está desactivado, solo se activa después de detectar y permitir el puerto SSH; de lo contrario, permanece desactivado con una advertencia. **⚠️ La restauración nunca activa UFW.**
 - **Certificados:** Let's Encrypt con webroot y `certbot.timer` renuevan los certificados automáticamente sin detener nginx.
 - **Versión de 3x-ui:** el instalador utiliza por defecto la versión más reciente cuya compatibilidad con 3x-ui Auto Nginx se ha comprobado exhaustivamente; puede no ser la última versión oficial publicada. Después puedes actualizar 3x-ui con su mecanismo integrado, aunque es posible que la nueva versión todavía no haya sido verificada con esta configuración. También puedes seleccionar expresamente otra versión estable mediante `-version <tag>` (mínimo compatible: v3.8.0); el instalador avisará si no se ha verificado su compatibilidad.
 
-**Restauración en un VPS nuevo:** el sistema operativo, su versión y la arquitectura deben coincidir con los de la copia de seguridad. Si cambia la IP, actualiza el DNS. **No ejecutes** `x-ui-latest.sh`; instala únicamente la herramienta de copia y restaura un archivo de confianza:
+<a id="restore-on-new-vps"></a>
+
+### Restauración en un VPS nuevo
+
+el sistema operativo, su versión y la arquitectura deben coincidir con los de la copia de seguridad. Si cambia la IP del VPS, actualiza los registros DNS de los dominios. **No ejecutes** `x-ui-latest.sh`; instala únicamente la herramienta de copia y restaura un archivo de confianza:
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
@@ -130,15 +142,6 @@ x-ui-backup restore /root/<archive>.tar.gz
 
 La administración de SSH, el sistema operativo y el firewall básico sigue siendo responsabilidad del administrador. Para archivos v2, utiliza la herramienta de la versión anterior correspondiente.
 
-</details>
-
-<a id="telemt-web-manager"></a>
-
-## ✈️ Telegram Web Proxy Manager
-
-[Un proyecto complementario](https://github.com/xPROMSx/telegram-web-proxy-manager) para crear tu propio Telegram WEB Proxy con HTTPS, un sitio de camuflaje y actualizaciones con posibilidad de reversión.
-
-Los proyectos son independientes: **este instalador no instala Telegram Web Proxy Manager**.
 
 ## 🤝 Créditos y origen
 

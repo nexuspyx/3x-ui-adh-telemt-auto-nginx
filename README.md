@@ -101,7 +101,7 @@ Archives are saved in `/var/backups/x-ui/`.
 
 > **Backups contain sensitive data:** the client database, passwords, and certificate private keys. Keep a copy **off the VPS** and restore only trusted archives.
 
-[Recovery on a new VPS](#technical-details).
+[Recovery on a new VPS](#restore-on-new-vps).
 
 ## 🔐 Security
 
@@ -109,17 +109,29 @@ Service interfaces are not exposed directly to the internet. The panel, subscrip
 
 There is no generic proxy to arbitrary localhost ports. Critical errors stop installation or restore rather than starting an incomplete configuration.
 
+<a id="telemt-web-manager"></a>
+
+## ✈️ Telegram Web Proxy Manager
+
+[A companion project](https://github.com/xPROMSx/telegram-web-proxy-manager) for your own Telegram WEB Proxy: HTTPS, a cover site, and updates with rollback.
+
+The projects are independent; **this installer does not install Telegram Web Proxy Manager**.
+
+
 <a id="technical-details"></a>
 
-<details>
-<summary>⚙️ Technical details and compatibility</summary>
+## ⚙️ Technical details and compatibility
 
-- **Systems:** Ubuntu 24.04, Ubuntu 26.04, and Debian 13. Debian 12 is unsupported.
-- **UFW:** adds 80/tcp, 443/tcp, and 443/udp. Inactive UFW is enabled only after the SSH port is detected and allowed; otherwise it remains inactive with a warning. Restore never enables UFW.
+- **Systems:** Ubuntu 24.04, Ubuntu 26.04, and Debian 13.
+- **UFW:** allows 80/tcp, 443/tcp, and 443/udp (8443/udp optionally, when AmneziaWG is selected). Inactive UFW is enabled only after the SSH port is detected and allowed; otherwise it remains inactive with a warning. **⚠️ Restore never enables UFW.**
 - **Certificates:** Let's Encrypt webroot and `certbot.timer` renew certificates automatically without stopping nginx.
 - **3x-ui version:** by default, the installer uses the latest version thoroughly tested for compatibility with 3X-UI AUTO NGINX, which may not be the latest upstream release. After installation, you can update 3x-ui using its built-in update mechanism, but the new version may not yet be verified against this configuration. You can also explicitly select another stable release with `-version <tag>` (minimum supported version: v3.8.0); the installer will warn that compatibility has not been verified.
 
-**Recovery on a new VPS:** match the backup's OS, OS version, and architecture. Update DNS if the IP changes. Do not run `x-ui-latest.sh` — install only the utility, then restore a trusted archive:
+<a id="restore-on-new-vps"></a>
+
+### Recovery on a new VPS
+
+match the backup's OS, OS version, and architecture. If the VPS IP address changes, update the DNS records for your domains. Do not run `x-ui-latest.sh` — install only the utility, then restore a trusted archive:
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
@@ -130,15 +142,6 @@ x-ui-backup restore /root/<archive>.tar.gz
 
 SSH, OS configuration, and the base firewall remain the administrator's responsibility. For v2 archives, use the utility from the matching older release.
 
-</details>
-
-<a id="telemt-web-manager"></a>
-
-## ✈️ Telegram Web Proxy Manager
-
-[A companion project](https://github.com/xPROMSx/telegram-web-proxy-manager) for your own Telegram WEB Proxy: HTTPS, a cover site, and updates with rollback.
-
-The projects are independent; **this installer does not install Telegram Web Proxy Manager**.
 
 ## 🤝 Credits / Origins
 

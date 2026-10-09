@@ -101,7 +101,7 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 
 > **备份包含敏感数据：** 客户端数据库、密码和证书私钥。请在 **VPS 之外** 保存副本，并且只恢复来源可信的备份文件。
 
-[在新 VPS 上恢复](#technical-details)。
+[在新 VPS 上恢复](#restore-on-new-vps)。
 
 ## 🔐 安全性
 
@@ -109,17 +109,29 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 
 项目不会将请求任意代理到 localhost 端口。遇到关键错误时，安装或恢复过程会停止，而不是启动不完整的配置。
 
+<a id="telemt-web-manager"></a>
+
+## ✈️ Telegram Web Proxy Manager
+
+[配套项目](https://github.com/xPROMSx/telegram-web-proxy-manager)，用于搭建自己的 Telegram WEB Proxy，支持 HTTPS、伪装网站以及带回滚机制的更新。
+
+两个项目相互独立；**此安装脚本不会安装 Telegram Web Proxy Manager**。
+
+
 <a id="technical-details"></a>
 
-<details>
-<summary>⚙️ 技术细节与兼容性</summary>
+## ⚙️ 技术细节与兼容性
 
-- **系统：** Ubuntu 24.04、Ubuntu 26.04 和 Debian 13。不支持 Debian 12。
-- **UFW：** 添加 80/tcp、443/tcp 和 443/udp 规则。仅在识别并允许 SSH 端口后才会启用原本未启用的 UFW；否则保持未启用并给出警告。恢复操作不会启用 UFW。
+- **系统：** Ubuntu 24.04、Ubuntu 26.04 和 Debian 13。
+- **UFW：** 允许 80/tcp、443/tcp 和 443/udp（选择安装 AmneziaWG 时可额外开放 8443/udp）。仅在检测到并放行 SSH 端口后，才会启用原本未启用的 UFW；否则保持未启用并给出警告。**⚠️ 恢复操作绝不会启用 UFW。**
 - **证书：** 通过 Let's Encrypt webroot 和系统 `certbot.timer` 自动续期，无需停止 nginx。
 - **3x-ui 版本：** 默认安装已针对 3X-UI AUTO NGINX 进行充分兼容性测试的最新版本，并不一定是 3x-ui 上游刚发布的最新版。安装完成后，你可以通过 3x-ui 自带的更新功能自行升级，但新版本与现有配置的兼容性可能尚未得到验证。也可以通过 `-version <tag>` 明确指定其他稳定版（最低支持 v3.8.0）；安装程序会提醒该版本尚未通过兼容性验证。
 
-**在新 VPS 上恢复：** 操作系统、版本和 CPU 架构应与备份对应。若 IP 改变，请更新 DNS。**不要运行** `x-ui-latest.sh`；仅安装备份工具，然后恢复可信的归档文件：
+<a id="restore-on-new-vps"></a>
+
+### 在新 VPS 上恢复
+
+操作系统、版本和 CPU 架构应与备份对应。如果 VPS 的 IP 地址发生变化，请更新域名的 DNS 记录。**不要运行** `x-ui-latest.sh`；仅安装备份工具，然后恢复可信的归档文件：
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
@@ -130,15 +142,6 @@ x-ui-backup restore /root/<archive>.tar.gz
 
 SSH、系统配置及基础防火墙仍由管理员负责。对于 v2 备份，请使用对应旧版本中的恢复工具。
 
-</details>
-
-<a id="telemt-web-manager"></a>
-
-## ✈️ Telegram Web Proxy Manager
-
-[配套项目](https://github.com/xPROMSx/telegram-web-proxy-manager)，用于搭建自己的 Telegram WEB Proxy，支持 HTTPS、伪装网站以及带回滚机制的更新。
-
-两个项目相互独立；**此安装脚本不会安装 Telegram Web Proxy Manager**。
 
 ## 🤝 致谢与项目来源
 
