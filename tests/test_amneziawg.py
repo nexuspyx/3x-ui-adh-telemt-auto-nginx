@@ -97,3 +97,19 @@ class AmneziaWG(unittest.TestCase):
             with self.assertRaises(ValueError):module.main()
         self.assertTrue(directories)
         self.assertFalse(Path(directories[0]).exists())
+
+    def test_canary_identity_includes_exercised_awg_helper(self):
+        import tempfile
+        from unittest.mock import patch
+        import upstream_canary
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            paths=('tests/test_fixture.py','x-ui-latest.sh','assets/clash/clash.yaml',
+                   'assets/diagnostics/mtr-backend.py','.github/workflows/upstream-canary.yml',
+                   'assets/amneziawg/managed.py')
+            for name in paths:
+                path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('fixture')
+            with patch.object(upstream_canary,'ROOT',root):
+                original=upstream_canary.fingerprint()
+                (root/'assets/amneziawg/managed.py').write_text('changed AWG contract')
+                self.assertNotEqual(original,upstream_canary.fingerprint())
