@@ -1,6 +1,6 @@
 <div align="center">
 
-[🇬🇧 English](README_EN.md) · [🇪🇬 العربية](README_AR.md) · **🇮🇷 فارسی** · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇷🇺 Русский](README.md) · [🇹🇷 Türkçe](README_TR.md)
+[🇬🇧 English](README_EN.md) · [🇪🇬 العربية](README_AR.md) · 🇮🇷 **فارسی** · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇷🇺 Русский](README.md) · [🇹🇷 Türkçe](README_TR.md)
 
 # 🚀 3x-ui Auto Nginx
 
