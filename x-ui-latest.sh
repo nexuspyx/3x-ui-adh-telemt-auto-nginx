@@ -10,7 +10,7 @@ msg_warn() { printf '\e[1;33m%s\e[0m\n' "$1"; }
 
 echo
 msg_inf '============================================================'
-msg_inf '  3x-ui Auto Nginx'
+msg_inf '  3X-UI AUTO NGINX'
 msg_inf '  Automated 3x-ui / Xray deployment'
 msg_inf '============================================================'
 echo
@@ -325,7 +325,10 @@ IP4=$(ip route get 8.8.8.8 2>&1 | grep -Po -- 'src \K\S*')
 validate_domains() {
     while true; do
         [[ -n "$domain" ]] && break
-        echo -en "3x-ui panel domain (panel.example.com): " && read -r domain
+        msg_inf "PANEL DOMAIN"
+        echo "Public domain for the panel and optional services."
+        echo -en "3x-ui panel domain (panel.example.com): "
+        read -r domain || { msg_err "Panel domain is required."; return 1; }
     done
     domain=$(echo "$domain" | tr -d '[:space:]')
     SubDomain=$(echo "$domain"   | sed 's/^[^ ]* \|\..*//g')
@@ -334,7 +337,10 @@ validate_domains() {
 
     while true; do
         [[ -n "$reality_domain" ]] && break
-        echo -en "REALITY domain (reality.example.com): " && read -r reality_domain
+        msg_inf "REALITY DOMAIN"
+        echo "Separate domain for the REALITY camouflage site."
+        echo -en "REALITY domain (reality.example.com): "
+        read -r reality_domain || { msg_err "REALITY domain is required."; return 1; }
     done
     reality_domain=$(echo "$reality_domain" | tr -d '[:space:]')
     RealitySubDomain=$(echo "$reality_domain" | sed 's/^[^ ]* \|\..*//g')
@@ -1750,8 +1756,47 @@ setup_firewall() {
 # ─────────────────────────────────────────────────────────────────────────────
 # SHOW RESULTS
 # ─────────────────────────────────────────────────────────────────────────────
+select_amneziawg() {
+    INSTALL_AWG=n
+    local answer
+    msg_inf 'AMNEZIAWG'
+    echo 'Optional AmneziaWG 3.1; add clients later in the panel.'
+    while true; do
+        printf 'Install AmneziaWG on UDP port 8443? [y/N]: '
+        IFS= read -r answer || return 0
+        case "$answer" in
+            ''|n|N) return 0 ;;
+            y|Y) INSTALL_AWG=y; return 0 ;;
+            *) printf 'Please enter y or n.\n' ;;
+        esac
+    done
+}
+
+preflight_amneziawg() {
+    [[ "${INSTALL_AWG:-n}" == y ]] || return 0
+    [[ "${PANEL_TAG:-}" == v3.9.0 ]] || { msg_err "AmneziaWG 3.1 integration requires verified 3x-ui v3.9.0."; return 1; }
+    # Python is guaranteed by release preflight even on a clean OS.
+    python3 - <<'PYPORT' || return 1
+import socket
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listener:
+    listener.bind(('0.0.0.0',8443))
+PYPORT
+    AWG_HELPER="${PANEL_STAGE:?Release preflight is required}/managed-amneziawg.py"
+    curl -fsSL --connect-timeout 15 --max-time 60 "${GITHUB_RAW}/assets/amneziawg/managed.py" -o "$AWG_HELPER" || return 1
+}
+
+install_amneziawg() {
+    [[ "${INSTALL_AWG:-n}" == y ]] || return 0
+    local inbound_id
+    inbound_id=$(printf '%s' "$config_password" | python3 "${AWG_HELPER:?AmneziaWG preflight is required}" "$domain" "$panel_path" "$config_username") || return 1
+    [[ "$inbound_id" =~ ^[1-9][0-9]*$ ]] || return 1
+    AWG_RESULT=configured
+}
+
 select_adguard() {
     INSTALL_AGH=n
+    msg_inf "ADGUARD HOME"
+    echo "Optional filtering DNS and DoH through the panel domain."
     local answer
     while true; do
         printf 'Install AdGuard Home with DNS-over-HTTPS? [y/N]: '
@@ -2007,6 +2052,10 @@ show_results() {
     else
         msg_warn ' [!] Backup / Restore       Backup utility unavailable'
     fi
+    case "${AWG_RESULT:-not_requested}" in
+        configured) msg_ok " [✓] AmneziaWG              Configured (UDP/8443)" ;;
+        failed) msg_warn " [!] AmneziaWG              Not configured" ;;
+    esac
     case "${AGH_RESULT:-not_requested}" in
         installed)
             msg_ok ' [✓] AdGuard Home           Running (v0.107.79)'
@@ -2057,9 +2106,11 @@ show_results() {
 # ─────────────────────────────────────────────────────────────────────────────
 main() {
     confirm_destructive_reinstall || exit 1
-    validate_domains
+    validate_domains || exit 1
+    select_amneziawg || exit 1
     select_adguard || exit 1
     preflight_panel_release || { msg_err "Release preflight failed; existing deployment was not removed."; exit 1; }
+    preflight_amneziawg || { msg_err "AmneziaWG preflight failed; existing deployment was not removed."; exit 1; }
     cleanup_adguard || { msg_err "Cannot clean AdGuard Home; core deployment was not removed."; exit 1; }
     clean_previous_install
     install_packages || { msg_err "Dependency setup failed."; exit 1; }
@@ -2086,6 +2137,11 @@ main() {
     check_installation || { msg_err "Installation failed mandatory health checks."; exit 1; }
 
     local install_result=0
+    AWG_RESULT=not_requested
+    if [[ "${INSTALL_AWG:-n}" == y ]]; then
+        AWG_RESULT=failed
+        install_amneziawg || install_result=1
+    fi
     AGH_RESULT=not_requested
     if [[ "$INSTALL_AGH" == y ]]; then
         install_adguard || install_result=1

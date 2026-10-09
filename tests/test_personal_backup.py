@@ -531,6 +531,42 @@ class PersonalBackup(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn('Restore completed successfully.', result.stdout)
 
+    def test_amneziawg_backup_restore_preserves_state_and_firewall(self):
+        import hashlib
+        import base64
+        from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
+        key = X25519PrivateKey.generate()
+        server = {
+            'privateKey':base64.b64encode(key.private_bytes(Encoding.Raw,PrivateFormat.Raw,NoEncryption())).decode(),
+            'publicKey':base64.b64encode(key.public_key().public_bytes(Encoding.Raw,PublicFormat.Raw)).decode(),
+            'headerProtectionKey':base64.b64encode(os.urandom(32)).decode(),
+            'subnetIp':'10.8.1.0','subnetCidr':24,'primaryDns':'8.8.8.8','secondaryDns':'8.8.4.4',
+            'jc':4,'jmin':60,'jmax':180,'s1':30,'s2':40,'s3':20,'s4':15,
+            'h1':'12345','h2':'600000000','h3':'1200000000','h4':'1800000000','i1':'<r 64>',
+            'contentPaddingAddition':'12-24','rekeyAfterTime':'110-130','rejectAfterTime':'170-220',
+            'rekeyTimeout':'4-7','keepaliveTimeout':'10-16','maxHandshakeAttempts':'20-30',
+            'randomTrailers':True,'disableCookies':True,'ipv6Enabled':False,'routeThroughXray':False,
+        }
+        with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+            keys = [row[1] for row in db.execute('PRAGMA table_info(inbounds)')]
+            row = dict(zip(keys,db.execute('SELECT * FROM inbounds LIMIT 1').fetchone()))
+            row.update(id=6, tag='inbound-8443-udp',protocol='amneziawg',port=8443,
+                       listen='0.0.0.0',enable=1,settings=json.dumps({'server':server,'clients':[]}))
+            db.execute('INSERT INTO inbounds ('+','.join(keys)+') VALUES ('+','.join('?' for _ in keys)+')',
+                       [row[k] for k in keys])
+        archive = self.backup()
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        for _ in range(2):
+            result = self.run_tool('restore',archive)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
+                restored = dict(zip(keys,db.execute("SELECT * FROM inbounds WHERE tag='inbound-8443-udp'").fetchone()))
+                self.assertTrue(restored == row,"AWG settings changed during restore")
+                self.assertEqual(db.execute('PRAGMA quick_check').fetchone(),('ok',))
+            self.assertIn(['ufw','allow','8443/udp'],self.commands())
+            self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),digest)
+
     def test_round_trip_cron_firewall_diagnostics_and_sysctl(self):
         self.write('/var/www/acme/.well-known/acme-challenge/stale', 'stale challenge must not be archived')
         archive = self.backup()

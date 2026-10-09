@@ -67,6 +67,10 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 标准订阅、JSON 以及 **Mihomo / Clash** 通过 nginx 和 HTTPS 提供。添加 `provider=1` 参数可返回供代理提供者使用的原始订阅，而非完整的 Clash 配置。
 
+### AmneziaWG 3.1
+
+安装时可选择启用 **AmneziaWG 3.1（UDP/8443）**，默认关闭。它内置于 3x-ui，使用面板域名，不需要 nginx 或独立证书。请在面板中添加客户端并获取配置或 `vpn://` 链接；安装脚本不会创建客户端。IPv6 和客户端端口转发保持关闭。Backup / Restore v3 会保留其设置，并恢复所需的 UFW 规则。 此集成支持经过验证的 3x-ui v3.9.0。
+
 ## 🛡️ AdGuard Home + DoH
 
 可选安装，默认选项为 **N**。无需第三个域名：管理界面位于面板域名下随机生成的 `/adg-.../` 路径，DoH 地址为 `https://panel.example.com/dns-query`。

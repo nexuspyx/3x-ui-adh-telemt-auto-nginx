@@ -200,7 +200,7 @@ class RealIntegration(unittest.TestCase):
         self.addCleanup(stop,process)
         return process
 
-    def ready(self, process, address=None, path=None, udp_port=None):
+    def ready(self, process, address=None, path=None, udp_port=None, udp_address="127.0.0.1"):
         deadline = time.monotonic()+15
         description = f'pid={process.pid}, TCP={address}, UDS={path}, UDP={udp_port}'
         udp_state = ''
@@ -212,7 +212,7 @@ class RealIntegration(unittest.TestCase):
                                         capture_output=True,text=True,check=True,timeout=2)
                 udp_state = result.stdout
                 # Linux socket table plus owning PID proves a bound listener, not UDP connect().
-                if any(len(fields := line.split()) >= 5 and fields[3] == f'127.0.0.1:{udp_port}'
+                if any(len(fields := line.split()) >= 5 and fields[3] == f'{udp_address}:{udp_port}'
                        and f'pid={process.pid},' in line for line in udp_state.splitlines()):
                     return
             if address:
@@ -369,7 +369,7 @@ http {{ access_log off; {temp} {maps} {main} {cover} }}
         process = self.launch([self.nginx,'-p',str(self.root)+'/', '-c',path],'nginx')
         self.ready(process,('127.0.0.1',self.public))
 
-    def client(self, name, negative=False):
+    def client(self, name, negative=False, server_log="xray-server.log"):
         config = copy.deepcopy(self.clients[name])
         outbound = next(o for o in config['outbounds'] if o['protocol'] in ('vless','trojan','hysteria'))
         settings,stream = outbound['settings'],outbound['streamSettings']
@@ -405,7 +405,7 @@ http {{ access_log off; {temp} {maps} {main} {cover} }}
             self.assertNotIn(self.marker,result.stdout)
             self.assertEqual(len(self.origin_requests),before,'negative transport reached origin')
         else:
-            self.assertEqual(result.returncode,0,(self.root/(name+'-curl.trace')).read_text()[-1000:]+result.stderr+'; '+(self.root/(name+'-client.log')).read_text()[-1500:]+'; server '+(self.root/'xray-server.log').read_text()[-2500:])
+            self.assertEqual(result.returncode,0,(self.root/(name+'-curl.trace')).read_text()[-1000:]+result.stderr+'; '+(self.root/(name+'-client.log')).read_text()[-1500:]+'; server '+(self.root/server_log).read_text()[-2500:])
             self.assertEqual(result.stdout,self.marker)
             self.assertEqual(len(self.origin_requests),before+1)
 
@@ -427,6 +427,143 @@ http {{ access_log off; {temp} {maps} {main} {cover} }}
     def test_xhttp(self): self.transport('xhttp')
     def test_websocket(self): self.transport('ws')
     def test_trojan_grpc(self): self.transport('trojan-grpc')
+
+    def test_amneziawg_tcp_udp_and_panel_restart(self):
+        # Same checksum-verified official x-ui as the existing integration baseline.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('awg_managed',ROOT/'assets/amneziawg/managed.py')
+        managed = importlib.util.module_from_spec(spec); spec.loader.exec_module(managed)
+        env = {**os.environ,'XUI_DB_FOLDER':str(self.root/'db'),'XUI_BIN_FOLDER':str(self.root/'bin'),
+               'XUI_LOG_FOLDER':str(self.root/'logs')}
+        server = self.launch([self.xui],'awg-panel',env)
+        self.ready(server,('127.0.0.1',self.backends['panel']))
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            api = managed.Panel(f"https://deploy.example:{self.backends['panel']}/panel/",
+                'integration',self.auth,directory,['--cacert',str(self.cert),
+                '--resolve',f"deploy.example:{self.backends['panel']}:127.0.0.1"])
+            awg_port = port(self.allocated_ports,udp=True)
+            inbound = api.create('deploy.example',awg_port)
+            self.assertEqual(inbound['settings']['clients'],[])
+            second = api.create('deploy.example',port(self.allocated_ports,udp=True))
+            for key in ('privateKey','publicKey','headerProtectionKey'):
+                self.assertTrue(inbound['settings']['server'][key] != second['settings']['server'][key],
+                                'Official API reused an AWG key')
+            api.request('panel/api/inbounds/del/'+str(second['id']),{})
+            api.request('panel/api/clients/add',{'client':{'email':'awg-integration','enable':True},
+                                               'inboundIds':[inbound['id']]})
+        stop(server)
+        with sqlite3.connect(self.root/'db/x-ui.db') as db:
+            settings = json.loads(db.execute('SELECT settings FROM inbounds WHERE id=?',(inbound['id'],)).fetchone()[0])
+            self.assertEqual(len(settings['clients']),1)
+            peer = settings['clients'][0]; parameters = settings['server']
+        # A raw UDP echo origin proves payload delivery, not merely a bound VPN socket.
+        udp = socket.socket(socket.AF_INET,socket.SOCK_DGRAM); udp.bind(('127.0.0.1',0))
+        self.addCleanup(udp.close); udp.settimeout(1)
+        udp_port = udp.getsockname()[1]; self.allocated_ports.add(udp_port)
+        done = threading.Event(); self.addCleanup(done.set)
+        def echo():
+            while not done.is_set():
+                try:
+                    data,address = udp.recvfrom(65536); udp.sendto(data,address)
+                except socket.timeout: pass
+                except OSError: return
+        threading.Thread(target=echo,daemon=True).start()
+        with sqlite3.connect(self.root/'db/x-ui.db') as db:
+            template = json.loads(db.execute("SELECT value FROM settings WHERE key='xrayTemplateConfig'").fetchone()[0])
+            # gVisor rejects loopback destinations inside an IP tunnel. Route a
+            # documentation/test address to the same private origins in test Xray only.
+            template['outbounds'][0]['settings']['finalRules'][0]['port'] += ','+str(udp_port)
+            template['outbounds'][0]['settings']['redirect'] = '127.0.0.1:0'
+            db.execute("UPDATE settings SET value=? WHERE key='xrayTemplateConfig'",(json.dumps(template),))
+        server = self.launch([self.xui],'awg-panel-active',env)
+        self.ready(server,udp_port=awg_port,udp_address="0.0.0.0")
+        self.ready(server,('127.0.0.1',self.backends['sub']))
+        # Verify the real upstream export, including the public share host and 3.1 parameters.
+        import configparser
+        raw = subprocess.check_output(['curl','-fsS','--noproxy','*','--cacert',str(self.cert),
+            '--resolve',f"deploy.example:{self.backends['sub']}:127.0.0.1",'--max-time','15',
+            f"https://deploy.example:{self.backends['sub']}/subscription/{peer['subId']}"],timeout=20)
+        if not raw.startswith(b'vpn://'):
+            raw = base64.b64decode(raw)
+        links = [line for line in raw.decode().splitlines() if line.startswith('vpn://')]
+        self.assertEqual(len(links),1,'Expected one actual AWG client export')
+        payload = links[0][6:]
+        text = base64.urlsafe_b64decode(payload+'='*(-len(payload)%4)).decode()
+        exported = configparser.ConfigParser(interpolation=None); exported.read_string(text)
+        self.assertEqual(exported['Peer']['Endpoint'],f'deploy.example:{awg_port}')
+        self.assertTrue(exported['Peer']['PublicKey'] == parameters['publicKey'],'AWG export key mismatch')
+        self.assertTrue(exported['Interface']['PrivateKey'] == peer['privateKey'],'AWG client key mismatch')
+        self.assertTrue(exported['Interface']['HeaderProtectionKey'] == parameters['headerProtectionKey'],
+                        'AWG 3.1 export mismatch')
+        client_root = self.root/'awg-client'; client_root.mkdir()
+        for name in ('db','bin','logs'): (client_root/name).mkdir()
+        shutil.copyfile(self.xray,client_root/'bin'/self.xray.name)
+        (client_root/'bin'/self.xray.name).chmod(0o755)
+        client_env = {**os.environ,'XUI_DB_FOLDER':str(client_root/'db'),
+            'XUI_BIN_FOLDER':str(client_root/'bin'),'XUI_LOG_FOLDER':str(client_root/'logs')}
+        panel_port,socks = port(self.allocated_ports),port(self.allocated_ports)
+        subprocess.run([self.xui,'setting','-username','fixture','-password',self.auth,
+            '-port',str(panel_port),'-webBasePath','fixture'],env=client_env,
+            check=True,stdout=subprocess.DEVNULL,timeout=30)
+        obfuscation = {k:v for k,v in parameters.items() if k not in
+                      ('privateKey','publicKey','subnetIp','subnetCidr','primaryDns','secondaryDns')}
+        outbound = {**obfuscation,'secretKey':peer['privateKey'],'address':peer['allowedIPs'],
+            'peers':[{'publicKey':parameters['publicKey'],'allowedIPs':['0.0.0.0/0'],
+                      'endpoint':f'127.0.0.1:{awg_port}'}]}
+        template = {'log':{'loglevel':'warning'},'inbounds':[{'listen':'127.0.0.1','port':socks,
+            'protocol':'socks','settings':{'auth':'noauth','udp':True}}],
+            'outbounds':[{'tag':'awg-test','protocol':'amneziawg','settings':outbound}]}
+        with sqlite3.connect(client_root/'db/x-ui.db') as db:
+            for key,value in {'webListen':'127.0.0.1','xrayTemplateConfig':json.dumps(template)}.items():
+                db.execute('DELETE FROM settings WHERE key=?',(key,))
+                db.execute('INSERT INTO settings(key,value) VALUES(?,?)',(key,value))
+        client = self.launch([self.xui],'awg-client',client_env)
+        self.ready(client,('127.0.0.1',socks))
+        def transfer():
+            result = subprocess.run(['curl','-fsS','--noproxy','','--max-time','20',
+                '--socks5-hostname',f'127.0.0.1:{socks}',f'http://198.18.0.1:{self.origin.server_port}/awg'],
+                capture_output=True,timeout=25)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(result.stdout,self.marker.encode())
+            with socket.create_connection(('127.0.0.1',socks),timeout=5) as control:
+                control.sendall(b'\x05\x01\x00'); self.assertEqual(control.recv(2),b'\x05\x00')
+                control.sendall(b'\x05\x03\x00\x01'+socket.inet_aton('127.0.0.1')+b'\x00\x00')
+                response = control.recv(10); self.assertEqual(response[:4],b'\x05\x00\x00\x01')
+                relay = (socket.inet_ntoa(response[4:8]),int.from_bytes(response[8:10],'big'))
+                with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as tunnel:
+                    tunnel.settimeout(20)
+                    prefix = b'\x00\x00\x00\x01'+socket.inet_aton('198.18.0.1')+udp_port.to_bytes(2,'big')
+                    tunnel.sendto(prefix+self.marker.encode(),relay)
+                    data,_ = tunnel.recvfrom(65536)
+                    self.assertEqual(data[10:],self.marker.encode())
+        transfer()
+        self.client('hysteria2',server_log='awg-panel-active.log')  # Existing UDP/443 profile still transfers while AWG is active.
+        # Reconnect with a fresh client session after the server loses volatile WG sessions.
+        stop(client)
+        stop(server); self.release_subscription_socket()
+        server = self.launch([self.xui],'awg-panel-restarted',env)
+        self.ready(server,udp_port=awg_port,udp_address="0.0.0.0")
+        client = self.launch([self.xui],"awg-client-reconnected",client_env)
+        self.ready(client,("127.0.0.1",socks))
+        transfer()
+        with sqlite3.connect(self.root/'db/x-ui.db') as db:
+            self.assertTrue(json.loads(db.execute('SELECT settings FROM inbounds WHERE id=?',
+                (inbound['id'],)).fetchone()[0]) == settings,'AWG state changed after panel restart')
+            self.assertEqual(db.execute('PRAGMA quick_check').fetchone(),('ok',))
+        # Wrong header protection is a genuine cryptographic negative, with no retries.
+        stop(client)
+        outbound['headerProtectionKey'] = base64.b64encode(os.urandom(32)).decode()
+        with sqlite3.connect(client_root/'db/x-ui.db') as db:
+            db.execute("UPDATE settings SET value=? WHERE key='xrayTemplateConfig'",(json.dumps(template),))
+        client = self.launch([self.xui],'awg-client-invalid',client_env)
+        self.ready(client,('127.0.0.1',socks))
+        before = len(self.origin_requests)
+        result = subprocess.run(['curl','-fsS','--noproxy','','--max-time','8','--socks5-hostname',
+            f'127.0.0.1:{socks}',f'http://198.18.0.1:{self.origin.server_port}/awg-negative'],
+            capture_output=True,timeout=12)
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(len(self.origin_requests),before,'Bad AWG key reached origin')
+        self.passed.append('AWG TCP/UDP/restart/negative')
 
     def test_subscription_handoff_removes_only_inactive_private_socket(self):
         from unittest.mock import patch
