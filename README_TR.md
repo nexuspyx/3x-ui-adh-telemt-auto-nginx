@@ -76,6 +76,10 @@ Her iki özellik de kurulum sırasında seçilebilir ve varsayılan olarak kapal
 
 `Install AdGuard Home with DNS-over-HTTPS? [y/N]:` sorusuna `y` yanıtını verin. Üçüncü bir alan adı gerekmez: yönetim arayüzü panel alan adınız altında rastgele oluşturulan `/adg-.../` yolunu kullanır; DoH adresi `https://panel.example.com/dns-query` olur. Genel erişime açık TCP/UDP **53** portu açılmaz. Yapılandırma ve veriler **Backup / Restore v3** kapsamındadır.
 
+> ⚠️ **Güvenlik önerisi:** Kişisel VPS'inizde her cihaz için bir [ClientID](https://adguard-dns.io/kb/tr/adguard-home/clients/#clientid) oluşturun ve **yalnızca bu kimlikleri** **Ayarlar → DNS ayarları → Erişim ayarları → İzin verilen istemciler** bölümüne ekleyin (IP adresi veya CIDR aralığı eklemeyin).
+>
+> `/dns-query/<ClientID>` biçiminde DoH adresleri kullanın. Standart `/dns-query` yoluna yapılanlar da dahil, izin verilen bir ClientID içermeyen DNS sorguları reddedilir. Uzun ve rastgele kimlikler seçin. [AdGuard Home'un resmî güvenlik önerileri](https://adguard-dns.io/kb/tr/adguard-home/running-securely/).
+
 ---
 
 ### AmneziaWG 3.1

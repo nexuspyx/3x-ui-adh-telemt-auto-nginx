@@ -76,6 +76,10 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 در پاسخ به `Install AdGuard Home with DNS-over-HTTPS? [y/N]:` حرف `y` را وارد کنید. به دامنهٔ سوم نیازی نیست: پنل مدیریت از مسیر تصادفی `/adg-.../` روی دامنهٔ پنل استفاده می‌کند و DoH در `https://panel.example.com/dns-query` در دسترس است. پورت عمومی TCP/UDP **53** باز نمی‌شود. تنظیمات و داده‌ها در **Backup / Restore v3** گنجانده می‌شوند.
 
+> ⚠️ **توصیه امنیتی:** برای VPS شخصی، برای هر دستگاه یک [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) بسازید و **فقط همین شناسه‌ها** را در **تنظیمات ← تنظیمات DNS ← تنظیمات دسترسی ← کلاینت‌های مجاز** اضافه کنید (بدون آدرس IP یا محدوده‌های CIDR).
+>
+> از نشانی‌های DoH مانند `/dns-query/<ClientID>` استفاده کنید. درخواست‌های DNS بدون ClientID مجاز، از جمله درخواست به مسیر معمول `/dns-query`، رد می‌شوند. شناسه‌های طولانی و تصادفی انتخاب کنید. [راهنمای رسمی امنیت AdGuard Home](https://adguard-dns.io/kb/adguard-home/running-securely/).
+
 ---
 
 ### AmneziaWG 3.1

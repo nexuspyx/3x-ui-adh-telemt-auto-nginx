@@ -76,6 +76,10 @@ Ambas funciones se pueden seleccionar durante la instalación y vienen desactiva
 
 Responde `y` a `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. No hace falta un tercer dominio: la interfaz de administración utiliza una ruta aleatoria `/adg-.../` en el dominio del panel, y DoH está disponible en `https://panel.example.com/dns-query`. No se abre el puerto público TCP/UDP **53**. La configuración y los datos se incluyen en **Backup / Restore v3**.
 
+> ⚠️ **Recomendación de seguridad:** Para un VPS personal, crea un [ClientID](https://adguard-dns.io/kb/es/adguard-home/clients/#clientid) por dispositivo y añade **solo estos identificadores** en **Configuración → Configuración de DNS → Configuración de acceso → Clientes permitidos** (sin direcciones IP ni rangos CIDR).
+>
+> Utiliza direcciones DoH como `/dns-query/<ClientID>`. Se rechazarán las consultas DNS sin un ClientID permitido, incluidas las enviadas al `/dns-query` estándar. Elige identificadores largos y aleatorios. [Recomendaciones oficiales de seguridad de AdGuard Home](https://adguard-dns.io/kb/es/adguard-home/running-securely/).
+
 ---
 
 ### AmneziaWG 3.1
