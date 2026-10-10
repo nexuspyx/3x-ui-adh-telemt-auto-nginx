@@ -146,6 +146,25 @@ agh_install_service() {
 }
 
 agh_snippet() {
+    local client_route=''
+    if [[ "${1:-}" != legacy ]]; then
+        # AdGuard Home v0.107.79 ValidateClientID: one hostname label, 1..63 bytes.
+        client_route=$'\n'$(cat <<EOFCLIENT
+location ~ "^/dns-query/[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\$" {
+    limit_except GET POST { deny all; }
+    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_buffering off;
+    proxy_intercept_errors off;
+    access_log off;
+}
+EOFCLIENT
+        ) || return 1
+    fi
     cat <<EOFNG
 # Integrated AdGuard Home (project-owned).
 location = /dns-query {
@@ -173,7 +192,7 @@ location ^~ /${AGH_PATH}/ {
     proxy_set_header X-Forwarded-Proto https;
     proxy_intercept_errors off;
     add_header X-Robots-Tag "noindex, nofollow" always;
-}
+}${client_route}
 EOFNG
 }
 

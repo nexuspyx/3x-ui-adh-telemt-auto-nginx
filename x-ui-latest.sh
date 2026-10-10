@@ -1921,6 +1921,8 @@ http:
     routes:
       - GET /dns-query
       - POST /dns-query
+      - GET /dns-query/{ClientID}
+      - POST /dns-query/{ClientID}
 users:
   - name: admin
     password: '${hash}'

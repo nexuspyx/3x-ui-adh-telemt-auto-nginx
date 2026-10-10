@@ -100,6 +100,7 @@ os.execv({str(old_curl)!r},['curl',*args])
         def control(*args):return subprocess.run([controller,*args],env=f.env,capture_output=True,text=True,timeout=30)
         t.addCleanup(control,'stop','AdGuardHome')
         result=control('enable','--now','AdGuardHome');t.assertEqual(result.returncode,0,result.stderr)
+        client_id,_=t.register_doh_client()
         def healthy():
             with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sock:
                 sock.settimeout(5);q=question('restore.service.test');sock.sendto(q,('127.0.0.1',t.native));t.dns_answer(q,sock.recv(4096))
@@ -110,6 +111,7 @@ os.execv({str(old_curl)!r},['curl',*args])
             t.assertEqual(status,200)
             status,body,_=t.request('/'+t.prefix+'/control/status',options=['-b',jar])
             t.assertEqual(status,200);t.assertEqual(json.loads(body)['version'],'v0.107.79')
+            t.doh_matrix(client_id,jar)
         healthy();archive=f.backup();digest=hashlib.sha256(archive.read_bytes()).digest()
         with tarfile.open(archive) as tar:
             queries=tar.extractfile(f.member('/opt/AdGuardHome/data/querylog.json')).read()

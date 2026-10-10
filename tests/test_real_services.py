@@ -193,18 +193,47 @@ class RealServices(unittest.TestCase):
         self.assertEqual((qd,an),(1,1));self.assertEqual(response[12:len(query)],query[12:])
         self.assertEqual(response[-4:],socket.inet_aton('198.51.100.42'))
 
+    def register_doh_client(self):
+        client_id='client-'+os.urandom(6).hex()
+        jar=self.root/'client-cookies'
+        status,_,_=self.request('/'+self.prefix+'/control/login',
+            json.dumps({'name':'admin','password':self.password}).encode(),
+            ('-H','Content-Type: application/json','-c',jar))
+        self.assertEqual(status,200)
+        status,_,_=self.request('/'+self.prefix+'/control/clients/add',
+            json.dumps({'name':client_id,'ids':[client_id],'use_global_settings':True}).encode(),
+            ('-H','Content-Type: application/json','-b',jar))
+        self.assertEqual(status,200)
+        return client_id,jar
+
+    def doh_matrix(self,client_id,jar):
+        for suffix in ('','/'+client_id):
+            for method in ('GET','POST'):
+                name=method.lower()+'-'+os.urandom(6).hex()+'.example.test'
+                query=question(name,ident=int.from_bytes(os.urandom(2),'big'))
+                path='/dns-query'+suffix
+                url=path+'?dns='+base64.urlsafe_b64encode(query).decode().rstrip('=') if method=='GET' else path
+                status,body,headers=self.request(url,query if method=='POST' else None,('-H','Content-Type: application/dns-message'))
+                self.assertEqual(status,200,(method,path))
+                self.assertIn('content-type: application/dns-message',headers.lower())
+                self.dns_answer(query,body);self.assertIn((name,1),self.upstream_requests)
+                status,body,_=self.request('/'+self.prefix+'/control/querylog?search='+name,options=('-b',jar))
+                self.assertEqual(status,200)
+                entries=[entry for entry in json.loads(body)['data'] if entry['question']['name'].rstrip('.')==name]
+                self.assertEqual(len(entries),1)
+                self.assertEqual(entries[0]['client_proto'],'doh')
+                self.assertEqual(entries[0].get('client_id',''),client_id if suffix else '')
+                if suffix:self.assertEqual(entries[0]['client_info']['name'],client_id)
+        print('DoH GET/POST exact + registered random ClientID: DNS/upstream/querylog PASS',flush=True)
+
     def test_real_adguard_dns_doh_and_admin(self):
         self.start_agh();self.start_nginx()
         query=question('native.example.test')
         with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sock:
             sock.settimeout(10);sock.sendto(query,('127.0.0.1',self.native));answer=sock.recv(65535)
         self.dns_answer(query,answer);self.assertIn(('native.example.test',1),self.upstream_requests)
-        for method in ('GET','POST'):
-            query=question(method.lower()+'.example.test')
-            url='/dns-query?dns='+base64.urlsafe_b64encode(query).decode().rstrip('=') if method=='GET' else '/dns-query'
-            status,body,headers=self.request(url,query if method=='POST' else None,('-H','Content-Type: application/dns-message'))
-            self.assertEqual(status,200);self.assertIn('content-type: application/dns-message',headers.lower())
-            self.dns_answer(query,body);self.assertIn((method.lower()+'.example.test',1),self.upstream_requests)
+        client_id,jar=self.register_doh_client()
+        self.doh_matrix(client_id,jar)
         for url,data in (('/dns-query?dns=broken',None),('/dns-query',b'bad')):
             status,_,_=self.request(url,data,('-H','Content-Type: application/dns-message'))
             self.assertGreaterEqual(status,400)

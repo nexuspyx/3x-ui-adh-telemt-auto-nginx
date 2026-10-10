@@ -10,6 +10,39 @@ from certificate_fixtures import relocate
 from test_adguard import BINARY, HELPER, OFFICIAL_AMD64_SHA, FIXTURE_BINARY_SHA
 
 
+# Exact pre-ClientID project snippet; preflight never executes archive helpers.
+LEGACY_SNIPPET = r'''agh_snippet() {
+    cat <<EOFNG
+# Integrated AdGuard Home (project-owned).
+location = /dns-query {
+    limit_except GET POST { deny all; }
+    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_buffering off;
+    proxy_intercept_errors off;
+    access_log off;
+}
+location = /${AGH_PATH} { return 302 /${AGH_PATH}/; }
+location ^~ /${AGH_PATH}/ {
+    proxy_pass http://127.0.0.1:${AGH_WEB_PORT}/;
+    proxy_redirect / /${AGH_PATH}/;
+    proxy_cookie_path / /${AGH_PATH}/;
+    proxy_cookie_flags agh_session secure;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_intercept_errors off;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+}
+EOFNG
+}'''
+
 class AdGuardBackup(unittest.TestCase):
     def setUp(self):
         # Instantiate the fixture, without inheriting/rerunning its 22 tests.
@@ -21,7 +54,7 @@ class AdGuardBackup(unittest.TestCase):
         # Private trusted fixture digest; actual sha256sum remains unstubbed.
         self.fixture.script.write_text(self.fixture.script.read_text().replace(OFFICIAL_AMD64_SHA, FIXTURE_BINARY_SHA))
 
-    def install_fixture(self, active=True):
+    def install_fixture(self, active=True, legacy=False):
         f=self.fixture
         f.write('/opt/AdGuardHome/AdGuardHome',BINARY,0o755)
         f.write('/opt/AdGuardHome/AdGuardHome.yaml', '''http:
@@ -44,7 +77,14 @@ schema_version: 34
 ''',0o600)
         f.write('/opt/AdGuardHome/managed.json',json.dumps(dict(version='v0.107.79',arch='amd64',domain='example.com',path='adg-ABCDEFGHIJKL',web_port=18081,dns_port=18082)),0o600)
         f.write('/opt/AdGuardHome/data/querylog.json','persistent query state')
-        f.write('/usr/local/lib/3x-ui-pro/managed-adguard.sh',relocate(HELPER,self.root).replace(OFFICIAL_AMD64_SHA, FIXTURE_BINARY_SHA),0o600)
+        start=HELPER.index('agh_snippet() {')
+        end=HELPER.index('\nEOFNG\n}',start)+len('\nEOFNG\n}')
+        helper=HELPER[:start]+LEGACY_SNIPPET+HELPER[end:] if legacy else HELPER
+        if not legacy:
+            yaml=f.path('/opt/AdGuardHome/AdGuardHome.yaml')
+            yaml.write_text(yaml.read_text().replace('      - POST /dns-query\n',
+                '      - POST /dns-query\n      - GET /dns-query/{ClientID}\n      - POST /dns-query/{ClientID}\n'))
+        f.write('/usr/local/lib/3x-ui-pro/managed-adguard.sh',relocate(helper,self.root).replace(OFFICIAL_AMD64_SHA, FIXTURE_BINARY_SHA),0o600)
         # Generate the exact snippet from the same managed helper.
         import subprocess
         r=subprocess.run(['bash','-c','source "$1"; AGH_WEB_PORT=18081; AGH_PATH=adg-ABCDEFGHIJKL; agh_snippet','fixture',str(f.path('/usr/local/lib/3x-ui-pro/managed-adguard.sh'))],capture_output=True,text=True)
@@ -53,6 +93,25 @@ schema_version: 34
         f.write('/etc/systemd/system/AdGuardHome.service',f'ExecStart={self.root}/opt/AdGuardHome/AdGuardHome -c {self.root}/opt/AdGuardHome/AdGuardHome.yaml -w {self.root}/opt/AdGuardHome -s run --no-check-update\n')
         services=json.loads((self.root/'services.json').read_text());services['AdGuardHome']='active' if active else 'inactive';(self.root/'services.json').write_text(json.dumps(services))
         enabled=json.loads((self.root/'enabled.json').read_text());enabled['AdGuardHome']=True;(self.root/'enabled.json').write_text(json.dumps(enabled))
+
+    def test_legacy_and_clientid_archives_restore_without_upgrading_state(self):
+        import hashlib
+        f=self.fixture
+        for legacy in (False,True):
+            with self.subTest(legacy=legacy):
+                self.install_fixture(legacy=legacy)
+                snippet=f.path('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf')
+                saved={path:path.read_bytes() for path in (snippet,
+                    f.path('/opt/AdGuardHome/AdGuardHome.yaml'),
+                    f.path('/usr/local/lib/3x-ui-pro/managed-adguard.sh'))}
+                if not legacy:self.assertIn(b'location ~',saved[snippet])
+                archive=f.backup();digest=hashlib.sha256(archive.read_bytes()).digest()
+                for _ in range(2):
+                    result=f.run_tool('restore',archive)
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                    self.assertEqual({path:path.read_bytes() for path in saved},saved)
+                    self.assertEqual(hashlib.sha256(archive.read_bytes()).digest(),digest)
+                archive.unlink()
 
     def test_absent_metadata_and_restore_remove_target_adguard(self):
         f=self.fixture;archive=f.backup()
@@ -204,6 +263,9 @@ schema_version: 34
             f.member('/opt/AdGuardHome/managed.json'): ('invalid JSON', None)})
         self.assert_staged_rejection_preserves_target(archive, {
             f.member('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf'): ('arbitrary nginx snippet', None)})
+        snippet=f.path('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf').read_text()
+        self.assert_staged_rejection_preserves_target(archive, {
+            f.member('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf'): (snippet.replace('^/dns-query/', '^/'), None)})
 
     def test_restore_uses_the_same_trusted_static_contract(self):
         from test_personal_backup import SOURCE
