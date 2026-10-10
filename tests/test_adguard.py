@@ -550,8 +550,9 @@ main
 
     def test_real_nginx_optional_include_and_exact_routes(self):
         nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
-        if not nginx:self.skipTest('nginx is required by CI')
+        self.assertTrue(nginx, 'Real nginx is required')
         hits=[]
+        random_id='client-'+os.urandom(6).hex()
         class Backend(BaseHTTPRequestHandler):
             def do_GET(self):
                 hits.append(('GET',self.path));self.send_response(200);self.end_headers();self.wfile.write(b'backend')
@@ -579,12 +580,27 @@ main
             self.assertEqual(checked.returncode,0,checked.stderr)
             subprocess.run(cmd,check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             try:
-                for path,method,status in (('/dns-query','GET',200 if enabled else 404),('/dns-query','POST',200 if enabled else 404),
-                                           ('/dns-query/extra','GET',404),('/3000/test','GET',404),('/9090/api','GET',404),
-                                           ('/adg-ABCDEFGHIJKL/control/status','GET',200 if enabled else 404),('/dns-query','DELETE',403 if enabled else 404)):
+                positive=('/dns-query','/dns-query/my-client?dns=fixture&extra=1',
+                          '/dns-query/'+random_id+'?dns=fixture', '/dns-query/extra',
+                          '/dns-query/A', '/dns-query/'+'a'*63)
+                cases=[(path,method,200 if enabled else 404) for path in positive for method in ('GET','POST')]
+                invalid=('/dns-query/', '/dns-query/client/extra', '/dns-query/my-client/',
+                         '/dns-query/-bad', '/dns-query/bad-', '/dns-query/bad_id',
+                         '/dns-query/bad.id', '/dns-query/'+'a'*64,
+                         '/dns-query/adg-ABCDEFGHIJKL/control/status', '/dns-query/panel/api',
+                         '/3000/test','/9090/api')
+                cases += [(path,'GET',404) for path in invalid]
+                cases += [('/adg-ABCDEFGHIJKL/control/status','GET',200 if enabled else 404)]
+                cases += [(path,method,403 if enabled else 404) for path in positive for method in ('DELETE','PUT')]
+                for path,method,status in cases:
+                    before=len(hits)
                     url=f'http://127.0.0.1:{port}{path}'
                     r=subprocess.run(['curl','--noproxy','*','-s','-o','/dev/null','-w','%{http_code}','-X',method,url],text=True,capture_output=True)
                     self.assertEqual(r.stdout,str(status),(path,method,r.stderr))
+                    if status==200:
+                        expected='/control/status' if path.startswith('/adg-') else path
+                        self.assertEqual(hits[before:],[(method,expected)])
+                    else:self.assertEqual(len(hits),before,(path,method))
                 if enabled:
                     response = subprocess.run(['curl', '--noproxy', '*', '-fsS', '-D', '-', '-o', '/dev/null',
                                                '-X', 'POST', f'http://127.0.0.1:{port}/adg-ABCDEFGHIJKL/control/login'],
@@ -607,7 +623,7 @@ main
                     self.assertIn(('POST','/control/login'),hits)
                     self.assertIn(('GET','/dns-query'),hits);self.assertIn(('POST','/dns-query'),hits)
                     self.assertIn(('GET','/control/status'),hits)
-                    self.assertFalse(any('3000' in p or '/extra' in p for _,p in hits))
+                    self.assertFalse(any(p in invalid for _,p in hits))
                 else:self.assertEqual(hits,[])
             finally:
                 subprocess.run(cmd+['-s','quit'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
