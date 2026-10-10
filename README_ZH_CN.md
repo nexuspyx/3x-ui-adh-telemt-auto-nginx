@@ -76,9 +76,14 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 出现 `Install AdGuard Home with DNS-over-HTTPS? [y/N]:` 提示时输入 `y`。无需第三个域名：管理界面位于面板域名下随机生成的 `/adg-.../` 路径，DoH 地址为 `https://panel.example.com/dns-query`。安装程序不会向公网开放 TCP/UDP **53** 端口。配置和数据均包含在 **Backup / Restore v3** 中。
 
-> ⚠️ **安全建议：** 对于个人 VPS，请为每台设备创建一个 [ClientID](https://adguard-dns.io/kb/zh-CN/adguard-home/clients/#clientid)，并在 **设置 → DNS 设置 → 访问设置 → 允许的客户端** 中**只添加这些标识符**（不要添加 IP 地址或 CIDR 网段）。
->
-> 使用 `/dns-query/<ClientID>` 格式的 DoH 地址。没有允许的 ClientID 的 DNS 查询，包括发往标准 `/dns-query` 的查询，都会被拒绝。请选择足够长的随机标识符。[AdGuard Home 官方安全配置指南](https://adguard-dns.io/kb/zh-CN/adguard-home/running-securely/).
+<details>
+<summary>⚠️ <strong>安全建议</strong></summary>
+
+对于个人 VPS，请为每台设备创建一个 [ClientID](https://adguard-dns.io/kb/zh-CN/adguard-home/clients/#clientid)，并在 **设置 → DNS 设置 → 访问设置 → 允许的客户端** 中**只添加这些标识符**（不要添加 IP 地址或 CIDR 网段）。
+
+使用 `/dns-query/<ClientID>` 格式的 DoH 地址。没有允许的 ClientID 的 DNS 查询，包括发往标准 `/dns-query` 的查询，都会被拒绝。请选择足够长的随机标识符。[AdGuard Home 官方安全配置指南](https://adguard-dns.io/kb/zh-CN/adguard-home/running-securely/).
+
+</details>
 
 ---
 

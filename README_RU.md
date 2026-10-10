@@ -76,9 +76,14 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 Ответьте `y` на запрос `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. Третий домен не нужен: панель AdGuard Home доступна по случайному пути `/adg-.../` на домене панели, а DoH — по адресу `https://panel.example.com/dns-query`. Публичный TCP/UDP **53** не открывается. Конфигурация и данные входят в **Backup / Restore v3**.
 
-> ⚠️ **Рекомендация по безопасности:** для личного VPS создайте [ClientID](https://adguard-dns.io/kb/ru/adguard-home/clients/#clientid) для каждого устройства и добавьте **только эти идентификаторы** в **Настройки → Настройки DNS → Настройки доступа → Разрешённые клиенты** (без IP-адресов и подсетей).
->
-> Используйте DoH-адреса вида `/dns-query/<ClientID>`. Запросы без разрешённого ClientID, включая стандартный `/dns-query`, будут отклоняться. Выбирайте длинные случайные идентификаторы. [Официальные рекомендации AdGuard Home](https://adguard-dns.io/kb/ru/adguard-home/running-securely/).
+<details>
+<summary>⚠️ <strong>Рекомендация по безопасности</strong></summary>
+
+Для личного VPS создайте [ClientID](https://adguard-dns.io/kb/ru/adguard-home/clients/#clientid) для каждого устройства и добавьте **только эти идентификаторы** в **Настройки → Настройки DNS → Настройки доступа → Разрешённые клиенты** (без IP-адресов и подсетей).
+
+Используйте DoH-адреса вида `/dns-query/<ClientID>`. Запросы без разрешённого ClientID, включая стандартный `/dns-query`, будут отклоняться. Выбирайте длинные случайные идентификаторы. [Официальные рекомендации AdGuard Home](https://adguard-dns.io/kb/ru/adguard-home/running-securely/).
+
+</details>
 
 ---
 

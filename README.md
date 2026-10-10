@@ -76,9 +76,14 @@ Both features can be selected during installation and are disabled by default.
 
 Enter `y` when prompted `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. No third domain is needed: the admin UI uses a random `/adg-.../` path on the panel domain, and DoH is available at `https://panel.example.com/dns-query`. Public TCP/UDP port **53** is not opened. Configuration and data are included in **Backup / Restore v3**.
 
-> ⚠️ **Security recommendation:** For a personal VPS, create a [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) for each device and add **only these IDs** under **Settings → DNS settings → Access settings → Allowed clients** (no IP addresses or CIDR ranges).
->
-> Use DoH URLs such as `/dns-query/<ClientID>`. DNS queries without an allowed ClientID, including requests to the standard `/dns-query`, will be refused. Choose long, randomly generated identifiers. [Official AdGuard Home security recommendations](https://adguard-dns.io/kb/adguard-home/running-securely/).
+<details>
+<summary>⚠️ <strong>Security recommendation</strong></summary>
+
+For a personal VPS, create a [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) for each device and add **only these IDs** under **Settings → DNS settings → Access settings → Allowed clients** (no IP addresses or CIDR ranges).
+
+Use DoH URLs such as `/dns-query/<ClientID>`. DNS queries without an allowed ClientID, including requests to the standard `/dns-query`, will be refused. Choose long, randomly generated identifiers. [Official AdGuard Home security recommendations](https://adguard-dns.io/kb/adguard-home/running-securely/).
+
+</details>
 
 ---
 
