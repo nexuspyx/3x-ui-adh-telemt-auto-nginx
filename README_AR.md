@@ -76,6 +76,15 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 أدخل `y` عند ظهور السؤال `Install AdGuard Home with DNS-over-HTTPS? [y/N]:`. لا حاجة إلى نطاق ثالث: تستخدم واجهة الإدارة مسارًا عشوائيًا `/adg-.../` على نطاق اللوحة، وتتوفر خدمة DoH على `https://panel.example.com/dns-query`. لا يُفتح منفذ TCP/UDP العام **53**. تُضمَّن إعدادات AdGuard Home وبياناته في **Backup / Restore v3**.
 
+<details>
+<summary>⚠️ <strong>توصية أمنية</strong></summary>
+
+لخادم VPS شخصي، أنشئ [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) لكل جهاز وأضف **هذه المعرّفات فقط** في **الإعدادات ← إعدادات DNS ← إعدادات الوصول ← العملاء المسموح لهم** (دون إضافة عناوين IP أو نطاقات CIDR).
+
+استخدم عناوين DoH بالشكل `/dns-query/<ClientID>`. ستُرفض استعلامات DNS التي لا تحتوي على ClientID مسموح به، بما فيها الاستعلامات إلى المسار الافتراضي `/dns-query`. اختر معرّفات طويلة وعشوائية. [توصيات الأمان الرسمية من AdGuard Home](https://adguard-dns.io/kb/adguard-home/running-securely/).
+
+</details>
+
 ---
 
 ### AmneziaWG 3.1
