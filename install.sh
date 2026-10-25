@@ -247,7 +247,7 @@ TG_DECOY_PORT="18082"
 TG_PANEL_INTERNAL_PORT="8080"
 TG_PANEL_PORT="65001"
 ADH_DNS_PORT="57998"
-ADH_DOH_PORT="44712"
+ADH_DOH_PORT="${ADH_WEB_PORT:-3000}"
 ADH_WEB_PORT="3000"
 
 # Генерация учетных записей
@@ -407,23 +407,29 @@ REALITY_SHORTID=$(openssl rand -hex 8)
 
 # Наполнение базы данных 3x-ui SQLite
 sqlite3 /etc/x-ui/x-ui.db << EOF
--- Обновление настроек панели и подписок
-UPDATE settings SET value = '${PANEL_PORT}' WHERE key = 'webPort';
-UPDATE settings SET value = '${PANEL_PATH}' WHERE key = 'webBasePath';
-UPDATE settings SET value = '${DOMAIN}' WHERE key = 'webDomain';
-UPDATE settings SET value = '/etc/letsencrypt/live/${DOMAIN}/fullchain.pem' WHERE key = 'webCertFile';
-UPDATE settings SET value = '/etc/letsencrypt/live/${DOMAIN}/privkey.pem' WHERE key = 'webKeyFile';
+-- Обновление настроек панели и подписок (удаление старых и вставка актуальных)
+DELETE FROM settings WHERE key IN (
+    'webPort', 'webBasePath', 'webDomain', 'webCertFile', 'webKeyFile',
+    'subPort', 'subPath', 'subURI', 'subJsonPath', 'subJsonURI',
+    'subJsonEnable', 'subEnable', 'subUpdates', 'subEncrypt', 'subShowInfo'
+);
 
-UPDATE settings SET value = '${SUB_PORT}' WHERE key = 'subPort';
-UPDATE settings SET value = '${SUB_PATH}' WHERE key = 'subPath';
-UPDATE settings SET value = 'https://${DOMAIN}${SUB_PATH}' WHERE key = 'subURI';
-UPDATE settings SET value = '${SUB_JSON_PATH}' WHERE key = 'subJsonPath';
-UPDATE settings SET value = 'https://${DOMAIN}${SUB_JSON_PATH}' WHERE key = 'subJsonURI';
-UPDATE settings SET value = 'true' WHERE key = 'subJsonEnable';
-UPDATE settings SET value = 'true' WHERE key = 'subEnable';
-UPDATE settings SET value = '12' WHERE key = 'subUpdates';
-UPDATE settings SET value = 'true' WHERE key = 'subEncrypt';
-UPDATE settings SET value = 'true' WHERE key = 'subShowInfo';
+INSERT INTO settings (key, value) VALUES
+    ('webPort', '${PANEL_PORT}'),
+    ('webBasePath', '${PANEL_PATH}'),
+    ('webDomain', '${DOMAIN}'),
+    ('webCertFile', ''),
+    ('webKeyFile', ''),
+    ('subPort', '${SUB_PORT}'),
+    ('subPath', '${SUB_PATH}'),
+    ('subURI', 'https://${DOMAIN}${SUB_PATH}'),
+    ('subJsonPath', '${SUB_JSON_PATH}'),
+    ('subJsonURI', 'https://${DOMAIN}${SUB_JSON_PATH}'),
+    ('subJsonEnable', 'true'),
+    ('subEnable', 'true'),
+    ('subUpdates', '12'),
+    ('subEncrypt', 'true'),
+    ('subShowInfo', 'true');
 
 -- Очистка дефолтных inbounds перед наполнением нашими
 DELETE FROM inbounds;
@@ -518,7 +524,7 @@ VALUES (
 INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing)
 VALUES (
     '1', '0', '0', '0', '⚡ VLESS-gRPC', '1', '0', '127.0.0.1', '${GRPC_PORT}', 'vless',
-    '{"clients": [], "fallbacks": []}',
+    '{"clients": [], "decryption": "none", "fallbacks": []}',
     '{
       "network": "grpc",
       "security": "none",
