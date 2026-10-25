@@ -155,10 +155,11 @@ server {
         grpc_pass             grpc://127.0.0.1:__GRPC_PORT__;
     }
 
-    # === [8] ADGUARD HOME DoH (DNS-OVER-HTTPS) ===
-    location = /dns-query {
+    # === [8] ADGUARD HOME DoH (DNS-OVER-HTTPS WITH CUSTOM PATH SUPPORT) ===
+    # Matches the exact custom DoH path (e.g. /dns-query or /xxxxxbyyh) and forwards to AdGuard DoH backend
+    location = __ADH_DOH_PATH__ {
         limit_except GET POST { deny all; }
-        proxy_pass http://127.0.0.1:__ADH_DOH_PORT__;
+        proxy_pass http://127.0.0.1:__ADH_DOH_PORT__/dns-query;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -169,9 +170,10 @@ server {
         access_log off;
     }
 
-    location ~ "^/dns-query/[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$" {
+    # Client-ID routing for custom DoH path: __ADH_DOH_PATH__/<client_id>
+    location ~ "^__ADH_DOH_PATH__/(?<doh_client_id>[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)$" {
         limit_except GET POST { deny all; }
-        proxy_pass http://127.0.0.1:__ADH_DOH_PORT__;
+        proxy_pass http://127.0.0.1:__ADH_DOH_PORT__/dns-query/$doh_client_id;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

@@ -1,5 +1,5 @@
 # ==============================================================================
-# TELEMT CONFIGURATION (TELEGRAM WEB PROXY)
+# TELEMT CONFIGURATION (TELEGRAM WEB PROXY) - PRODUCTION V3.5 SCHEMA
 # ==============================================================================
 # IMPORTANT: CLIENT KEYS & SECRETS ARE STORED IN THIS FILE!
 # Location on server: /etc/telemt/config.toml
@@ -10,22 +10,156 @@
 # systemctl restart telemt
 # ==============================================================================
 
+show_link = ["__TG_USER__"]
+
 [general]
-use_ipv6 = false
-tcp_fast_open = true
+prefer_ipv6 = false
+fast_mode = true
+use_middle_proxy = false
+log_level = "normal"
+tg_connect = 10
+
+[general.links]
+show = ["__TG_USER__"]
+
+[network]
+ipv4 = true
+ipv6 = false
+prefer = 4
+
+[general.modes]
+classic = false
+secure = true
+tls = false
+
+[server]
+listen_addr_ipv4 = "127.0.0.1"
+
+[[server.listeners]]
+ip = "127.0.0.1"
+port = __TG_PORT__
+transport = "web"
+proxy_protocol = false
+web_client_ip_source = "x_forwarded_for"
+web_trusted_proxy_cidrs = ["127.0.0.1/32"]
+
+[server.api]
+enabled = true
+listen = "127.0.0.1:9091"
+whitelist = ["127.0.0.1/32"]
+auth_header = ""
+runtime_edge_enabled = true
+runtime_edge_cache_ttl_ms = 1000
+runtime_edge_top_n = 20
+runtime_edge_events_capacity = 512
 
 [web]
-listen = "127.0.0.1:__TG_PORT__"
+carrier = "https"
+carrier_learning = true
+carrier_method = "post"
+carrier_negotiation_aggressiveness = "conservative"
+carriers = ["websocket-lanes", "websocket", "https-lanes", "https"]
+conveyor = true
+decoy_fasttrack_mode = "off"
+enabled = true
+http_connection_capacity_action = "drop"
+
+[web.debug]
+body_capture = "metadata"
+body_prefix_bytes = 4096
+capture_frames = true
+capture_headers = true
+capture_lifecycle = true
+capture_timings = true
+decoy_body_prefix_bytes = 4096
+default_window_secs = 180
+enabled = false
+max_window_secs = 3600
+sideband = false
+
+[web.limits]
+carrier_batch_bytes = 2097152
+control_bytes_global = 16777216
+control_bytes_per_session = 262144
+debug_bytes_global = 67108864
+debug_records_capacity = 65536
+max_body_bytes = 2097152
+max_body_bytes_global = 67108864
+max_body_readers = 32
+max_bootstraps_global = 512
+max_bootstraps_per_ip = 64
+max_carrier_learning_entries = 4096
+max_frame_payload_bytes = 1048576
+max_frames_per_body = 4096
+max_header_bytes = 16384
+max_http_connections = 1024
+max_http_handlers = 512
+max_http_overload_connections = 64
+max_lane_open_waits_per_session = 16
+max_profiles = 32
+max_sessions_global = 128
+max_sessions_per_ip = 16
+max_static_bytes = 67108864
+max_static_file_bytes = 8388608
+max_static_files = 4096
+max_stream_handshakes = 256
+max_streams_global = 4096
+max_streams_per_session = 128
+max_tombstones_per_session = 4096
+max_vhosts = 8
+max_websocket_evictions_in_flight = 8
+memory_envelope_bytes = 1342177280
+new_bootstraps_burst = 256
+new_bootstraps_per_minute = 1200
+new_sessions_burst = 128
+new_sessions_per_minute = 600
+new_streams_burst = 512
+new_streams_per_minute = 6000
+pending_bytes_global = 536870912
+pending_bytes_per_lane = 8388608
+pending_bytes_per_session = 33554432
+pending_items_global = 262144
+pending_items_per_lane = 1024
+pending_items_per_session = 16384
+websocket_admission_watermark_pct = 75
+websocket_bytes_global = 268435456
+websocket_eviction_watermark_pct = 90
+websocket_http_connection_reserve = 64
+
+[web.timeouts]
+body_secs = 30
+bootstrap_lifetime_secs = 120
+bridge_recovery_secs = 15
+bridge_request_secs = 10
+bridge_retry_secs = 90
+carrier_health_secs = 30
+carrier_learning_secs = 600
+carrier_negotiation_deadlines_secs = [3, 5, 8, 12]
+carrier_probe_coalesce_ms = 0
+decoy_header_secs = 30
+decoy_resolve_secs = 5
+header_secs = 10
+http_idle_secs = 75
+http_overload_timeout_ms = 250
+lane_open_wait_secs = 2
+long_poll_secs = 25
+reconnect_grace_secs = 120
+shutdown_secs = 15
+stream_first_byte_secs = 30
+stream_handshake_secs = 10
+websocket_backpressure_secs = 30
+websocket_eviction_secs = 1
+websocket_open_secs = 15
+websocket_upgrade_secs = 5
+websocket_write_secs = 30
+
+[[web.vhosts]]
 base_path = "__TG_PATH_NO_SLASH__"
 host = "__DOMAIN__"
-secret_mode = "dd"
-trusted_proxies = ["127.0.0.1"]
-x_forwarded_for = true
-carrier = "https"
-carriers = ["websocket-lanes", "websocket", "https-lanes", "https"]
-carrier_learning = true
+public_addr = "__SERVER_IP__:443"
 
-[web.decoy]
+[web.vhosts.decoy]
+mode = "http_upstream"
 resolve = "never"
 upstream = "http://127.0.0.1:__TG_DECOY_PORT__"
 
