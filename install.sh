@@ -867,8 +867,9 @@ ln -sf "/etc/nginx/sites-available/${DOMAIN}.conf" "/etc/nginx/sites-enabled/${D
 rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default 2>/dev/null || true
 
 nginx -t
-systemctl reload nginx
-msg_ok "Nginx проверен и перезагружен. Anti-Bot защита и маршрутизация 443 активны."
+systemctl restart nginx
+systemctl enable nginx 2>/dev/null || true
+msg_ok "Nginx проверен и запущен. Anti-Bot защита и маршрутизация 443 активны."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # [8] SERVER CONFIGURATION MODULE SETUP (STEALTH DASHBOARD)
