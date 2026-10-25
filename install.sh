@@ -81,7 +81,7 @@ fi
 # Предварительное определение публичного IP сервера
 SERVER_IP=$(curl -s4 icanhazip.com || curl -s4 ifconfig.me || echo "127.0.0.1")
 
-msg_inf "Шаг [0/8]: Полное обновление системы (apt update & full-upgrade)..."
+msg_inf "Шаг [0/9]: Полное обновление системы (apt update & full-upgrade)..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q -y
 apt-get full-upgrade -q -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
@@ -92,7 +92,7 @@ msg_ok "Система успешно обновлена до актуально
 # [1] INTERACTIVE WIZARD
 # ─────────────────────────────────────────────────────────────────────────────
 echo
-echo -e "${C_BOLD}=== ШАГ [1/8]: ИНТЕРАКТИВНЫЙ МАСТЕР НАСТРОЙКИ ===${C_RESET}"
+echo -e "${C_BOLD}=== ШАГ [1/9]: ИНТЕРАКТИВНЫЙ МАСТЕР НАСТРОЙКИ ===${C_RESET}"
 
 # 1.1 Домен
 while true; do
@@ -161,6 +161,24 @@ else
     TROJAN_PATH="/$(gen_random_string 10)"
 fi
 
+# 1.4 Настройка модуля «Конфигурирование сервера»
+echo
+echo -e "${C_BOLD}Модуль управления «Конфигурирование сервера» (Stealth Dashboard):${C_RESET}"
+echo "1 - Случайный скрытый порт (Enter - рекомендуется)"
+echo "2 - Задать свой порт вручную"
+read -rp "Выберите вариант [1/2]: " MGMT_CHOICE
+
+if [[ "$MGMT_CHOICE" == "2" ]]; then
+    read -rp "-> Введите порт для модуля управления [54892]: " USER_MGMT_PORT
+    MGMT_PORT="${USER_MGMT_PORT:-54892}"
+else
+    MGMT_PORT=$(get_free_port)
+fi
+
+MGMT_SECRET_PATH="cfg-$(gen_random_string 8)"
+MGMT_USER="admin_$(gen_random_string 4)"
+MGMT_PASS="$(gen_random_string 16)"
+
 # Нормализация слэшей
 [[ "$PANEL_PATH" != /* ]] && PANEL_PATH="/$PANEL_PATH"
 [[ "$PANEL_PATH" != */ ]] && PANEL_PATH="$PANEL_PATH/"
@@ -208,7 +226,7 @@ msg_ok "Параметры и учетные записи сгенерирова
 # ─────────────────────────────────────────────────────────────────────────────
 # [2] SYSTEM DEPENDENCIES & NETWORK HARDENING
 # ─────────────────────────────────────────────────────────────────────────────
-msg_inf "Шаг [2/8]: Установка зависимостей и тюнинг сетевого стека..."
+msg_inf "Шаг [2/9]: Установка зависимостей и тюнинг сетевого стека..."
 apt-get install -q -y \
     curl wget jq sudo certbot python3-certbot-dns-cloudflare \
     sqlite3 ufw nginx-full tar gzip openssl procps iproute2 \
@@ -244,7 +262,7 @@ msg_ok "IPv6 полностью отключен, ICMP ping заглушен, TC
 # ─────────────────────────────────────────────────────────────────────────────
 # [3] SSL VIA CLOUDFLARE DNS-01 API (PORT 80 NEVER OPENED)
 # ─────────────────────────────────────────────────────────────────────────────
-msg_inf "Шаг [3/8]: Выпуск SSL-сертификата через Cloudflare DNS-01 API..."
+msg_inf "Шаг [3/9]: Выпуск SSL-сертификата через Cloudflare DNS-01 API..."
 mkdir -p /etc/letsencrypt
 
 cat << EOF > /etc/letsencrypt/cloudflare.ini
@@ -280,7 +298,7 @@ msg_ok "SSL сертификат Cloudflare DNS-01 успешно выпущен
 # ─────────────────────────────────────────────────────────────────────────────
 # [4] ADGUARD HOME SETUP (0 MS LOCAL DNS & DOH)
 # ─────────────────────────────────────────────────────────────────────────────
-msg_inf "Шаг [4/8]: Установка и настройка AdGuard Home (DNS 0 мс + DoH)..."
+msg_inf "Шаг [4/9]: Установка и настройка AdGuard Home (DNS 0 мс + DoH)..."
 AGH_ARCH="amd64"
 [[ "$(uname -m)" =~ (aarch64|arm64) ]] && AGH_ARCH="arm64"
 
@@ -309,7 +327,7 @@ msg_ok "AdGuard Home установлен и запущен на портах ${
 # ─────────────────────────────────────────────────────────────────────────────
 # [5] 3X-UI PANEL & ALL 7 INBOUNDS CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
-msg_inf "Шаг [5/8]: Установка 3X-UI и конфигурирование базы SQLite со всеми 7 inbounds..."
+msg_inf "Шаг [5/9]: Установка 3X-UI и конфигурирование базы SQLite со всеми 7 inbounds..."
 bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) << EOF
 y
 ${PANEL_PORT}
@@ -497,7 +515,7 @@ msg_ok "Все 7 inbounds, оба типа подписок и параметр�
 # ─────────────────────────────────────────────────────────────────────────────
 # [6] TELEMT & TELEMT-PANEL SETUP (TELEGRAM PROXY)
 # ─────────────────────────────────────────────────────────────────────────────
-msg_inf "Шаг [6/8]: Установка Telemt Web Proxy и панели управления..."
+msg_inf "Шаг [6/9]: Установка Telemt Web Proxy и панели управления..."
 ARCH_SUFFIX="x86_64"
 [[ "$(uname -m)" =~ (aarch64|arm64) ]] && ARCH_SUFFIX="aarch64"
 
@@ -553,7 +571,7 @@ msg_ok "Telemt Web Proxy настроен и запущен с маскиров�
 # ─────────────────────────────────────────────────────────────────────────────
 # [7] HARDENED NGINX CONFIGURATION & COVER SITE
 # ─────────────────────────────────────────────────────────────────────────────
-msg_inf "Шаг [7/8]: Конфигурирование Nginx, Stream SNI, защиты от ботов и маскировочного сайта..."
+msg_inf "Шаг [7/9]: Конфигурирование Nginx, Stream SNI, защиты от ботов и маскировочного сайта..."
 
 mkdir -p /var/www/html /etc/nginx/conf.d /etc/nginx/sites-available /etc/nginx/sites-enabled /etc/nginx/stream-enabled
 
@@ -644,9 +662,47 @@ systemctl reload nginx
 msg_ok "Nginx проверен и перезагружен. Anti-Bot защита и маршрутизация 443 активны."
 
 # ─────────────────────────────────────────────────────────────────────────────
-# [8] FIREWALL CONFIGURATION (PORT 80 CLOSED FOREVER)
+# [8] SERVER CONFIGURATION MODULE SETUP (STEALTH DASHBOARD)
 # ─────────────────────────────────────────────────────────────────────────────
-msg_inf "Шаг [8/8]: Настройка файрвола UFW (Порт 80 наглухо блокируется)..."
+msg_inf "Шаг [8/9]: Установка и настройка модуля «Конфигурирование сервера»..."
+mkdir -p /etc/server-manager
+
+# Копирование скриптов модуля
+curl -sSL "${GITHUB_RAW}/assets/server-manager/server_manager.py" -o /usr/local/bin/server-manager.py || cp "assets/server-manager/server_manager.py" /usr/local/bin/server-manager.py 2>/dev/null || true
+curl -sSL "${GITHUB_RAW}/assets/server-manager/server-mgr" -o /usr/local/bin/server-mgr || cp "assets/server-manager/server-mgr" /usr/local/bin/server-mgr 2>/dev/null || true
+curl -sSL "${GITHUB_RAW}/assets/server-manager/server-manager.service" -o /etc/systemd/system/server-manager.service || cp "assets/server-manager/server-manager.service" /etc/systemd/system/server-manager.service 2>/dev/null || true
+
+chmod +x /usr/local/bin/server-manager.py /usr/local/bin/server-mgr 2>/dev/null || true
+
+# Сохранение мастер-шаблона Nginx для модуля
+cp "$WORKDIR/vhost.conf.template" /etc/server-manager/vhost.conf.template 2>/dev/null || true
+
+# Генерация PBKDF2 хеша пароля администратора модуля
+MGMT_PASS_HASH=$(python3 -c "import hashlib; print(hashlib.pbkdf2_hmac('sha256', '${MGMT_PASS}'.encode('utf-8'), b'server_manager_salt_3x', 100000).hex())" 2>/dev/null || echo "")
+
+cat << EOF > /etc/server-manager/config.json
+{
+  "domain": "${DOMAIN}",
+  "mgmt_port": ${MGMT_PORT},
+  "mgmt_secret_path": "${MGMT_SECRET_PATH}",
+  "auth_user": "${MGMT_USER}",
+  "auth_pass_plain": "${MGMT_PASS}",
+  "auth_pass_hash": "${MGMT_PASS_HASH}",
+  "auto_lock_minutes": 30,
+  "server_ip": "${SERVER_IP}"
+}
+EOF
+
+chmod 0600 /etc/server-manager/config.json
+
+systemctl daemon-reload
+systemctl enable --now server-manager 2>/dev/null || true
+msg_ok "Модуль «Конфигурирование сервера» установлен и запущен на порту ${MGMT_PORT} (Stealth)."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [9] FIREWALL CONFIGURATION (PORT 80 CLOSED FOREVER)
+# ─────────────────────────────────────────────────────────────────────────────
+msg_inf "Шаг [9/9]: Настройка файрвола UFW (Порт 80 наглухо блокируется)..."
 SSH_PORT=$(ss -tlnp | grep sshd | awk '{print $4}' | awk -F':' '{print $NF}' | head -n1 || echo 22)
 [[ -z "$SSH_PORT" ]] && SSH_PORT=22
 
@@ -656,11 +712,11 @@ ufw default allow outgoing > /dev/null
 ufw allow "${SSH_PORT}/tcp" comment 'SSH' > /dev/null
 ufw allow 443/tcp comment 'Nginx HTTPS & Reality' > /dev/null
 ufw allow 443/udp comment 'Hysteria 2' > /dev/null
-ufw allow "${TG_PANEL_PORT}/tcp" comment 'Telemt Panel HTTPS' > /dev/null
-ufw allow "${ADH_WEB_PORT}/tcp" comment 'AdGuard Home Web UI' > /dev/null
+ufw allow 8443/tcp comment 'Reality Fallback' > /dev/null
+ufw allow 8443/udp comment 'AmneziaWG' > /dev/null
 ufw deny 80/tcp comment 'Port 80 Closed' > /dev/null
 ufw --force enable > /dev/null
-msg_ok "UFW активирован. Порт 80 ЗАКРЫТ. Открыты только SSH, 443 (TCP/UDP), ${TG_PANEL_PORT} и ${ADH_WEB_PORT}."
+msg_ok "UFW активирован. Порт 80 ЗАКРЫТ. Открыты только SSH, 443 (TCP/UDP) и 8443 (TCP/UDP). Порт модуля ${MGMT_PORT} ЗАКРЫТ (Stealth)."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FINAL SUMMARY REPORT
@@ -669,6 +725,23 @@ cat << EOF > /root/server_credentials.txt
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
 ║                   СЕРВЕР УСПЕШНО НАСТРОЕН И ЗАЩИЩЕН (STEALTH-РЕЖИМ)                  ║
 ╚══════════════════════════════════════════════════════════════════════════════════════╝
+
+[0] МОДУЛЬ «КОНФИГУРИРОВАНИЕ СЕРВЕРА» (STEALTH DASHBOARD):
+    Основная ссылка:  https://${DOMAIN}:${MGMT_PORT}/
+    (Автоматически перенаправляет на секретный закрытый путь /${MGMT_SECRET_PATH}/)
+    Логин:            ${MGMT_USER}
+    Пароль:           ${MGMT_PASS}
+    Внутренний порт:  ${MGMT_PORT}
+    Статус в UFW:     ЗАКРЫТ (Режим невидимки)
+
+    КАК ОТКРЫТЬ ДОСТУП ПРИ НЕОБХОДИМОСТИ:
+    1) Быстрая команда в SSH (с авто-таймером закрытия 30 мин):
+       server-mgr open
+    2) Или через SSH-туннель (без открытия портов в интернет вообще):
+       ssh -L 8088:127.0.0.1:${MGMT_PORT} root@${DOMAIN}
+       и вход в браузере по адресу: http://localhost:8088/
+
+    Закрыть порт вручную: server-mgr close (или кнопка «Выход» в веб-интерфейсе)
 
 [1] ПАНЕЛЬ УПРАВЛЕНИЯ 3X-UI:
     URL:              https://${DOMAIN}${PANEL_PATH}

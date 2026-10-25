@@ -114,6 +114,37 @@ To migrate your Telegram proxy to a new VPS without changing client links:
 
 ---
 
+## ⚙️ "Server Configuration" Module (Stealth Dashboard)
+
+No more manual editing of Nginx configuration files, 3X-UI SQLite databases, or running full reinstalls when changing paths or ports!
+
+The suite includes a dedicated management dashboard built with **Apple Human Interface Guidelines** (fully responsive on PC and iPhone):
+
+- **Stealth Mode by Default**: The management port is **closed in UFW by default** and does not appear on internet scanners.
+- **Secure Access**: Accessing `https://your-domain:port/` automatically redirects to a private secret path with administrator authentication.
+- **Atomic Two-Way Synchronization**: Changing any port or path (3X-UI, Base64/JSON subs, Telemt, AdGuard DoH, VLESS-WS, XHTTP, gRPC, Trojan) **atomically updates all configs** (Nginx, SQLite 3X-UI, Telemt, AdGuard) with `nginx -t` validation and rollback protection.
+- **Logout with Instant UFW Port Lockdown**: Clicking "Logout" ends the session and closes the management port in UFW immediately.
+- **Configurable Auto-Lock**: Opening the port sets a 30-minute auto-timer after which UFW automatically locks the port down again.
+- **Zero-Overhead Resource Monitor**: CPU, RAM, and NVMe metrics read directly from Linux kernel pseudo-files (`/proc`), with polling paused when the browser tab is hidden.
+- **Live Links Summary**: Instant access to all connection links, 1-click clipboard copy, and built-in offline QR code generator.
+
+### CLI Quick Commands via SSH:
+```bash
+server-mgr open        # Open the management port in UFW with 30-min auto-timer
+server-mgr close       # Lock down UFW immediately (keeping only 22, 443, 8443 open)
+server-mgr status      # Show current status, port, and access URL
+server-mgr reset-pass  # Change admin password
+server-mgr             # Interactive terminal menu (TUI)
+```
+
+You can also access the module via **SSH tunnel** without exposing any port to the public internet:
+```bash
+ssh -L 8088:127.0.0.1:<MGMT_PORT> root@your-domain
+# then open in your browser: http://localhost:8088/
+```
+
+---
+
 ## 🔒 Firewall & Security (UFW)
 
 The firewall is enabled in strict lockdown mode:
