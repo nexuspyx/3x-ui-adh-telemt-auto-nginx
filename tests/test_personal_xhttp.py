@@ -926,7 +926,7 @@ curl() {
 '''
         initialization = SOURCE[SOURCE.index('PROJECT_REF='):SOURCE.index('FAKE_SITE_COUNT=')]
         names = ('install_clash_sub','install_fake_site','install_diagnostics','install_backup_tool')
-        expected = {'assets/clash/clash.yaml','assets/fake-sites/site-01/index.html',
+        expected = {'assets/clash/clash.yaml',
                     'assets/diagnostics/index.html','assets/diagnostics/librespeed/speedtest.js',
                     'assets/diagnostics/librespeed/speedtest_worker.js','assets/diagnostics/mtr-backend.py',
                     'assets/backup/x-ui-backup.sh'}

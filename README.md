@@ -44,7 +44,7 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
    - Проксирование трафика Telegram поверх HTTPS (по выбранному пути `TG_PATH`).
    - Поддержка WebSocket lanes и HTTPS lanes.
    - Внутренний Decoy-сервер (`:18082`): возвращает реальный маскировочный сайт с кодом **200 OK** на любые зондирования ТСПУ вместо подозрительного 404.
-   - Веб-панель управления Telemt Panel (`:65001` HTTPS).
+   - Веб-панель управления Telemt Panel (`:65001` HTTPS) с автоматической базой GeoIP (GeoLite2-City) и интерактивной картой подключений.
 7. **AdGuard Home (DNS 0 мс + DoH с кастомным путем)**:
    - Локальный резолвер DNS (`127.0.0.1:57998`) обеспечивает **кэширование DNS за 0 мс** для Xray.
    - DoH доступен по вашему секретному пути (например `https://domain.com/my-secret-doh` или `https://domain.com/my-secret-doh/Client1`).
@@ -52,6 +52,9 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
 8. **Anti-Bot Shield в Nginx**:
    - Сброс соединений (`return 444`) для поисковых ботов (Google, Yandex), сетевых сканеров (Shodan, Censys, sqlmap, nikto и др.) и сканеров уязвимостей (`.env`, `wp-login`).
    - Заголовки `X-Robots-Tag: noindex, nofollow` и запрещающий `robots.txt`.
+9. **Страница-заглушка и размещение своего сайта**:
+   - По умолчанию веб-сервер отдает аккуратную легковесную заглушку с кодом `200 OK` (также используется Decoy-сервером и при fallback Reality).
+   - Каталог на сервере для загрузки своего сайта: `/var/www/html/` (достаточно загрузить файлы сайта и заменить `index.html`).
 
 ---
 

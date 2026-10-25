@@ -31,7 +31,7 @@ The permanent primary URL is `https://github.com/xPROMSx/3x-ui-auto-nginx/releas
 - `assets/client/managed.py`: optional native initial-client creation, attachment checks and official RAW/JSON/export validation; no custom production subscription generator.
 - `assets/security/managed.py`: optional Fail2ban, unattended-upgrades/timers, strict system DoT and scoped rollback. Host-specific Security state is not portable Backup v3 data.
 - `assets/backup/x-ui-backup.sh`: private Backup/Restore v3, staged migrations/preflights, target snapshot, replacement and verified rollback.
-- `assets/clash/clash.yaml`, `assets/diagnostics/`, `assets/fake-sites/`: public consumer template, authenticated diagnostics and static camouflage sites.
+- `assets/clash/clash.yaml`, `assets/nginx/`: public consumer template and nginx site / placeholder configuration.
 
 Read actual lifecycle code before changing it. Release/option/domain preflights and download verification precede managed destructive cleanup. Base OS preparation includes a mandatory initial full upgrade; it may restart services and leave installed packages behind. Strict DNS preparation has a private rollback checkpoint. Optional 1 GiB swap is best-effort and skips unsuitable conditions. Do not infer that preflight is completely free of package/system preparation.
 

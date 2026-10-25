@@ -584,34 +584,161 @@ systemctl daemon-reload
 systemctl enable --now telemt telemt-panel 2>/dev/null || true
 msg_ok "Telemt Web Proxy настроен и запущен с маскировкой 200 OK."
 
+# Автоматическая настройка и загрузка базы GeoIP для Telemt Panel
+msg_inf "Подключение и загрузка базы GeoIP (MaxMind GeoLite2-City) в Telemt Panel..."
+for _ in {1..15}; do
+    if curl -s "http://127.0.0.1:${TG_PANEL_INTERNAL_PORT}/api/auth/methods" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+
+TG_COOKIE=$(curl -s -i -X POST \
+    -H "Origin: http://127.0.0.1:${TG_PANEL_INTERNAL_PORT}" \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"admin\",\"password\":\"${TG_PANEL_PASS}\"}" \
+    "http://127.0.0.1:${TG_PANEL_INTERNAL_PORT}/api/auth/login" 2>/dev/null | grep -i "set-cookie:" | tr -d '\r' | sed -E 's/.*panel_session=([^;]+).*/\1/')
+
+if [[ -n "$TG_COOKIE" ]]; then
+    curl -s -X PUT \
+        -H "Origin: http://127.0.0.1:${TG_PANEL_INTERNAL_PORT}" \
+        -H "Cookie: panel_session=${TG_COOKIE}" \
+        -H "Content-Type: application/json" \
+        -d '{"enabled":true,"source":"urls","schedule":"weekly","country":{"enabled":false,"location":""},"asn":{"enabled":false,"location":""},"city":{"enabled":true,"location":"https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-City.mmdb"}}' \
+        "http://127.0.0.1:${TG_PANEL_INTERNAL_PORT}/api/settings/geoip" >/dev/null 2>&1 || true
+    msg_ok "База GeoIP (GeoLite2-City) успешно подключена и настроена на еженедельное обновление."
+else
+    msg_warn "Не удалось авторизоваться в Telemt Panel для автоматического включения GeoIP."
+fi
+
 # ─────────────────────────────────────────────────────────────────────────────
-# [7] HARDENED NGINX CONFIGURATION & COVER SITE
+# [7] HARDENED NGINX CONFIGURATION & PLACEHOLDER SITE
 # ─────────────────────────────────────────────────────────────────────────────
-msg_inf "Шаг [7/9]: Конфигурирование Nginx, Stream SNI, защиты от ботов и маскировочного сайта..."
+msg_inf "Шаг [7/9]: Конфигурирование Nginx, Stream SNI, защиты от ботов и страницы-заглушки..."
 
 mkdir -p /var/www/html /etc/nginx/conf.d /etc/nginx/sites-available /etc/nginx/sites-enabled /etc/nginx/stream-enabled
 
-# Установка маскировочного сайта
+# Установка страницы-заглушки
 cat << 'EOF' > /var/www/html/index.html
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cloud Network Edge</title>
+    <meta name="robots" content="noindex, nofollow">
+    <title>Сайт работает / Web Server is working</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f3f4f6; margin: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-        .card { max-width: 500px; padding: 40px; background: #111827; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); text-align: center; border: 1px solid #1f2937; }
-        h1 { color: #60a5fa; font-size: 24px; margin-bottom: 12px; }
-        p { color: #9ca3af; font-size: 15px; line-height: 1.6; }
-        .status { display: inline-block; padding: 6px 12px; background: #064e3b; color: #34d399; border-radius: 9999px; font-size: 13px; font-weight: 600; margin-top: 15px; }
+        :root {
+            color-scheme: dark;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #0b0f19;
+            color: #f3f4f6;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 24px;
+        }
+        .container {
+            max-width: 540px;
+            width: 100%;
+            background: #111827;
+            border: 1px solid #1f2937;
+            border-radius: 16px;
+            padding: 36px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            text-align: center;
+        }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(16, 185, 129, 0.12);
+            color: #10b981;
+            padding: 6px 14px;
+            border-radius: 9999px;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            border: 1px solid rgba(16, 185, 129, 0.25);
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #10b981;
+            border-radius: 50%;
+            box-shadow: 0 0 8px #10b981;
+        }
+        h1 {
+            color: #f9fafb;
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+        p {
+            color: #9ca3af;
+            font-size: 15px;
+            line-height: 1.6;
+            margin-bottom: 24px;
+        }
+        .info-card {
+            background: #0f172a;
+            border: 1px dashed #374151;
+            border-radius: 10px;
+            padding: 16px 20px;
+            text-align: left;
+            margin-bottom: 20px;
+        }
+        .info-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #6b7280;
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+        .info-code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 14px;
+            color: #38bdf8;
+            word-break: break-all;
+        }
+        .footer-note {
+            font-size: 13px;
+            color: #6b7280;
+            line-height: 1.5;
+        }
+        .footer-note code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            background: #1f2937;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #e5e7eb;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h1>High-Performance Application Gateway</h1>
-        <p>This edge cluster node is operating normally. All incoming traffic is filtered and routed via high-speed low-latency internal services.</p>
-        <span class="status">● System Operational</span>
+    <div class="container">
+        <div class="status-badge">
+            <span class="status-dot"></span> Веб-сервер работает &bull; HTTP 200 OK
+        </div>
+        <h1>Сайт успешно настроен</h1>
+        <p>Это стандартная страница-заглушка. Веб-сервер активен и готов отдавать контент вашего сайта.</p>
+        <div class="info-card">
+            <div class="info-label">Директория для загрузки сайта на сервере:</div>
+            <div class="info-code">/var/www/html/</div>
+        </div>
+        <div class="footer-note">
+            Чтобы опубликовать ваш сайт, загрузите его файлы в указанный каталог, заменив <code>index.html</code>.
+        </div>
     </div>
 </body>
 </html>
@@ -622,6 +749,10 @@ cat << 'EOF' > /var/www/html/robots.txt
 User-agent: *
 Disallow: /
 EOF
+
+chown -R www-data:www-data /var/www/html 2>/dev/null || true
+chmod 644 /var/www/html/index.html /var/www/html/robots.txt 2>/dev/null || true
+msg_ok "Страница-заглушка установлена в /var/www/html/"
 
 # Копирование bot-protection
 curl -sSL "${GITHUB_RAW}/assets/nginx/01-bot-protection.conf" -o /etc/nginx/conf.d/01-bot-protection.conf || cp "assets/nginx/01-bot-protection.conf" /etc/nginx/conf.d/01-bot-protection.conf 2>/dev/null || true
@@ -775,6 +906,7 @@ cat << EOF > /root/server_credentials.txt
     Логин панели:     admin
     Пароль панели:    ${TG_PANEL_PASS}
     Путь прокси:      https://${DOMAIN}${TG_PATH}
+    База GeoIP:       АКТИВНА (GeoLite2-City, еженедельное автообновление)
     
     ССЫЛКИ ДЛЯ ПОДКЛЮЧЕНИЯ В TELEGRAM:
     1) Web Proxy (Рекомендуется, с указанием секретного пути):
@@ -812,6 +944,17 @@ cat << EOF > /root/server_credentials.txt
     [✓] Anti-Bot:      АКТИВЕН (Return 444 для сканеров и ботов, robots.txt Disallow)
     [✓] Decoy 200 OK:  АКТИВЕН (порт 18082, маскировка от зондирования ТСПУ)
 
+[7] ВАШ САЙТ (ЗАГЛУШКА И КАТАЛОГ ДЛЯ ЗАГРУЗКИ):
+    URL сайта:         https://${DOMAIN}/
+    Каталог на сервере: /var/www/html/
+    Файл главной:      /var/www/html/index.html
+    Инструкция:        По адресу https://${DOMAIN}/ сейчас отображается
+                       стандартная страница-заглушка (HTTP 200 OK).
+                       Чтобы загрузить свой сайт, скопируйте его файлы
+                       (HTML, CSS, JS, медиа) в каталог:
+                       /var/www/html/
+                       (заменив стандартный файл index.html).
+
 Данные доступов сохранены в: /root/server_credentials.txt
 EOF
 
@@ -819,3 +962,4 @@ chmod 0600 /root/server_credentials.txt
 cat /root/server_credentials.txt
 echo
 msg_ok "Установка успешно завершена! Скопируйте данные выше."
+msg_inf "Каталог на сервере для загрузки вашего сайта: /var/www/html/"

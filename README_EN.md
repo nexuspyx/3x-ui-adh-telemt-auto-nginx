@@ -44,7 +44,7 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
    - Proxies Telegram traffic over HTTPS on your custom path.
    - Full support for WebSocket lanes and HTTPS lanes.
    - Internal Decoy server (`:18082`): returns genuine cover site with HTTP **200 OK** on any censorship probing instead of suspicious 404s.
-   - Web management interface via Telemt Panel (`:65001` HTTPS).
+   - Web management interface via Telemt Panel (`:65001` HTTPS) with automated GeoIP (GeoLite2-City) database and client geography map.
 7. **AdGuard Home (0 ms Local DNS + DoH with Custom Path)**:
    - Local DNS resolver (`127.0.0.1:57998`) provides **0 ms RAM caching** for Xray Outbound.
    - DoH available on your secret custom path (e.g. `https://domain.com/my-secret-doh`).
@@ -52,6 +52,9 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
 8. **Anti-Bot Shield in Nginx**:
    - Drops connections instantly (`return 444`) for web scrapers (Google, Yandex), scanners (Shodan, Censys, sqlmap, nikto, etc.), and exploit scanners (`.env`, `wp-login`).
    - De-indexing headers `X-Robots-Tag: noindex, nofollow` and `robots.txt` Disallow.
+9. **Placeholder Page & Custom Website Hosting**:
+   - Serves a clean, lightweight placeholder page with `200 OK` by default (also used by the Decoy server and Reality fallback).
+   - Server directory to upload your own website: `/var/www/html/` (simply upload your website files replacing `index.html`).
 
 ---
 
