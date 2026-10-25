@@ -1,8 +1,19 @@
 # Telemt Web Panel Configuration
-[server]
-listen = "0.0.0.0:__TG_PANEL_PORT__"
-secret = "__TG_PANEL_PASS__"
+listen = "127.0.0.1:__TG_PANEL_INTERNAL_PORT__"
+data_dir = "/var/lib/telemt-panel"
+trusted_proxies = ["127.0.0.1/32"]
+
+[tls]
+mode = "http"
 
 [telemt]
-config_path = "/etc/telemt/config.toml"
-service_name = "telemt"
+url = "http://127.0.0.1:9091"
+auth_header = ""
+
+[auth]
+username = "admin"
+password_hash = "__TG_PANEL_PASS_HASH__"
+
+[store]
+driver = "sqlite"
+path = "/var/lib/telemt-panel/panel.db"

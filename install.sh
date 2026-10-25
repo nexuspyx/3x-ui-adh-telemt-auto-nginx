@@ -78,6 +78,9 @@ else
     exit 1
 fi
 
+# Предварительное определение публичного IP сервера
+SERVER_IP=$(curl -s4 icanhazip.com || curl -s4 ifconfig.me || echo "127.0.0.1")
+
 msg_inf "Шаг [0/8]: Полное обновление системы (apt update & full-upgrade)..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q -y
@@ -130,6 +133,7 @@ if [[ "$PATH_CHOICE" == "1" ]]; then
     read -rp "-> Путь для обычной подписки Base64 [/sub/]: " USER_SUB_PATH
     read -rp "-> Путь для JSON подписки Happ/Sing-box [/sub-json/]: " USER_SUB_JSON_PATH
     read -rp "-> Путь для Telemt Telegram Proxy [/tg]: " USER_TG_PATH
+    read -rp "-> Путь для AdGuard Home DoH [/dns-query]: " USER_ADH_DOH_PATH
     read -rp "-> Путь для VLESS WebSocket [/vless-ws]: " USER_WS_PATH
     read -rp "-> Путь для VLESS XHTTP [/vless-xhttp]: " USER_XHTTP_PATH
     read -rp "-> ServiceName для VLESS gRPC [vless-grpc]: " USER_GRPC_PATH
@@ -139,6 +143,7 @@ if [[ "$PATH_CHOICE" == "1" ]]; then
     SUB_PATH="${USER_SUB_PATH:-/sub/}"
     SUB_JSON_PATH="${USER_SUB_JSON_PATH:-/sub-json/}"
     TG_PATH="${USER_TG_PATH:-/tg}"
+    ADH_DOH_PATH="${USER_ADH_DOH_PATH:-/dns-query}"
     WS_PATH="${USER_WS_PATH:-/vless-ws}"
     XHTTP_PATH="${USER_XHTTP_PATH:-/vless-xhttp}"
     GRPC_PATH="${USER_GRPC_PATH:-vless-grpc}"
@@ -149,6 +154,7 @@ else
     SUB_PATH="/$(gen_random_string 10)/"
     SUB_JSON_PATH="/$(gen_random_string 10)/"
     TG_PATH="/tg"
+    ADH_DOH_PATH="/dns-query"
     WS_PATH="/$(gen_random_string 10)"
     XHTTP_PATH="/$(gen_random_string 10)"
     GRPC_PATH="vless-grpc"
@@ -163,8 +169,12 @@ fi
 [[ "$SUB_JSON_PATH" != /* ]] && SUB_JSON_PATH="/$SUB_JSON_PATH"
 [[ "$SUB_JSON_PATH" != */ ]] && SUB_JSON_PATH="$SUB_JSON_PATH/"
 [[ "$TG_PATH" != /* ]] && TG_PATH="/$TG_PATH"
+[[ "$ADH_DOH_PATH" != /* ]] && ADH_DOH_PATH="/$ADH_DOH_PATH"
+
 TG_PATH_NO_SLASH="${TG_PATH#/}"
 TG_PATH_NO_SLASH="${TG_PATH_NO_SLASH%/}"
+ADH_DOH_PATH_NO_SLASH="${ADH_DOH_PATH#/}"
+ADH_DOH_PATH_NO_SLASH="${ADH_DOH_PATH_NO_SLASH%/}"
 WS_PATH_NO_SLASH="${WS_PATH#/}"
 XHTTP_PATH_NO_SLASH="${XHTTP_PATH#/}"
 TROJAN_PATH_NO_SLASH="${TROJAN_PATH#/}"
@@ -178,6 +188,7 @@ GRPC_PORT="43935"
 TROJAN_PORT=$(get_free_port)
 TG_PORT="18080"
 TG_DECOY_PORT="18082"
+TG_PANEL_INTERNAL_PORT="8080"
 TG_PANEL_PORT="65001"
 ADH_DNS_PORT="57998"
 ADH_DOH_PORT="44712"
@@ -201,7 +212,7 @@ msg_inf "Шаг [2/8]: Установка зависимостей и тюнин
 apt-get install -q -y \
     curl wget jq sudo certbot python3-certbot-dns-cloudflare \
     sqlite3 ufw nginx-full tar gzip openssl procps iproute2 \
-    netcat-openbsd apache2-utils git ca-certificates
+    netcat-openbsd apache2-utils git ca-certificates python3-pip
 
 # Отключение IPv6, скрытие ICMP Ping и включение BBR
 cat << 'EOF' > /etc/sysctl.d/99-hardened-anti-tspu.conf
@@ -502,22 +513,26 @@ if [[ -f "$WORKDIR/telemt-panel.tar.gz" ]]; then
     chmod +x /usr/local/bin/telemt-panel 2>/dev/null || true
 fi
 
-mkdir -p /etc/telemt /etc/telemt-panel
+mkdir -p /etc/telemt /etc/telemt-panel /var/lib/telemt-panel
 
 # Скачивание шаблонов Telemt
 curl -sSL "${GITHUB_RAW}/assets/telemt/telemt.toml.template" -o "$WORKDIR/telemt.toml.template" || cp "assets/telemt/telemt.toml.template" "$WORKDIR/telemt.toml.template" 2>/dev/null || true
 sed -e "s|__TG_PORT__|${TG_PORT}|g" \
     -e "s|__TG_PATH_NO_SLASH__|${TG_PATH_NO_SLASH}|g" \
     -e "s|__DOMAIN__|${DOMAIN}|g" \
+    -e "s|__SERVER_IP__|${SERVER_IP}|g" \
     -e "s|__TG_DECOY_PORT__|${TG_DECOY_PORT}|g" \
     -e "s|__TG_USER__|${TG_USER}|g" \
     -e "s|__TG_SECRET__|${TG_SECRET}|g" \
     "$WORKDIR/telemt.toml.template" > /etc/telemt/config.toml
 
+# Генерация хеша пароля для Telemt-Panel
+TG_PANEL_HASH=$(python3 -c "import crypt; print(crypt.crypt('${TG_PANEL_PASS}', crypt.mksalt(crypt.METHOD_SHA512)))" 2>/dev/null || htpasswd -bnBC 10 "" "${TG_PANEL_PASS}" | tr -d ':\n')
+
 curl -sSL "${GITHUB_RAW}/assets/telemt/telemt-panel.toml.template" -o "$WORKDIR/telemt-panel.toml.template" || cp "assets/telemt/telemt-panel.toml.template" "$WORKDIR/telemt-panel.toml.template" 2>/dev/null || true
-sed -e "s|__TG_PANEL_PORT__|${TG_PANEL_PORT}|g" \
-    -e "s|__TG_PANEL_PASS__|${TG_PANEL_PASS}|g" \
-    "$WORKDIR/telemt-panel.toml.template" > /etc/telemt/config.toml
+sed -e "s|__TG_PANEL_INTERNAL_PORT__|${TG_PANEL_INTERNAL_PORT}|g" \
+    -e "s|__TG_PANEL_PASS_HASH__|${TG_PANEL_HASH}|g" \
+    "$WORKDIR/telemt-panel.toml.template" > /etc/telemt-panel/config.toml
 
 # Systemd службы Telemt
 curl -sSL "${GITHUB_RAW}/assets/telemt/telemt.service" -o /etc/systemd/system/telemt.service || cp "assets/telemt/telemt.service" /etc/systemd/system/telemt.service 2>/dev/null || true
@@ -583,6 +598,14 @@ curl -sSL "${GITHUB_RAW}/assets/nginx/telemt-decoy.conf.template" -o "$WORKDIR/t
 sed "s|__TG_DECOY_PORT__|${TG_DECOY_PORT}|g" "$WORKDIR/telemt-decoy.conf.template" > /etc/nginx/sites-available/telemt-decoy.conf
 ln -sf /etc/nginx/sites-available/telemt-decoy.conf /etc/nginx/sites-enabled/telemt-decoy.conf
 
+# Настройка проксирования панели Telemt на порту 65001 с HTTPS
+curl -sSL "${GITHUB_RAW}/assets/nginx/telemt-panel.conf.template" -o "$WORKDIR/telemt-panel.conf.template" || cp "assets/nginx/telemt-panel.conf.template" "$WORKDIR/telemt-panel.conf.template" 2>/dev/null || true
+sed -e "s|__TG_PANEL_PORT__|${TG_PANEL_PORT}|g" \
+    -e "s|__TG_PANEL_INTERNAL_PORT__|${TG_PANEL_INTERNAL_PORT}|g" \
+    -e "s|__DOMAIN__|${DOMAIN}|g" \
+    "$WORKDIR/telemt-panel.conf.template" > /etc/nginx/sites-available/telemt-panel.conf
+ln -sf /etc/nginx/sites-available/telemt-panel.conf /etc/nginx/sites-enabled/telemt-panel.conf
+
 # Настройка главного VHost 9443
 curl -sSL "${GITHUB_RAW}/assets/nginx/vhost.conf.template" -o "$WORKDIR/vhost.conf.template" || cp "assets/nginx/vhost.conf.template" "$WORKDIR/vhost.conf.template" 2>/dev/null || true
 sed -e "s|__DOMAIN__|${DOMAIN}|g" \
@@ -594,6 +617,8 @@ sed -e "s|__DOMAIN__|${DOMAIN}|g" \
     -e "s|__TG_PATH__|${TG_PATH}|g" \
     -e "s|__TG_PORT__|${TG_PORT}|g" \
     -e "s|__TG_DECOY_PORT__|${TG_DECOY_PORT}|g" \
+    -e "s|__ADH_DOH_PATH__|${ADH_DOH_PATH}|g" \
+    -e "s|__ADH_DOH_PORT__|${ADH_DOH_PORT}|g" \
     -e "s|__WS_PATH__|${WS_PATH}|g" \
     -e "s|__WS_PORT__|${WS_PORT}|g" \
     -e "s|__XHTTP_PATH__|${XHTTP_PATH}|g" \
@@ -601,7 +626,6 @@ sed -e "s|__DOMAIN__|${DOMAIN}|g" \
     -e "s|__TROJAN_PORT__|${TROJAN_PORT}|g" \
     -e "s|__GRPC_PATH__|${GRPC_PATH}|g" \
     -e "s|__GRPC_PORT__|${GRPC_PORT}|g" \
-    -e "s|__ADH_DOH_PORT__|${ADH_DOH_PORT}|g" \
     "$WORKDIR/vhost.conf.template" > "/etc/nginx/sites-available/${DOMAIN}.conf"
 
 ln -sf "/etc/nginx/sites-available/${DOMAIN}.conf" "/etc/nginx/sites-enabled/${DOMAIN}.conf"
@@ -624,7 +648,7 @@ ufw default allow outgoing > /dev/null
 ufw allow "${SSH_PORT}/tcp" comment 'SSH' > /dev/null
 ufw allow 443/tcp comment 'Nginx HTTPS & Reality' > /dev/null
 ufw allow 443/udp comment 'Hysteria 2' > /dev/null
-ufw allow "${TG_PANEL_PORT}/tcp" comment 'Telemt Panel' > /dev/null
+ufw allow "${TG_PANEL_PORT}/tcp" comment 'Telemt Panel HTTPS' > /dev/null
 ufw allow "${ADH_WEB_PORT}/tcp" comment 'AdGuard Home Web UI' > /dev/null
 ufw deny 80/tcp comment 'Port 80 Closed' > /dev/null
 ufw --force enable > /dev/null
@@ -633,8 +657,6 @@ msg_ok "UFW активирован. Порт 80 ЗАКРЫТ. Открыты т�
 # ─────────────────────────────────────────────────────────────────────────────
 # FINAL SUMMARY REPORT
 # ─────────────────────────────────────────────────────────────────────────────
-SERVER_IP=$(curl -s4 icanhazip.com || echo "YOUR_VPS_IP")
-
 cat << EOF > /root/server_credentials.txt
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
 ║                   СЕРВЕР УСПЕШНО НАСТРОЕН И ЗАЩИЩЕН (STEALTH-РЕЖИМ)                  ║
@@ -652,21 +674,28 @@ cat << EOF > /root/server_credentials.txt
     Порт сервиса:     ${SUB_PORT}
 
 [3] TELEMT (TELEGRAM WEB PROXY):
-    Веб-панель:       http://${DOMAIN}:${TG_PANEL_PORT}
+    Веб-панель HTTPS: https://${DOMAIN}:${TG_PANEL_PORT}
+    Логин панели:     admin
     Пароль панели:    ${TG_PANEL_PASS}
     Путь прокси:      https://${DOMAIN}${TG_PATH}
-    Ссылка для TG:    tg://proxy?server=${DOMAIN}&port=443&secret=dd${TG_SECRET}
+    
+    ССЫЛКИ ДЛЯ ПОДКЛЮЧЕНИЯ В TELEGRAM:
+    1) Web Proxy (Рекомендуется, с указанием секретного пути):
+       tg://webproxy?server=${DOMAIN}%2F${TG_PATH_NO_SLASH}&secret=${TG_SECRET}
+    2) Classic MTProto (через порт 443):
+       tg://proxy?server=${DOMAIN}&port=443&secret=dd${TG_SECRET}
     
     📁 МЕСТО ХРАНЕНИЯ КЛЮЧЕЙ КЛИЕНТОВ И МИГРАЦИЯ:
     -> Файл конфига и ключей: /etc/telemt/config.toml (секция [access.users])
     -> Лимиты и статистика:  /etc/telemt/telemt.limit.json
+    -> Конфиг веб-панели:    /etc/telemt-panel/config.toml
     -> Для переноса без смены ссылок клиентов: скопируйте /etc/telemt/config.toml
 
 [4] ADGUARD HOME (DNS 0 МС И ФИЛЬТРАЦИЯ РЕКЛАМЫ):
     Веб-интерфейс:    http://${SERVER_IP}:${ADH_WEB_PORT}
     Логин:            ${ADH_USER}
     Пароль:           ${ADH_PASS}
-    DoH (HTTPS):      https://${DOMAIN}/dns-query
+    DoH (HTTPS):      https://${DOMAIN}${ADH_DOH_PATH}
     Локальный DNS:    127.0.0.1:${ADH_DNS_PORT} (задействован для Xray Outbound 0 ms)
 
 [5] СПИСОК РАЗВЕРНУТЫХ INBOUNDS В XRAY:

@@ -5,7 +5,7 @@ After=network.target telemt.service
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/local/bin/telemt-panel -c /etc/telemt-panel/config.toml
+ExecStart=/usr/local/bin/telemt-panel -config /etc/telemt-panel/config.toml
 Restart=always
 RestartSec=3s
 LimitNOFILE=65535

@@ -5,7 +5,7 @@ After=network.target network-online.target nss-lookup.target
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/local/bin/telemt -c /etc/telemt/config.toml
+ExecStart=/usr/local/bin/telemt run /etc/telemt/config.toml
 Restart=always
 RestartSec=3s
 LimitNOFILE=65535

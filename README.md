@@ -17,7 +17,13 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
 1. **Авто-апгрейд ОС**: Полное обновление пакетов системы (`apt update && apt full-upgrade -y`).
 2. **Интерактивный мастер**:
    - Запрашивает домен и Cloudflare API данные.
-   - Предлагает задать свои секретные пути (`Locations`) и порты или генерирует стойкие случайные значения.
+   - Предлагает задать свои секретные пути (`Locations`) и порты или генерирует стойкие случайные значения:
+     - Путь веб-панели 3x-ui (`PANEL_PATH`)
+     - Обычная подписка Base64 (`SUB_PATH`)
+     - JSON подписка для Happ/Sing-box (`SUB_JSON_PATH`)
+     - **Telemt Telegram Web Proxy (`TG_PATH`, например `/tg` или `/fbrfbrbH1vbyrT`)**
+     - **AdGuard Home DoH (`ADH_DOH_PATH`, например `/dns-query` или `/my-secret-doh`)**
+     - VLESS WebSocket, XHTTP, gRPC и Trojan gRPC
 3. **Тихий SSL (Cloudflare DNS-01)**:
    - Сертификаты выпускаются через API Cloudflare.
    - **Порт 80 наглухо закрыт в UFW и Nginx** — сервер не светится в сканерах портов.
@@ -35,13 +41,13 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
    - AmneziaWG (`:8443`).
    - **Два типа подписок**: Обычная (Base64) и JSON (Happ / Sing-box / v2rayNG).
 6. **Telemt (Telegram Web Proxy) с маскировкой 200 OK**:
-   - Проксирование трафика Telegram поверх HTTPS (`/tg`).
+   - Проксирование трафика Telegram поверх HTTPS (по выбранному пути `TG_PATH`).
    - Поддержка WebSocket lanes и HTTPS lanes.
    - Внутренний Decoy-сервер (`:18082`): возвращает реальный маскировочный сайт с кодом **200 OK** на любые зондирования ТСПУ вместо подозрительного 404.
-   - Веб-панель управления Telemt Panel (`:65001`).
-7. **AdGuard Home**:
+   - Веб-панель управления Telemt Panel (`:65001` HTTPS).
+7. **AdGuard Home (DNS 0 мс + DoH с кастомным путем)**:
    - Локальный резолвер DNS (`127.0.0.1:57998`) обеспечивает **кэширование DNS за 0 мс** для Xray.
-   - Публичный DoH (DNS-over-HTTPS) доступен по пути `/dns-query` на 443 порту.
+   - DoH доступен по вашему секретному пути (например `https://domain.com/my-secret-doh` или `https://domain.com/my-secret-doh/Client1`).
    - Веб-панель управления AdGuard (`:3000`).
 8. **Anti-Bot Shield в Nginx**:
    - Сброс соединений (`return 444`) для поисковых ботов (Google, Yandex), сетевых сканеров (Shodan, Censys, sqlmap, nikto и др.) и сканеров уязвимостей (`.env`, `wp-login`).
@@ -75,7 +81,7 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
     ┌──────────────┼──────────────┬──────────────┬──────────────┬──────────────┐
     │              │              │              │              │              │
 Маскировочный  Панель 3X-UI    Подписки (x2)   Telemt Proxy     VLESS /        AdGuard DoH
-    сайт          (Admin)     (Base64 & JSON)      (/tg)         Trojan        (/dns-query)
+    сайт          (Admin)     (Base64 & JSON)    (Кастом путь)   Trojan       (Кастом путь)
     (:9443)    (Внутр. порт)   (Внутр. порт)     (:18080)    (WS/gRPC/UDS)       (:44712)
                                                      │
                                              При зондировании
@@ -104,7 +110,7 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
 1. Установите данный скрипт на новом сервере на том же домене.
 2. Скопируйте файл `/etc/telemt/config.toml` со старого сервера на новый.
 3. Перезапустите службу: `systemctl restart telemt`.
-4. Все ссылки `tg://proxy?...` у клиентов продолжат работать без каких-либо повторных настроек!
+4. Все ссылки `tg://proxy?...` и `tg://webproxy?...` у клиентов продолжат работать без каких-либо повторных настроек!
 
 ---
 
@@ -115,7 +121,7 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
 - `443/tcp` — Открыт (Nginx Stream + Reality).
 - `443/udp` — Открыт (Hysteria 2).
 - `SSH` — Открыт (только ваш текущий порт SSH).
-- `65001/tcp` — Веб-панель Telemt Panel.
+- `65001/tcp` — Веб-панель Telemt Panel (HTTPS).
 - `3000/tcp` — Веб-интерфейс AdGuard Home.
 - Все остальные порты — **ЗАКРЫТЫ**.
 
@@ -130,6 +136,6 @@ cat /root/server_credentials.txt
 В файле содержатся:
 - Ссылка, логин и пароль к панели 3x-ui.
 - Обе ссылки на подписки (Base64 и JSON).
-- Ссылка на панель Telemt и прямая ссылка подключения Telegram (`tg://proxy?...`).
-- Ссылка, логин и пароль к панели AdGuard Home.
+- Ссылка на панель Telemt и обе ссылки подключения Telegram (`tg://webproxy?...` с кастомным путем и `tg://proxy?...`).
+- Ссылка, логин и пароль к панели AdGuard Home, а также ссылка на DoH с вашим кастомным путем.
 - Список всех портов и путей.
