@@ -640,7 +640,8 @@ curl -sSL "${GITHUB_RAW}/assets/telemt/telemt.service" -o /etc/systemd/system/te
 curl -sSL "${GITHUB_RAW}/assets/telemt/telemt-panel.service" -o /etc/systemd/system/telemt-panel.service || cp "assets/telemt/telemt-panel.service" /etc/systemd/system/telemt-panel.service 2>/dev/null || true
 
 systemctl daemon-reload
-systemctl enable --now telemt telemt-panel 2>/dev/null || true
+systemctl enable telemt telemt-panel 2>/dev/null || true
+systemctl restart telemt telemt-panel 2>/dev/null || true
 msg_ok "Telemt Web Proxy настроен и запущен с маскировкой 200 OK."
 
 # Автоматическая настройка и загрузка базы GeoIP для Telemt Panel
@@ -652,11 +653,13 @@ for _ in {1..15}; do
     sleep 1
 done
 
-TG_COOKIE=$(curl -s -i -X POST \
+TG_LOGIN_RESP=$(curl -s -i -X POST \
     -H "Origin: http://127.0.0.1:${TG_PANEL_INTERNAL_PORT}" \
     -H "Content-Type: application/json" \
     -d "{\"username\":\"admin\",\"password\":\"${TG_PANEL_PASS}\"}" \
-    "http://127.0.0.1:${TG_PANEL_INTERNAL_PORT}/api/auth/login" 2>/dev/null | grep -i "set-cookie:" | tr -d '\r' | sed -E 's/.*panel_session=([^;]+).*/\1/')
+    "http://127.0.0.1:${TG_PANEL_INTERNAL_PORT}/api/auth/login" 2>/dev/null || true)
+
+TG_COOKIE=$(echo "$TG_LOGIN_RESP" | grep -i "set-cookie:" | tr -d '\r' | sed -E 's/.*panel_session=([^;]+).*/\1/' || true)
 
 if [[ -n "$TG_COOKIE" ]]; then
     curl -s -X PUT \
