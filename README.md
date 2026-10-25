@@ -10,6 +10,11 @@
 Подключитесь к вашему чистому VPS по SSH как `root` и выполните:
 
 ```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx/main/install.sh)"
+```
+
+Либо через традиционный пайп:
+```bash
 curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx/main/install.sh | bash
 ```
 
