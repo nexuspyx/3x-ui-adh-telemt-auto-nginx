@@ -162,8 +162,8 @@ if [[ "$PATH_CHOICE" == "1" ]]; then
     read_prompt "-> Путь для панели 3x-ui [/xui/]: " USER_PANEL_PATH
     read_prompt "-> Путь для обычной подписки Base64 [/sub/]: " USER_SUB_PATH
     read_prompt "-> Путь для JSON подписки Happ/Sing-box [/sub-json/]: " USER_SUB_JSON_PATH
-    read_prompt "-> Путь для Telemt Telegram Proxy [/tg]: " USER_TG_PATH
-    read_prompt "-> Путь для AdGuard Home DoH [/dns-query]: " USER_ADH_DOH_PATH
+    read_prompt "-> Путь для Telemt Telegram Proxy [${TG_PATH:-/tg}]: " USER_TG_PATH
+    read_prompt "-> Путь для AdGuard Home DoH [${ADH_DOH_PATH:-/dns-query}]: " USER_ADH_DOH_PATH
     read_prompt "-> Путь для VLESS WebSocket [/vless-ws]: " USER_WS_PATH
     read_prompt "-> Путь для VLESS XHTTP [/vless-xhttp]: " USER_XHTTP_PATH
     read_prompt "-> ServiceName для VLESS gRPC [vless-grpc]: " USER_GRPC_PATH
@@ -172,23 +172,23 @@ if [[ "$PATH_CHOICE" == "1" ]]; then
     PANEL_PATH="${USER_PANEL_PATH:-/xui/}"
     SUB_PATH="${USER_SUB_PATH:-/sub/}"
     SUB_JSON_PATH="${USER_SUB_JSON_PATH:-/sub-json/}"
-    TG_PATH="${USER_TG_PATH:-/tg}"
-    ADH_DOH_PATH="${USER_ADH_DOH_PATH:-/dns-query}"
+    TG_PATH="${USER_TG_PATH:-${TG_PATH:-/tg}}"
+    ADH_DOH_PATH="${USER_ADH_DOH_PATH:-${ADH_DOH_PATH:-/dns-query}}"
     WS_PATH="${USER_WS_PATH:-/vless-ws}"
     XHTTP_PATH="${USER_XHTTP_PATH:-/vless-xhttp}"
     GRPC_PATH="${USER_GRPC_PATH:-vless-grpc}"
     TROJAN_PATH="${USER_TROJAN_PATH:-/trojan-grpc}"
 else
     # Генерация случайных путей
-    PANEL_PATH="/$(gen_random_string 10)/"
-    SUB_PATH="/$(gen_random_string 10)/"
-    SUB_JSON_PATH="/$(gen_random_string 10)/"
-    TG_PATH="/tg"
-    ADH_DOH_PATH="/dns-query"
-    WS_PATH="/$(gen_random_string 10)"
-    XHTTP_PATH="/$(gen_random_string 10)"
-    GRPC_PATH="vless-grpc"
-    TROJAN_PATH="/$(gen_random_string 10)"
+    PANEL_PATH="${PANEL_PATH:-/$(gen_random_string 10)/}"
+    SUB_PATH="${SUB_PATH:-/$(gen_random_string 10)/}"
+    SUB_JSON_PATH="${SUB_JSON_PATH:-/$(gen_random_string 10)/}"
+    TG_PATH="${TG_PATH:-${USER_TG_PATH:-/tg}}"
+    ADH_DOH_PATH="${ADH_DOH_PATH:-${USER_ADH_DOH_PATH:-/dns-query}}"
+    WS_PATH="${WS_PATH:-/$(gen_random_string 10)}"
+    XHTTP_PATH="${XHTTP_PATH:-/$(gen_random_string 10)}"
+    GRPC_PATH="${GRPC_PATH:-vless-grpc}"
+    TROJAN_PATH="${TROJAN_PATH:-/$(gen_random_string 10)}"
 fi
 
 # 1.4 Настройка модуля «Конфигурирование сервера»
