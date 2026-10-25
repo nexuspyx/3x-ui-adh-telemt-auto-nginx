@@ -498,16 +498,24 @@ msg_ok "Все 7 inbounds, оба типа подписок и параметр�
 # [6] TELEMT & TELEMT-PANEL SETUP (TELEGRAM PROXY)
 # ─────────────────────────────────────────────────────────────────────────────
 msg_inf "Шаг [6/8]: Установка Telemt Web Proxy и панели управления..."
-TELEMT_VER="3.5.14"
-TELEMT_PANEL_VER="1.0.0-rc.3"
+ARCH_SUFFIX="x86_64"
+[[ "$(uname -m)" =~ (aarch64|arm64) ]] && ARCH_SUFFIX="aarch64"
 
-curl -sSL "https://github.com/cbeuw/telemt/releases/download/v${TELEMT_VER}/telemt-x86_64-unknown-linux-musl.tar.gz" -o "$WORKDIR/telemt.tar.gz" 2>/dev/null || true
+# Динамическое получение актуальных официальных версий с GitHub релизов разработчиков
+TELEMT_TAG=$(curl -sSL https://api.github.com/repos/telemt/telemt/releases/latest | jq -r .tag_name 2>/dev/null || echo "3.5.14")
+[[ -z "$TELEMT_TAG" || "$TELEMT_TAG" == "null" ]] && TELEMT_TAG="3.5.14"
+
+TELEMT_PANEL_TAG=$(curl -sSL https://api.github.com/repos/amirotin/telemt_panel/releases | jq -r '.[0].tag_name' 2>/dev/null || echo "v1.0.0-rc.3")
+[[ -z "$TELEMT_PANEL_TAG" || "$TELEMT_PANEL_TAG" == "null" ]] && TELEMT_PANEL_TAG="v1.0.0-rc.3"
+
+msg_inf "Загрузка актуальных версий: Telemt (${TELEMT_TAG}) и Telemt Panel (${TELEMT_PANEL_TAG})..."
+curl -sSL "https://github.com/telemt/telemt/releases/download/${TELEMT_TAG}/telemt-${ARCH_SUFFIX}-linux-musl.tar.gz" -o "$WORKDIR/telemt.tar.gz" 2>/dev/null || true
 if [[ -f "$WORKDIR/telemt.tar.gz" ]]; then
     tar -xzf "$WORKDIR/telemt.tar.gz" -C /usr/local/bin/
     chmod +x /usr/local/bin/telemt 2>/dev/null || true
 fi
 
-curl -sSL "https://github.com/cbeuw/telemt-panel/releases/download/v${TELEMT_PANEL_VER}/telemt-panel-x86_64-unknown-linux-musl.tar.gz" -o "$WORKDIR/telemt-panel.tar.gz" 2>/dev/null || true
+curl -sSL "https://github.com/amirotin/telemt_panel/releases/download/${TELEMT_PANEL_TAG}/telemt-panel-${ARCH_SUFFIX}-linux-musl.tar.gz" -o "$WORKDIR/telemt-panel.tar.gz" 2>/dev/null || true
 if [[ -f "$WORKDIR/telemt-panel.tar.gz" ]]; then
     tar -xzf "$WORKDIR/telemt-panel.tar.gz" -C /usr/local/bin/
     chmod +x /usr/local/bin/telemt-panel 2>/dev/null || true
