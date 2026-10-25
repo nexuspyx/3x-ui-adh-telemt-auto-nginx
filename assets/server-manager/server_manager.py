@@ -363,6 +363,8 @@ def detect_live_services(cfg):
 
             # DoH path from Nginx vhost
             nginx_vhost = f"/etc/nginx/sites-available/{domain}.conf"
+            if not os.path.exists(nginx_vhost) and os.path.exists(f"/etc/nginx/sites-available/{domain}"):
+                nginx_vhost = f"/etc/nginx/sites-available/{domain}"
             doh_path = "/dns-query"
             if os.path.exists(nginx_vhost):
                 with open(nginx_vhost, "r") as f:
@@ -436,6 +438,8 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
     os.makedirs(backup_dir, exist_ok=True)
 
     nginx_vhost = f"/etc/nginx/sites-available/{domain}.conf"
+    if not os.path.exists(nginx_vhost) and os.path.exists(f"/etc/nginx/sites-available/{domain}"):
+        nginx_vhost = f"/etc/nginx/sites-available/{domain}"
 
     # Backup all configuration files before touching anything
     for src in [nginx_vhost, XUI_DB_PATH, TELEMT_CONF_PATH, ADGUARD_CONF_PATH, "/etc/nginx/sites-available/telemt-panel.conf"]:
@@ -583,15 +587,20 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
                     conn.commit()
                 conn.close()
 
-            if os.path.exists(nginx_vhost):
-                with open(nginx_vhost, "r") as f:
-                    content = f.read()
-                if new_path:
-                    content = re.sub(r'(# === \[4\] VLESS WEBSOCKET ===\s+location\s*=\s*)[^ \t\n{]+', f'\\g<1>{norm_path_leading}', content)
-                if new_port:
-                    content = re.sub(r'(location\s*=\s*' + re.escape(norm_path_leading) + r'[\s\S]*?proxy_pass\s+http://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', content)
-                with open(nginx_vhost, "w") as f:
-                    f.write(content)
+            vhost_targets = [nginx_vhost]
+            if os.path.exists("/etc/nginx/snippets/includes.conf"):
+                vhost_targets.append("/etc/nginx/snippets/includes.conf")
+            for target_file in vhost_targets:
+                if os.path.exists(target_file):
+                    with open(target_file, "r") as f:
+                        content = f.read()
+                    if new_path:
+                        content = re.sub(r'(# === \[4\] VLESS WEBSOCKET ===\s+location\s*=\s*)[^ \t\n{]+', f'\\g<1>{norm_path_leading}', content)
+                        content = re.sub(r'(# Installer-managed WS[^\n]*\n\s*location\s*=\s*)[^ \t\n{]+', f'\\g<1>{norm_path_leading}', content)
+                    if new_port:
+                        content = re.sub(r'(location\s*=\s*' + re.escape(norm_path_leading) + r'[\s\S]*?proxy_pass\s+http://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', content)
+                    with open(target_file, "w") as f:
+                        f.write(content)
 
         # 7. VLESS XHTTP
         elif service_id == "vless_xhttp":
@@ -609,12 +618,17 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
                     conn.commit()
                 conn.close()
 
-            if os.path.exists(nginx_vhost):
-                with open(nginx_vhost, "r") as f:
-                    content = f.read()
-                content = re.sub(r'(# === \[5\] VLESS XHTTP[\s\S]*?location\s+\^\~\s+)[^ \t\n{]+', f'\\g<1>{norm_path_leading}', content)
-                with open(nginx_vhost, "w") as f:
-                    f.write(content)
+            vhost_targets = [nginx_vhost]
+            if os.path.exists("/etc/nginx/snippets/includes.conf"):
+                vhost_targets.append("/etc/nginx/snippets/includes.conf")
+            for target_file in vhost_targets:
+                if os.path.exists(target_file):
+                    with open(target_file, "r") as f:
+                        content = f.read()
+                    content = re.sub(r'(# === \[5\] VLESS XHTTP[\s\S]*?location\s+\^\~\s+)[^ \t\n{]+', f'\\g<1>{norm_path_leading}', content)
+                    content = re.sub(r'(#XHTTP\s*\n\s*location\s+\^\~\s+)[^ \t\n{]+', f'\\g<1>{norm_path_leading}/', content)
+                    with open(target_file, "w") as f:
+                        f.write(content)
 
         # 8. TROJAN GRPC
         elif service_id == "trojan_grpc":
@@ -635,15 +649,20 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
                     conn.commit()
                 conn.close()
 
-            if os.path.exists(nginx_vhost):
-                with open(nginx_vhost, "r") as f:
-                    content = f.read()
-                if new_path:
-                    content = re.sub(r'(# === \[6\] TROJAN gRPC ===\s+location\s*=\s*)[^ \t\n{]+', f'\\g<1>/{norm_path_no_slash}', content)
-                if new_port:
-                    content = re.sub(r'(# === \[6\] TROJAN gRPC ===[\s\S]*?grpc_pass\s+grpc://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', content)
-                with open(nginx_vhost, "w") as f:
-                    f.write(content)
+            vhost_targets = [nginx_vhost]
+            if os.path.exists("/etc/nginx/snippets/includes.conf"):
+                vhost_targets.append("/etc/nginx/snippets/includes.conf")
+            for target_file in vhost_targets:
+                if os.path.exists(target_file):
+                    with open(target_file, "r") as f:
+                        content = f.read()
+                    if new_path:
+                        content = re.sub(r'(# === \[6\] TROJAN gRPC ===\s+location\s*(?:\^~|=)\s*)[^ \t\n{]+', f'\\g<1>/{norm_path_no_slash}', content)
+                        content = re.sub(r'(# Xray custom gRPC serviceName[^\n]*\n\s*location\s*(?:\^~|=)\s*)[^ \t\n{]+', f'\\g<1>/{norm_path_no_slash}', content)
+                    if new_port:
+                        content = re.sub(r'((?:# === \[6\] TROJAN gRPC ===|# Xray custom gRPC serviceName)[\s\S]*?grpc_pass\s+grpc://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', content)
+                    with open(target_file, "w") as f:
+                        f.write(content)
 
         # 9. VLESS GRPC
         elif service_id == "vless_grpc":
@@ -664,15 +683,20 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
                     conn.commit()
                 conn.close()
 
-            if os.path.exists(nginx_vhost):
-                with open(nginx_vhost, "r") as f:
-                    content = f.read()
-                if new_path:
-                    content = re.sub(r'(# === \[7\] VLESS gRPC ===\s+location\s+\^\~\s+)[^ \t\n{]+', f'\\g<1>/{norm_path_no_slash}', content)
-                if new_port:
-                    content = re.sub(r'(# === \[7\] VLESS gRPC ===[\s\S]*?grpc_pass\s+grpc://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', content)
-                with open(nginx_vhost, "w") as f:
-                    f.write(content)
+            vhost_targets = [nginx_vhost]
+            if os.path.exists("/etc/nginx/snippets/includes.conf"):
+                vhost_targets.append("/etc/nginx/snippets/includes.conf")
+            for target_file in vhost_targets:
+                if os.path.exists(target_file):
+                    with open(target_file, "r") as f:
+                        content = f.read()
+                    if new_path:
+                        content = re.sub(r'(# === \[7\] VLESS gRPC ===\s+location\s+\^\~\s+)[^ \t\n{]+', f'\\g<1>/{norm_path_no_slash}', content)
+                        content = re.sub(r'(# VLESS gRPC\s*\n\s*location\s+\^\~\s+)[^ \t\n{]+', f'\\g<1>/{norm_path_no_slash}', content)
+                    if new_port:
+                        content = re.sub(r'((?:# === \[7\] VLESS gRPC ===|# VLESS gRPC)[\s\S]*?grpc_pass\s+grpc://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', content)
+                    with open(target_file, "w") as f:
+                        f.write(content)
 
         # 10. TELEMT PANEL
         elif service_id == "telemt_panel" and new_port:

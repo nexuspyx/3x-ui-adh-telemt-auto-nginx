@@ -35,7 +35,7 @@ server {
     if ($scheme ~* https)                          { set $safe 1; }
     if ($ssl_server_name !~* ^(.+\.)?__DOMAIN__$) { set $safe "${safe}0"; }
     if ($safe = 10)                                { return 444; }
-    if ($request_uri ~ "(\"|'|`|~|,|:|;|%|\$|&&|\?\?|0x00|0X00|\||\|\{|\}|\[|\]|<|>|\.\.\.|\.\.\/|\/\/\/)") { set $hack 1; }
+    if ($request_uri ~ "(\"|'|`|~|,|;|&&|\?\?|0x00|0X00|\||\|\{|\}|\[|\]|<|>|\.\.\.|\.\.\/|\/\/\/)") { set $hack 1; }
     
     # Drop bad bots, spiders and vulnerability scanners instantly
     if ($is_bad_bot) { return 444; }
@@ -112,6 +112,7 @@ server {
         proxy_buffering off;
         proxy_request_buffering off;
         proxy_socket_keepalive on;
+        proxy_intercept_errors off;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
@@ -134,11 +135,12 @@ server {
     }
 
     # === [6] TROJAN gRPC ===
-    location = __TROJAN_PATH__ {
+    location ^~ __TROJAN_PATH__ {
         if ($hack = 1) { return 404; }
         client_max_body_size 0;
         client_body_timeout 1d;
         grpc_read_timeout 1d;
+        grpc_send_timeout 1d;
         grpc_socket_keepalive on;
         grpc_set_header Host $host;
         grpc_pass grpc://127.0.0.1:__TROJAN_PORT__;
