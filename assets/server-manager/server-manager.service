@@ -1,0 +1,16 @@
+[Unit]
+Description=Server Configuration Manager (Stealth Web Dashboard & Core Sync)
+After=network.target nginx.service x-ui.service telemt.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/etc/server-manager
+ExecStart=/usr/bin/python3 /usr/local/bin/server-manager.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
