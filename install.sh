@@ -198,6 +198,11 @@ XHTTP_PATH_NO_SLASH="${XHTTP_PATH#/}"
 TROJAN_PATH_NO_SLASH="${TROJAN_PATH#/}"
 GRPC_PATH_NO_SLASH="${GRPC_PATH#/}"
 
+WS_PATH_LEADING="/${WS_PATH_NO_SLASH}"
+XHTTP_PATH_LEADING="/${XHTTP_PATH_NO_SLASH}"
+TROJAN_PATH_LEADING="/${TROJAN_PATH_NO_SLASH}"
+GRPC_PATH_LEADING="/${GRPC_PATH_NO_SLASH}"
+
 # Внутренние порты
 PANEL_PORT=$(get_free_port)
 SUB_PORT=$(get_free_port)
@@ -411,7 +416,7 @@ VALUES (
       "security": "none",
       "wsSettings": {
         "acceptProxyProtocol": false,
-        "path": "${WS_PATH}",
+        "path": "${WS_PATH_LEADING}",
         "host": "${DOMAIN}"
       }
     }',
@@ -428,7 +433,7 @@ VALUES (
       "network": "xhttp",
       "security": "none",
       "xhttpSettings": {
-        "path": "${XHTTP_PATH}",
+        "path": "${XHTTP_PATH_LEADING}",
         "mode": "stream-up"
       },
       "sockopt": {
@@ -506,6 +511,17 @@ VALUES (
     '1', '0', '0', '0', '🛡️ AmneziaWG', '0', '0', '0.0.0.0', '8443', 'amneziawg',
     '{}', '{}', 'inbound-8443-udp', '{"enabled": false}'
 );
+
+-- 8. Заполнение таблицы hosts для внешних ссылок подписок (порт 443, TLS)
+DELETE FROM hosts;
+INSERT INTO hosts (inbound_id, group_id, sort_order, remark, address, port, security, fingerprint, alpn)
+VALUES
+    ((SELECT id FROM inbounds WHERE tag='in-8443-tcp'), '$(openssl rand -hex 8)', 0, 'reality', '${DOMAIN}', 443, 'same', '', '[]'),
+    ((SELECT id FROM inbounds WHERE tag='in-${WS_PORT}-tcp'), '$(openssl rand -hex 8)', 0, 'ws', '${DOMAIN}', 443, 'tls', 'firefox', '["http/1.1"]'),
+    ((SELECT id FROM inbounds WHERE tag='inbound-/dev/shm/uds2023.sock,0666:0|'), '$(openssl rand -hex 8)', 0, 'xhttp', '${DOMAIN}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
+    ((SELECT id FROM inbounds WHERE tag='inbound-${TROJAN_PORT}'), '$(openssl rand -hex 8)', 0, 'trojan', '${DOMAIN}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
+    ((SELECT id FROM inbounds WHERE tag='inbound-${GRPC_PORT}'), '$(openssl rand -hex 8)', 0, 'vless-grpc', '${DOMAIN}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
+    ((SELECT id FROM inbounds WHERE tag='inbound-443-udp'), '$(openssl rand -hex 8)', 0, 'hysteria2', '${DOMAIN}', 443, 'same', '', '[]');
 EOF
 
 systemctl daemon-reload
@@ -645,12 +661,12 @@ sed -e "s|__DOMAIN__|${DOMAIN}|g" \
     -e "s|__TG_DECOY_PORT__|${TG_DECOY_PORT}|g" \
     -e "s|__ADH_DOH_PATH__|${ADH_DOH_PATH}|g" \
     -e "s|__ADH_DOH_PORT__|${ADH_DOH_PORT}|g" \
-    -e "s|__WS_PATH__|${WS_PATH}|g" \
+    -e "s|__WS_PATH__|${WS_PATH_LEADING}|g" \
     -e "s|__WS_PORT__|${WS_PORT}|g" \
-    -e "s|__XHTTP_PATH__|${XHTTP_PATH}|g" \
-    -e "s|__TROJAN_PATH__|${TROJAN_PATH}|g" \
+    -e "s|__XHTTP_PATH__|${XHTTP_PATH_LEADING}|g" \
+    -e "s|__TROJAN_PATH__|${TROJAN_PATH_LEADING}|g" \
     -e "s|__TROJAN_PORT__|${TROJAN_PORT}|g" \
-    -e "s|__GRPC_PATH__|${GRPC_PATH}|g" \
+    -e "s|__GRPC_PATH__|${GRPC_PATH_LEADING}|g" \
     -e "s|__GRPC_PORT__|${GRPC_PORT}|g" \
     "$WORKDIR/vhost.conf.template" > "/etc/nginx/sites-available/${DOMAIN}.conf"
 
