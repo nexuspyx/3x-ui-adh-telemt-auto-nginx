@@ -234,8 +234,9 @@ msg_ok "Параметры и учетные записи сгенерирова
 msg_inf "Шаг [2/9]: Установка зависимостей и тюнинг сетевого стека..."
 apt-get install -q -y \
     curl wget jq sudo certbot python3-certbot-dns-cloudflare \
-    sqlite3 ufw nginx-full tar gzip openssl procps iproute2 \
-    netcat-openbsd apache2-utils git ca-certificates python3-pip
+    sqlite3 ufw fail2ban python3-systemd nftables nginx-full \
+    tar gzip openssl procps iproute2 netcat-openbsd apache2-utils \
+    git ca-certificates python3-pip
 
 # Отключение IPv6, скрытие ICMP Ping и включение BBR
 cat << 'EOF' > /etc/sysctl.d/99-hardened-anti-tspu.conf
@@ -847,23 +848,58 @@ systemctl enable --now server-manager 2>/dev/null || true
 msg_ok "Модуль «Конфигурирование сервера» установлен и запущен на порту ${MGMT_PORT} (Stealth)."
 
 # ─────────────────────────────────────────────────────────────────────────────
-# [9] FIREWALL CONFIGURATION (PORT 80 CLOSED FOREVER)
+# [9] FIREWALL & BRUTE-FORCE PROTECTION (UFW & FAIL2BAN)
 # ─────────────────────────────────────────────────────────────────────────────
-msg_inf "Шаг [9/9]: Настройка файрвола UFW (Порт 80 наглухо блокируется)..."
+msg_inf "Шаг [9/9]: Настройка файрвола UFW и защиты от брутфорса Fail2ban..."
 SSH_PORT=$(ss -tlnp | grep sshd | awk '{print $4}' | awk -F':' '{print $NF}' | head -n1 || echo 22)
 [[ -z "$SSH_PORT" ]] && SSH_PORT=22
 
+# 9.1 Настройка UFW: открытыми остаются ТОЛЬКО порты 22 и 443
 ufw --force reset > /dev/null 2>&1 || true
 ufw default deny incoming > /dev/null
 ufw default allow outgoing > /dev/null
 ufw allow "${SSH_PORT}/tcp" comment 'SSH' > /dev/null
 ufw allow 443/tcp comment 'Nginx HTTPS & Reality' > /dev/null
-ufw allow 443/udp comment 'Hysteria 2' > /dev/null
-ufw allow 8443/tcp comment 'Reality Fallback' > /dev/null
-ufw allow 8443/udp comment 'AmneziaWG' > /dev/null
+ufw allow 443/udp comment 'Hysteria 2 / QUIC' > /dev/null
 ufw deny 80/tcp comment 'Port 80 Closed' > /dev/null
 ufw --force enable > /dev/null
-msg_ok "UFW активирован. Порт 80 ЗАКРЫТ. Открыты только SSH, 443 (TCP/UDP) и 8443 (TCP/UDP). Порт модуля ${MGMT_PORT} ЗАКРЫТ (Stealth)."
+msg_ok "UFW активирован. Порт 80 ЗАКРЫТ. Открыты ТОЛЬКО порты ${SSH_PORT}/tcp (SSH) и 443 (TCP/UDP). Все остальные порты закрыты."
+
+# 9.2 Настройка Fail2ban: прогрессивный бан и полная блокировка всех портов через nftables
+mkdir -p /etc/fail2ban/jail.d
+
+F2B_BACKEND="systemd"
+journalctl -n 1 --no-pager >/dev/null 2>&1 || F2B_BACKEND="auto"
+
+cat << EOF > /etc/fail2ban/jail.d/90-ssh-hardening.local
+# Managed by 3x-ui Setup: Enhanced SSH Protection & Allports Ban
+[DEFAULT]
+# Блокировка нарушителя на уровне всех портов сервера через nftables
+banaction = nftables[type=allports]
+banaction_allports = nftables[type=allports]
+
+# Прогрессивный бан: увеличение срока блокировки при повторных атаках
+bantime.increment = true
+bantime.rndtime = 1200
+bantime.maxtime = 5w
+bantime.factor = 2
+
+# Белый список локальных адресов
+ignoreip = 127.0.0.1/8 ::1
+
+[sshd]
+enabled = true
+port = ${SSH_PORT}
+backend = ${F2B_BACKEND}
+maxretry = 5
+findtime = 1800
+bantime = 3600
+EOF
+
+systemctl daemon-reload > /dev/null 2>&1 || true
+systemctl enable fail2ban > /dev/null 2>&1 || true
+systemctl restart fail2ban > /dev/null 2>&1 || true
+msg_ok "Fail2ban установлен и настроен: прогрессивный бан активен, нарушители блокируются на уровне всех портов сервера."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FINAL SUMMARY REPORT
@@ -937,6 +973,8 @@ cat << EOF > /root/server_credentials.txt
     • AmneziaWG:       порт 8443/UDP
 
 [6] ПАРАМЕТРЫ ЗАЩИТЫ:
+    [✓] Файрвол UFW:   АКТИВЕН И НАСТРОЕН (Открыты только порты ${SSH_PORT} SSH и 443 TCP/UDP, все остальные порты закрыты)
+    [✓] Fail2ban:      УСТАНОВЛЕН И НАСТРОЕН (SSH защита, прогрессивный бан, блокировка по ВСЕМ портам через nftables)
     [✓] Порт 80:       НАГЛУХО ЗАКРЫТ (UFW DENY)
     [✓] SSL:           Cloudflare DNS-01 API (тихий выпуск и автопродление)
     [✓] IPv6:          ВЫКЛЮЧЕН (исключены задержки при резолве)
