@@ -59,7 +59,7 @@ EOF
 echo -e "${C_RESET}"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# [0] OS CHECK & FULL UPGRADE
+# [0] OS CHECK
 # ─────────────────────────────────────────────────────────────────────────────
 msg_inf "Проверка совместимости операционной системы..."
 if [[ -f /etc/os-release ]]; then
@@ -80,13 +80,6 @@ fi
 
 # Предварительное определение публичного IP сервера
 SERVER_IP=$(curl -s4 icanhazip.com || curl -s4 ifconfig.me || echo "127.0.0.1")
-
-msg_inf "Шаг [0/9]: Полное обновление системы (apt update & full-upgrade)..."
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -q -y
-apt-get full-upgrade -q -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
-apt-get autoremove -q -y
-msg_ok "Система успешно обновлена до актуального состояния."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # [1] INTERACTIVE WIZARD
@@ -232,6 +225,8 @@ msg_ok "Параметры и учетные записи сгенерирова
 # [2] SYSTEM DEPENDENCIES & NETWORK HARDENING
 # ─────────────────────────────────────────────────────────────────────────────
 msg_inf "Шаг [2/9]: Установка зависимостей и тюнинг сетевого стека..."
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -q -y
 apt-get install -q -y \
     curl wget jq sudo certbot python3-certbot-dns-cloudflare \
     sqlite3 ufw fail2ban python3-systemd nftables nginx-full \

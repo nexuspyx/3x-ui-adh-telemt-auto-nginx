@@ -14,8 +14,7 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
 ```
 
 ### What the installer automates:
-1. **Full OS Upgrade**: Performs clean distribution upgrades (`apt update && apt full-upgrade -y && apt autoremove -y`).
-2. **Interactive Wizard**:
+1. **Interactive Wizard**:
    - Prompts for your domain and Cloudflare API credentials.
    - Allows customization of secret URL paths (`Locations`) and internal ports, or generates strong random values:
      - 3X-UI Panel path (`PANEL_PATH`)
@@ -24,14 +23,14 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
      - **Telemt Telegram Web Proxy (`TG_PATH`, e.g. `/tg` or `/custom-path`)**
      - **AdGuard Home DoH (`ADH_DOH_PATH`, e.g. `/dns-query` or `/my-secret-doh`)**
      - VLESS WebSocket, XHTTP, gRPC, and Trojan gRPC paths
-3. **Silent SSL (Cloudflare DNS-01 API)**:
+2. **Silent SSL (Cloudflare DNS-01 API)**:
    - Automated certificate issuance through Cloudflare API.
    - **Port 80 is PERMANENTLY CLOSED in UFW and Nginx** — the server never exposes an open HTTP port to internet scanners.
-4. **Kernel Tuning & Stealth Mode**:
+3. **Kernel Tuning & Stealth Mode**:
    - **IPv6 is completely disabled** at the kernel level (eliminates 1–3s DNS and outbound connection delays).
    - **ICMP Ping replies disabled**: server completely ignores ping (`icmp_echo_ignore_all = 1` - 100% packet drop stealth).
    - Enabled TCP **BBR** congestion control and TCP Fast Open.
-5. **Deployment of 3X-UI (All 7 Inbounds)**:
+4. **Deployment of 3X-UI (All 7 Inbounds)**:
    - Reality TCP (`:8443` -> Fallback `:9443` with `xver: 1`).
    - VLESS WebSocket.
    - VLESS XHTTP (via Unix Domain Socket `/dev/shm/uds2023.sock`).
@@ -40,19 +39,19 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
    - Hysteria 2 UDP (`:443`).
    - AmneziaWG (`:8443`).
    - **Dual Subscriptions**: Standard Base64 and Xray JSON.
-6. **Telemt (Telegram Web Proxy) with 200 OK Decoy**:
+5. **Telemt (Telegram Web Proxy) with 200 OK Decoy**:
    - Proxies Telegram traffic over HTTPS on your custom path.
    - Full support for WebSocket lanes and HTTPS lanes.
    - Internal Decoy server (`:18082`): returns genuine cover site with HTTP **200 OK** on any censorship probing instead of suspicious 404s.
    - Web management interface via Telemt Panel (`:65001` HTTPS) with automated GeoIP (GeoLite2-City) database and client geography map.
-7. **AdGuard Home (0 ms Local DNS + DoH with Custom Path)**:
+6. **AdGuard Home (0 ms Local DNS + DoH with Custom Path)**:
    - Local DNS resolver (`127.0.0.1:57998`) provides **0 ms RAM caching** for Xray Outbound.
    - DoH available on your secret custom path (e.g. `https://domain.com/my-secret-doh`).
    - Web management dashboard (`:3000`).
-8. **Anti-Bot Shield in Nginx**:
+7. **Anti-Bot Shield in Nginx**:
    - Drops connections instantly (`return 444`) for web scrapers (Google, Yandex), scanners (Shodan, Censys, sqlmap, nikto, etc.), and exploit scanners (`.env`, `wp-login`).
    - De-indexing headers `X-Robots-Tag: noindex, nofollow` and `robots.txt` Disallow.
-9. **Placeholder Page & Custom Website Hosting**:
+8. **Placeholder Page & Custom Website Hosting**:
    - Serves a clean, lightweight placeholder page with `200 OK` by default (also used by the Decoy server and Reality fallback).
    - Server directory to upload your own website: `/var/www/html/` (simply upload your website files replacing `index.html`).
 

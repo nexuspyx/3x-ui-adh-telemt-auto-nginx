@@ -14,8 +14,7 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
 ```
 
 ### Что делает скрипт:
-1. **Авто-апгрейд ОС**: Полное обновление пакетов системы (`apt update && apt full-upgrade -y`).
-2. **Интерактивный мастер**:
+1. **Интерактивный мастер**:
    - Запрашивает домен и Cloudflare API данные.
    - Предлагает задать свои секретные пути (`Locations`) и порты или генерирует стойкие случайные значения:
      - Путь веб-панели 3x-ui (`PANEL_PATH`)
@@ -24,14 +23,14 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
      - **Telemt Telegram Web Proxy (`TG_PATH`, например `/tg` или `/fbrfbrbH1vbyrT`)**
      - **AdGuard Home DoH (`ADH_DOH_PATH`, например `/dns-query` или `/my-secret-doh`)**
      - VLESS WebSocket, XHTTP, gRPC и Trojan gRPC
-3. **Тихий SSL (Cloudflare DNS-01)**:
+2. **Тихий SSL (Cloudflare DNS-01)**:
    - Сертификаты выпускаются через API Cloudflare.
    - **Порт 80 наглухо закрыт в UFW и Nginx** — сервер не светится в сканерах портов.
-4. **Сетевой тюнинг и Stealth**:
+3. **Сетевой тюнинг и Stealth**:
    - **IPv6 полностью отключен** на уровне ядра (устраняет задержки 1–3 сек при открытии сайтов).
    - **ICMP Ping выключен**: сервер не отвечает на `ping` (100% packet drop, скрыт от сканеров).
    - Активирован алгоритм контроля перегрузок TCP **BBR** и TCP Fast Open.
-5. **Развертывание 3X-UI (все 7 inbounds)**:
+4. **Развертывание 3X-UI (все 7 inbounds)**:
    - Reality TCP (`:8443` -> Fallback `:9443` с `xver: 1`).
    - VLESS WebSocket.
    - VLESS XHTTP (через Unix Domain Socket).
@@ -40,19 +39,19 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
    - Hysteria 2 UDP (`:443`).
    - AmneziaWG (`:8443`).
    - **Два типа подписок**: Обычная (Base64) и JSON (Happ / Sing-box / v2rayNG).
-6. **Telemt (Telegram Web Proxy) с маскировкой 200 OK**:
+5. **Telemt (Telegram Web Proxy) с маскировкой 200 OK**:
    - Проксирование трафика Telegram поверх HTTPS (по выбранному пути `TG_PATH`).
    - Поддержка WebSocket lanes и HTTPS lanes.
    - Внутренний Decoy-сервер (`:18082`): возвращает реальный маскировочный сайт с кодом **200 OK** на любые зондирования ТСПУ вместо подозрительного 404.
    - Веб-панель управления Telemt Panel (`:65001` HTTPS) с автоматической базой GeoIP (GeoLite2-City) и интерактивной картой подключений.
-7. **AdGuard Home (DNS 0 мс + DoH с кастомным путем)**:
+6. **AdGuard Home (DNS 0 мс + DoH с кастомным путем)**:
    - Локальный резолвер DNS (`127.0.0.1:57998`) обеспечивает **кэширование DNS за 0 мс** для Xray.
    - DoH доступен по вашему секретному пути (например `https://domain.com/my-secret-doh` или `https://domain.com/my-secret-doh/Client1`).
    - Веб-панель управления AdGuard (`:3000`).
-8. **Anti-Bot Shield в Nginx**:
+7. **Anti-Bot Shield в Nginx**:
    - Сброс соединений (`return 444`) для поисковых ботов (Google, Yandex), сетевых сканеров (Shodan, Censys, sqlmap, nikto и др.) и сканеров уязвимостей (`.env`, `wp-login`).
    - Заголовки `X-Robots-Tag: noindex, nofollow` и запрещающий `robots.txt`.
-9. **Страница-заглушка и размещение своего сайта**:
+8. **Страница-заглушка и размещение своего сайта**:
    - По умолчанию веб-сервер отдает аккуратную легковесную заглушку с кодом `200 OK` (также используется Decoy-сервером и при fallback Reality).
    - Каталог на сервере для загрузки своего сайта: `/var/www/html/` (достаточно загрузить файлы сайта и заменить `index.html`).
 
