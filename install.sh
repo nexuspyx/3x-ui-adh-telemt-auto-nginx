@@ -48,7 +48,32 @@ get_free_port() {
     done
 }
 
-clear
+# Helper for interactive prompts (safely reads from /dev/tty if stdin is piped via curl ... | bash)
+read_prompt() {
+    local prompt_msg="$1"
+    local var_name="$2"
+    local is_secret="${3:-0}"
+    local input_val=""
+    if [[ ! -t 0 ]] && [[ -r /dev/tty ]]; then
+        if [[ "$is_secret" -eq 1 ]]; then
+            read -rsp "$prompt_msg" input_val < /dev/tty || true
+            echo
+        else
+            read -rp "$prompt_msg" input_val < /dev/tty || true
+        fi
+    else
+        if [[ "$is_secret" -eq 1 ]]; then
+            read -rsp "$prompt_msg" input_val 2>/dev/null || true
+            echo
+        else
+            read -rp "$prompt_msg" input_val 2>/dev/null || true
+        fi
+    fi
+    printf -v "$var_name" '%s' "$input_val"
+}
+
+# Clear screen only when terminal is capable
+[[ -t 1 ]] && clear 2>/dev/null || true
 echo -e "${C_CYAN}"
 cat << 'EOF'
 ╔══════════════════════════════════════════════════════════════════════════════════╗
@@ -88,49 +113,61 @@ echo
 echo -e "${C_BOLD}=== ШАГ [1/9]: ИНТЕРАКТИВНЫЙ МАСТЕР НАСТРОЙКИ ===${C_RESET}"
 
 # 1.1 Домен
-while true; do
-    read -rp "-> Введите ваш домен (например, vps.example.com): " DOMAIN
+if [[ -z "$DOMAIN" ]]; then
+    while true; do
+        read_prompt "-> Введите ваш домен (например, vps.example.com): " DOMAIN
+        DOMAIN=$(echo "$DOMAIN" | tr -d '[:space:]')
+        [[ -n "$DOMAIN" ]] && break
+        msg_warn "Домен не может быть пустым!"
+    done
+else
     DOMAIN=$(echo "$DOMAIN" | tr -d '[:space:]')
-    [[ -n "$DOMAIN" ]] && break
-    msg_warn "Домен не может быть пустым!"
-done
+    msg_ok "Используется домен из окружения: ${DOMAIN}"
+fi
 
 # 1.2 Cloudflare учетные данные
 echo
 msg_inf "Настройка тихого выпуска SSL через Cloudflare DNS-01 (порт 80 будет закрыт навсегда):"
-while true; do
-    read -rp "-> Введите Cloudflare Email: " CF_EMAIL
-    CF_EMAIL=$(echo "$CF_EMAIL" | tr -d '[:space:]')
-    [[ -n "$CF_EMAIL" ]] && break
-    msg_warn "Email не может быть пустым!"
-done
+if [[ -z "$CF_EMAIL" && -z "$CF_KEY" ]]; then
+    while true; do
+        read_prompt "-> Введите Cloudflare Email (или оставьте пустым, если используете API Token): " CF_EMAIL
+        CF_EMAIL=$(echo "$CF_EMAIL" | tr -d '[:space:]')
+        break
+    done
 
-while true; do
-    read -rsp "-> Введите Cloudflare Global API Key (или API Token): " CF_KEY
-    echo
+    while true; do
+        read_prompt "-> Введите Cloudflare Global API Key (или API Token): " CF_KEY 1
+        CF_KEY=$(echo "$CF_KEY" | tr -d '[:space:]')
+        [[ -n "$CF_KEY" ]] && break
+        msg_warn "Ключ/токен не может быть пустым!"
+    done
+else
+    CF_EMAIL=$(echo "$CF_EMAIL" | tr -d '[:space:]')
     CF_KEY=$(echo "$CF_KEY" | tr -d '[:space:]')
-    [[ -n "$CF_KEY" ]] && break
-    msg_warn "Ключ не может быть пустым!"
-done
+    msg_ok "Используются учетные данные Cloudflare из окружения."
+fi
 
 # 1.3 Кастомизация путей и портов
-echo
-echo -e "${C_BOLD}Кастомизация путей (Locations) и внутренних портов:${C_RESET}"
-echo "1 - Настроить вручную свои пути и порты"
-echo "2 - Использовать случайные скрытые пути и порты (Enter - рекомендуется)"
-read -rp "Выберите вариант [1/2]: " PATH_CHOICE
+if [[ -z "$PATH_CHOICE" ]]; then
+    echo
+    echo -e "${C_BOLD}Кастомизация путей (Locations) и внутренних портов:${C_RESET}"
+    echo "1 - Настроить вручную свои пути и порты"
+    echo "2 - Использовать случайные скрытые пути и порты (Enter - рекомендуется)"
+    read_prompt "Выберите вариант [1/2]: " PATH_CHOICE
+    PATH_CHOICE="${PATH_CHOICE:-2}"
+fi
 
 if [[ "$PATH_CHOICE" == "1" ]]; then
     echo
-    read -rp "-> Путь для панели 3x-ui [/xui/]: " USER_PANEL_PATH
-    read -rp "-> Путь для обычной подписки Base64 [/sub/]: " USER_SUB_PATH
-    read -rp "-> Путь для JSON подписки Happ/Sing-box [/sub-json/]: " USER_SUB_JSON_PATH
-    read -rp "-> Путь для Telemt Telegram Proxy [/tg]: " USER_TG_PATH
-    read -rp "-> Путь для AdGuard Home DoH [/dns-query]: " USER_ADH_DOH_PATH
-    read -rp "-> Путь для VLESS WebSocket [/vless-ws]: " USER_WS_PATH
-    read -rp "-> Путь для VLESS XHTTP [/vless-xhttp]: " USER_XHTTP_PATH
-    read -rp "-> ServiceName для VLESS gRPC [vless-grpc]: " USER_GRPC_PATH
-    read -rp "-> ServiceName для Trojan gRPC [/trojan-grpc]: " USER_TROJAN_PATH
+    read_prompt "-> Путь для панели 3x-ui [/xui/]: " USER_PANEL_PATH
+    read_prompt "-> Путь для обычной подписки Base64 [/sub/]: " USER_SUB_PATH
+    read_prompt "-> Путь для JSON подписки Happ/Sing-box [/sub-json/]: " USER_SUB_JSON_PATH
+    read_prompt "-> Путь для Telemt Telegram Proxy [/tg]: " USER_TG_PATH
+    read_prompt "-> Путь для AdGuard Home DoH [/dns-query]: " USER_ADH_DOH_PATH
+    read_prompt "-> Путь для VLESS WebSocket [/vless-ws]: " USER_WS_PATH
+    read_prompt "-> Путь для VLESS XHTTP [/vless-xhttp]: " USER_XHTTP_PATH
+    read_prompt "-> ServiceName для VLESS gRPC [vless-grpc]: " USER_GRPC_PATH
+    read_prompt "-> ServiceName для Trojan gRPC [/trojan-grpc]: " USER_TROJAN_PATH
     
     PANEL_PATH="${USER_PANEL_PATH:-/xui/}"
     SUB_PATH="${USER_SUB_PATH:-/sub/}"
@@ -155,14 +192,17 @@ else
 fi
 
 # 1.4 Настройка модуля «Конфигурирование сервера»
-echo
-echo -e "${C_BOLD}Модуль управления «Конфигурирование сервера» (Stealth Dashboard):${C_RESET}"
-echo "1 - Случайный скрытый порт (Enter - рекомендуется)"
-echo "2 - Задать свой порт вручную"
-read -rp "Выберите вариант [1/2]: " MGMT_CHOICE
+if [[ -z "$MGMT_CHOICE" ]]; then
+    echo
+    echo -e "${C_BOLD}Модуль управления «Конфигурирование сервера» (Stealth Dashboard):${C_RESET}"
+    echo "1 - Случайный скрытый порт (Enter - рекомендуется)"
+    echo "2 - Задать свой порт вручную"
+    read_prompt "Выберите вариант [1/2]: " MGMT_CHOICE
+    MGMT_CHOICE="${MGMT_CHOICE:-1}"
+fi
 
 if [[ "$MGMT_CHOICE" == "2" ]]; then
-    read -rp "-> Введите порт для модуля управления [54892]: " USER_MGMT_PORT
+    read_prompt "-> Введите порт для модуля управления [54892]: " USER_MGMT_PORT
     MGMT_PORT="${USER_MGMT_PORT:-54892}"
 else
     MGMT_PORT=$(get_free_port)
@@ -266,10 +306,16 @@ msg_ok "IPv6 полностью отключен, ICMP ping заглушен, TC
 msg_inf "Шаг [3/9]: Выпуск SSL-сертификата через Cloudflare DNS-01 API..."
 mkdir -p /etc/letsencrypt
 
-cat << EOF > /etc/letsencrypt/cloudflare.ini
+if [[ -n "$CF_EMAIL" ]]; then
+    cat << EOF > /etc/letsencrypt/cloudflare.ini
 dns_cloudflare_email = ${CF_EMAIL}
 dns_cloudflare_api_key = ${CF_KEY}
 EOF
+else
+    cat << EOF > /etc/letsencrypt/cloudflare.ini
+dns_cloudflare_api_token = ${CF_KEY}
+EOF
+fi
 chmod 0600 /etc/letsencrypt/cloudflare.ini
 
 certbot certonly \
@@ -309,7 +355,8 @@ mv /tmp/AdGuardHome/* /opt/AdGuardHome/ 2>/dev/null || true
 rm -rf /tmp/AdGuardHome
 
 # Генерация bcrypt хеша для пароля AdGuard
-ADH_HASH=$(python3 -c "import crypt; print(crypt.crypt('${ADH_PASS}', crypt.mksalt(crypt.METHOD_SHA512)))" 2>/dev/null || htpasswd -bnBC 10 "" "${ADH_PASS}" | tr -d ':\n')
+ADH_HASH=$(htpasswd -bnBC 10 "" "${ADH_PASS}" 2>/dev/null | tr -d ':\n')
+[[ -z "$ADH_HASH" ]] && ADH_HASH=$(python3 -c "import crypt; print(crypt.crypt('${ADH_PASS}', crypt.mksalt(crypt.METHOD_SHA512)))" 2>/dev/null || true)
 
 # Скачивание шаблона AdGuardHome
 curl -sSL "${GITHUB_RAW}/assets/adguard/AdGuardHome.yaml.template" -o "$WORKDIR/AdGuardHome.yaml.template" || cp "assets/adguard/AdGuardHome.yaml.template" "$WORKDIR/AdGuardHome.yaml.template" 2>/dev/null || true
@@ -329,6 +376,15 @@ msg_ok "AdGuard Home установлен и запущен на портах ${
 # [5] 3X-UI PANEL & ALL 7 INBOUNDS CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 msg_inf "Шаг [5/9]: Установка 3X-UI и конфигурирование базы SQLite со всеми 7 inbounds..."
+export XUI_NONINTERACTIVE=1
+export XUI_USERNAME="${PANEL_USER}"
+export XUI_PASSWORD="${PANEL_PASS}"
+export XUI_PANEL_PORT="${PANEL_PORT}"
+export XUI_WEB_BASE_PATH="${PANEL_PATH}"
+export XUI_SSL_MODE="none"
+export XUI_DB_TYPE="sqlite"
+export XUI_ENABLE_FAIL2BAN="false"
+
 bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) << EOF
 y
 ${PANEL_PORT}
@@ -565,7 +621,8 @@ sed -e "s|__TG_PORT__|${TG_PORT}|g" \
     "$WORKDIR/telemt.toml.template" > /etc/telemt/config.toml
 
 # Генерация хеша пароля для Telemt-Panel
-TG_PANEL_HASH=$(python3 -c "import crypt; print(crypt.crypt('${TG_PANEL_PASS}', crypt.mksalt(crypt.METHOD_SHA512)))" 2>/dev/null || htpasswd -bnBC 10 "" "${TG_PANEL_PASS}" | tr -d ':\n')
+TG_PANEL_HASH=$(htpasswd -bnBC 10 "" "${TG_PANEL_PASS}" 2>/dev/null | tr -d ':\n')
+[[ -z "$TG_PANEL_HASH" ]] && TG_PANEL_HASH=$(python3 -c "import crypt; print(crypt.crypt('${TG_PANEL_PASS}', crypt.mksalt(crypt.METHOD_SHA512)))" 2>/dev/null || true)
 
 curl -sSL "${GITHUB_RAW}/assets/telemt/telemt-panel.toml.template" -o "$WORKDIR/telemt-panel.toml.template" || cp "assets/telemt/telemt-panel.toml.template" "$WORKDIR/telemt-panel.toml.template" 2>/dev/null || true
 sed -e "s|__TG_PANEL_INTERNAL_PORT__|${TG_PANEL_INTERNAL_PORT}|g" \

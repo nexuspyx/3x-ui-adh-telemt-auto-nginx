@@ -10,6 +10,11 @@
 Connect to your clean VPS via SSH as `root` and execute:
 
 ```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx/main/install.sh)"
+```
+
+Or via standard pipe:
+```bash
 curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx/main/install.sh | bash
 ```
 
