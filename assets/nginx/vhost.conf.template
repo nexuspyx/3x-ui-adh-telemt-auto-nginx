@@ -1,0 +1,197 @@
+upstream telemt_web {
+    server 127.0.0.1:__TG_PORT__;
+    keepalive 64;
+}
+
+server {
+    server_tokens off;
+    server_name __DOMAIN__;
+    listen 127.0.0.1:9443 ssl proxy_protocol;
+    real_ip_header proxy_protocol;
+    set_real_ip_from 127.0.0.1;
+    http2 on;
+    port_in_redirect off;
+    absolute_redirect off;
+    index index.html index.htm;
+    root /var/www/html/;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!eNULL:!MD5:!DES:!RC4:!ADH:!SSLv3:!EXP:!PSK:!DSS;
+    ssl_buffer_size 4k;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets on;
+    ssl_certificate     /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
+
+    # Anti-Crawler & Search Engine De-indexing
+    add_header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet, noimageindex" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Protect against malicious Host headers
+    if ($host !~* ^(.+\.)?__DOMAIN__$)            { return 444; }
+    if ($scheme ~* https)                          { set $safe 1; }
+    if ($ssl_server_name !~* ^(.+\.)?__DOMAIN__$) { set $safe "${safe}0"; }
+    if ($safe = 10)                                { return 444; }
+    if ($request_uri ~ "(\"|'|`|~|,|:|;|%|\$|&&|\?\?|0x00|0X00|\||\|\{|\}|\[|\]|<|>|\.\.\.|\.\.\/|\/\/\/)") { set $hack 1; }
+    
+    # Drop bad bots, spiders and vulnerability scanners instantly
+    if ($is_bad_bot) { return 444; }
+
+    # Drop typical exploit probing paths instantly
+    location ~* ^/(\.env|\.git|\.svn|\.aws|\.ssh|wp-admin|wp-login|xmlrpc|phpmyadmin|pma|adminer|config\.json|actuator|solr|shell|eval) {
+        return 444;
+    }
+
+    # === [1] 3X-UI WEB PANEL ===
+    location ^~ __PANEL_PATH__ {
+        proxy_pass http://127.0.0.1:__PANEL_PORT__;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    # === [2] SUBSCRIPTIONS (BASE64 & JSON) ===
+    location ^~ __SUB_PATH__ {
+        access_log off;
+        proxy_redirect off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_pass https://127.0.0.1:__SUB_PORT__;
+    }
+
+    location ^~ __SUB_JSON_PATH__ {
+        access_log off;
+        proxy_redirect off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_pass https://127.0.0.1:__SUB_PORT__;
+    }
+
+    location /assets {
+        proxy_pass https://127.0.0.1:__SUB_PORT__;
+    }
+
+    # === [3] TELEMT (TELEGRAM WEB PROXY) + 200 OK DECOY ===
+    location ^~ __TG_PATH__ {
+        proxy_pass http://telemt_web;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $telemt_connection_upgrade;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 65s;
+        proxy_read_timeout 65s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_next_upstream off;
+
+        # Intercept scanning errors and return Genuine 200 OK Decoy
+        proxy_intercept_errors on;
+        error_page 400 403 404 = @telemt_decoy;
+    }
+
+    location @telemt_decoy {
+        proxy_pass http://127.0.0.1:__TG_DECOY_PORT__;
+    }
+
+    # === [4] VLESS WEBSOCKET ===
+    location = __WS_PATH__ {
+        if ($hack = 1) { return 404; }
+        client_max_body_size 0;
+        client_body_timeout 1d;
+        proxy_read_timeout 1d;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_socket_keepalive on;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_pass http://127.0.0.1:__WS_PORT__;
+    }
+
+    # === [5] VLESS XHTTP (UDS SOCKET) ===
+    location ^~ __XHTTP_PATH__ {
+        client_max_body_size  0;
+        client_body_timeout   1h;
+        grpc_read_timeout     1h;
+        grpc_send_timeout     1h;
+        grpc_set_header Connection        "";
+        grpc_set_header Host              $host;
+        grpc_set_header X-Real-IP         $remote_addr;
+        grpc_set_header X-Forwarded-For   $remote_addr;
+        grpc_pass unix:/dev/shm/uds2023.sock;
+    }
+
+    # === [6] TROJAN gRPC ===
+    location = __TROJAN_PATH__ {
+        if ($hack = 1) { return 404; }
+        client_max_body_size 0;
+        client_body_timeout 1d;
+        grpc_read_timeout 1d;
+        grpc_socket_keepalive on;
+        grpc_set_header Host $host;
+        grpc_pass grpc://127.0.0.1:__TROJAN_PORT__;
+    }
+
+    # === [7] VLESS gRPC ===
+    location ^~ __GRPC_PATH__ {
+        client_max_body_size  0;
+        client_body_timeout   1d;
+        grpc_read_timeout     1d;
+        grpc_send_timeout     1d;
+        grpc_socket_keepalive on;
+        grpc_set_header       Host $host;
+        grpc_pass             grpc://127.0.0.1:__GRPC_PORT__;
+    }
+
+    # === [8] ADGUARD HOME DoH (DNS-OVER-HTTPS) ===
+    location = /dns-query {
+        limit_except GET POST { deny all; }
+        proxy_pass http://127.0.0.1:__ADH_DOH_PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+        proxy_intercept_errors off;
+        access_log off;
+    }
+
+    location ~ "^/dns-query/[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$" {
+        limit_except GET POST { deny all; }
+        proxy_pass http://127.0.0.1:__ADH_DOH_PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+        proxy_intercept_errors off;
+        access_log off;
+    }
+
+    # === [9] ROBOTS.TXT ===
+    location = /robots.txt {
+        root /var/www/html;
+        access_log off;
+        log_not_found off;
+    }
+
+    # === [10] CAMOUFLAGE COVER SITE ===
+    location / {
+        limit_req zone=cover_limit burst=20 nodelay;
+        try_files $uri $uri/ =404;
+    }
+}

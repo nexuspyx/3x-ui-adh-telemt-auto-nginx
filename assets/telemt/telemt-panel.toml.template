@@ -1,0 +1,8 @@
+# Telemt Web Panel Configuration
+[server]
+listen = "0.0.0.0:__TG_PANEL_PORT__"
+secret = "__TG_PANEL_PASS__"
+
+[telemt]
+config_path = "/etc/telemt/config.toml"
+service_name = "telemt"

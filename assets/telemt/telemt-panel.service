@@ -1,0 +1,14 @@
+[Unit]
+Description=Telemt Web Management Panel
+After=network.target telemt.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/telemt-panel -c /etc/telemt-panel/config.toml
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
