@@ -392,7 +392,16 @@ def configure(root=Path('/')):
         backend = 'systemd' if command('journalctl', '-n', '1', '--no-pager', check=False) else 'auto'
         if backend == 'auto' and not (root / 'var/log/auth.log').is_file():
             raise ValueError('No SSH journaling/log backend')
-        txn.write(FILES[0], MARKER + f'''[sshd]
+        txn.write(FILES[0], MARKER + f'''[DEFAULT]
+banaction = nftables[type=allports]
+banaction_allports = nftables[type=allports]
+bantime.increment = true
+bantime.rndtime = 1200
+bantime.maxtime = 5w
+bantime.factor = 2
+ignoreip = 127.0.0.1/8 ::1
+
+[sshd]
 enabled = true
 port = {','.join(map(str, ports))}
 backend = {backend}

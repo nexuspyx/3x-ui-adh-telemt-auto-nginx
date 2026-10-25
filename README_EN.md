@@ -134,7 +134,7 @@ The suite includes a dedicated management dashboard built with **Apple Human Int
 ### CLI Quick Commands via SSH:
 ```bash
 server-mgr open        # Open the management port in UFW with 30-min auto-timer
-server-mgr close       # Lock down UFW immediately (keeping only 22, 443, 8443 open)
+server-mgr close       # Lock down UFW immediately (keeping only 22 and 443 open)
 server-mgr status      # Show current status, port, and access URL
 server-mgr reset-pass  # Change admin password
 server-mgr             # Interactive terminal menu (TUI)
@@ -148,16 +148,19 @@ ssh -L 8088:127.0.0.1:<MGMT_PORT> root@your-domain
 
 ---
 
-## 🔒 Firewall & Security (UFW)
+## 🔒 Security, Firewall (UFW) & Fail2ban
 
-The firewall is enabled in strict lockdown mode:
-- `80/tcp` — **PERMANENTLY DENIED** (`ufw deny 80/tcp`).
-- `443/tcp` — Allowed (Nginx Stream + Reality).
-- `443/udp` — Allowed (Hysteria 2).
-- `SSH` — Allowed (only your current SSH port).
-- `65001/tcp` — Telemt Panel (HTTPS).
-- `3000/tcp` — AdGuard Home Web UI.
-- All other ports — **BLOCKED**.
+After installation, the system is fully hardened:
+- **UFW Firewall**:
+  - `SSH` — Allowed (only your verified SSH port, default `22/tcp`).
+  - `443/tcp` — Allowed (Nginx Stream + Reality / Web).
+  - `443/udp` — Allowed (Hysteria 2 / QUIC).
+  - `80/tcp` — **PERMANENTLY DENIED** (`ufw deny 80/tcp`).
+  - All other ports — **BLOCKED** (`default deny incoming`).
+- **Fail2ban (Brute-Force Protection)**:
+  - `nftables` integration: attackers are banned at the kernel level across **all ports on the server** (`allports`).
+  - **Progressive ban (`bantime.increment`)**: repeat offenders receive exponentially increasing ban durations (up to 5 weeks).
+  - Real-time `systemd` journal monitoring.
 
 ---
 

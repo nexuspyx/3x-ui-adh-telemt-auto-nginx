@@ -750,8 +750,8 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
 
 def lock_firewall():
     """
-    Strict lockdown: ensures only ports 22 (SSH), 443 (TCP/UDP),
-    and 8443 (Reality/AmneziaWG) are allowed in UFW.
+    Strict lockdown: ensures only ports 22 (SSH) and 443 (TCP/UDP)
+    are allowed in UFW.
     """
     global UNLOCK_EXPIRY
     UNLOCK_EXPIRY = 0
@@ -786,11 +786,9 @@ def lock_firewall():
         subprocess.run(["ufw", "allow", f"{ssh_port}/tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["ufw", "allow", "443/tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["ufw", "allow", "443/udp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["ufw", "allow", "8443/tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["ufw", "allow", "8443/udp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         subprocess.run(["ufw", "reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print("[FIREWALL] Locked down. Only ports 22, 443, 8443 are allowed.")
+        print("[FIREWALL] Locked down. Only ports 22, 443 are allowed.")
         return True
     except Exception as e:
         print(f"[FIREWALL ERROR] {e}")
@@ -1910,7 +1908,7 @@ HTML_PAGE = """<!DOCTYPE html>
     function confirmLogout() {
       document.getElementById('modal-title').innerText = 'Выход из модуля';
       document.getElementById('modal-body').innerHTML =
-        'При выходе порт модуля будет <b>ЗАБЛОКИРОВАН в файрволе UFW</b>.<br>Открытыми останутся только порты 22, 443 и 8443.<br><br>Для повторного входа откройте порт через консоль (<code>server-mgr open</code>) или используйте SSH-туннель.';
+        'При выходе порт модуля будет <b>ЗАБЛОКИРОВАН в файрволе UFW</b>.<br>Открытыми останутся только порты 22 и 443.<br><br>Для повторного входа откройте порт через консоль (<code>server-mgr open</code>) или используйте SSH-туннель.';
       const btn = document.getElementById('modal-confirm-btn');
       btn.className = 'btn-confirm danger';
       btn.innerText = 'Выйти и заблокировать порт';
@@ -2107,7 +2105,7 @@ LOGGED_OUT_PAGE = """<!DOCTYPE html>
   <div class="card">
     <div class="icon">🔒</div>
     <h1>Сессия завершена</h1>
-    <p>Порт модуля закрыт в файрволе UFW. Открытыми на сервере остались только порты <b>22</b>, <b>443</b> и <b>8443</b>.</p>
+    <p>Порт модуля закрыт в файрволе UFW. Открытыми на сервере остались только порты <b>22</b> и <b>443</b>.</p>
     <div class="code-box">
       # Для повторного открытия выполните в SSH:<br>
       server-mgr open
