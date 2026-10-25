@@ -1,0 +1,53 @@
+# ==============================================================================
+# TELEMT CONFIGURATION (TELEGRAM WEB PROXY)
+# ==============================================================================
+# IMPORTANT: CLIENT KEYS & SECRETS ARE STORED IN THIS FILE!
+# Location on server: /etc/telemt/config.toml
+# Section: [access.users]
+#
+# TO MIGRATE CLIENTS TO ANOTHER SERVER WITHOUT CHANGING THEIR TG LINKS:
+# Simply copy this file (/etc/telemt/config.toml) to the new server and run:
+# systemctl restart telemt
+# ==============================================================================
+
+[general]
+use_ipv6 = false
+tcp_fast_open = true
+
+[web]
+listen = "127.0.0.1:__TG_PORT__"
+base_path = "__TG_PATH_NO_SLASH__"
+host = "__DOMAIN__"
+secret_mode = "dd"
+trusted_proxies = ["127.0.0.1"]
+x_forwarded_for = true
+carrier = "https"
+carriers = ["websocket-lanes", "websocket", "https-lanes", "https"]
+carrier_learning = true
+
+[web.decoy]
+resolve = "never"
+upstream = "http://127.0.0.1:__TG_DECOY_PORT__"
+
+[[web.vhosts.profiles]]
+max_sessions = 16
+max_streams = 512
+max_streams_per_session = 64
+secret_mode = "dd"
+user = "__TG_USER__"
+
+[access]
+user_max_tcp_conns_global_each = 0
+replay_check_len = 65536
+replay_window_secs = 120
+
+# ------------------------------------------------------------------------------
+# CLIENT SECRETS (Format: username = "32_HEX_CHARS")
+# ------------------------------------------------------------------------------
+[access.users]
+__TG_USER__ = "__TG_SECRET__"
+
+[[upstreams]]
+type = "direct"
+enabled = true
+weight = 10

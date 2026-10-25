@@ -1,0 +1,99 @@
+# AdGuard Home Configuration
+http:
+  pprof:
+    port: 0
+    enabled: false
+  address: 0.0.0.0:__ADH_WEB_PORT__
+  session_ttl: 720h
+
+users:
+  - name: __ADH_USER__
+    password: __ADH_PASS_HASH__
+
+auth_attempts: 5
+block_auth_min: 15
+
+dns:
+  bind_hosts:
+    - 127.0.0.1
+  port: __ADH_DNS_PORT__
+  statistics_interval: 1
+  querylog_enabled: true
+  querylog_file_enabled: true
+  querylog_interval: 24h
+  querylog_size_memory: 1000
+  anonymize_client_ip: true
+  protection_enabled: true
+  blocking_mode: default
+  blocking_ipv4: ""
+  blocking_ipv6: ""
+  blocked_response_ttl: 10
+  protection_disabled_until: null
+  edns_client_subnet:
+    custom_ip: ""
+    enabled: false
+    use_custom: false
+  cache_size: 4194304
+  cache_ttl_min: 300
+  cache_ttl_max: 86400
+  cache_optimistic: true
+  bogus_nxdomain: []
+  aaaa_disabled: true
+  enable_dnssec: false
+  warn_hosts_resolve: false
+  upstream_dns:
+    - https://dns.quad9.net/dns-query
+    - https://dns.cloudflare.com/dns-query
+    - tls://dns.google
+  upstream_dns_file: ""
+  bootstrap_dns:
+    - 1.1.1.1
+    - 8.8.8.8
+    - 9.9.9.9
+  all_servers: false
+  fastest_addr: true
+  fastest_timeout: 1s
+  use_http3_upstreams: false
+  use_dns64: false
+  dns64_prefixes: []
+  serve_http3: false
+  use_private_ptr_resolvers: false
+
+tls:
+  enabled: false
+  server_name: ""
+  force_stls: false
+  port_https: __ADH_DOH_PORT__
+  port_dns_over_tls: 0
+  port_dns_over_quic: 0
+  allow_unencrypted_doh: true
+
+filters:
+  - enabled: true
+    url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt
+    name: AdGuard DNS filter
+    id: 1
+
+whitelist_filters: []
+user_rules: []
+dhcp:
+  enabled: false
+clients:
+  runtime_sources:
+    whois: false
+    dhcp: false
+    etc_hosts: false
+  persistent: []
+log:
+  file: ""
+  max_backups: 0
+  max_size: 100
+  max_age: 3
+  compress: false
+  local_time: false
+  verbose: false
+os:
+  group: ""
+  user: ""
+  rlimit_nofile: 0
+schema_version: 29
