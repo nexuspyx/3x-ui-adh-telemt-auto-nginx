@@ -1652,20 +1652,138 @@ install_clash_sub() {
 }
 
 install_fake_site() {
-    local idx=$(( (RANDOM % FAKE_SITE_COUNT) + 1 ))
-    local site_id
-    site_id=$(printf "site-%02d" "$idx")
-    local url="${GITHUB_RAW}/assets/fake-sites/${site_id}/index.html"
-
     mkdir -p /var/www/html || return 1
-    if curl -fsSL "$url" -o /var/www/html/index.html; then
-        chown -R www-data:www-data /var/www/html 2>/dev/null || return 1
-        chmod 644 /var/www/html/index.html || return 1
-        msg_ok "Fake cover site '${site_id}' installed."
-    else
-        msg_err "Failed to download fake site ${site_id} from GitHub."
-        return 1
-    fi
+    cat << 'EOF' > /var/www/html/index.html
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Сайт работает / Web Server is working</title>
+    <style>
+        :root {
+            color-scheme: dark;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #0b0f19;
+            color: #f3f4f6;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 24px;
+        }
+        .container {
+            max-width: 540px;
+            width: 100%;
+            background: #111827;
+            border: 1px solid #1f2937;
+            border-radius: 16px;
+            padding: 36px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            text-align: center;
+        }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(16, 185, 129, 0.12);
+            color: #10b981;
+            padding: 6px 14px;
+            border-radius: 9999px;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            border: 1px solid rgba(16, 185, 129, 0.25);
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #10b981;
+            border-radius: 50%;
+            box-shadow: 0 0 8px #10b981;
+        }
+        h1 {
+            color: #f9fafb;
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+        p {
+            color: #9ca3af;
+            font-size: 15px;
+            line-height: 1.6;
+            margin-bottom: 24px;
+        }
+        .info-card {
+            background: #0f172a;
+            border: 1px dashed #374151;
+            border-radius: 10px;
+            padding: 16px 20px;
+            text-align: left;
+            margin-bottom: 20px;
+        }
+        .info-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #6b7280;
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+        .info-code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 14px;
+            color: #38bdf8;
+            word-break: break-all;
+        }
+        .footer-note {
+            font-size: 13px;
+            color: #6b7280;
+            line-height: 1.5;
+        }
+        .footer-note code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            background: #1f2937;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #e5e7eb;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="status-badge">
+            <span class="status-dot"></span> Веб-сервер работает &bull; HTTP 200 OK
+        </div>
+        <h1>Сайт успешно настроен</h1>
+        <p>Это стандартная страница-заглушка. Веб-сервер активен и готов отдавать контент вашего сайта.</p>
+        <div class="info-card">
+            <div class="info-label">Директория для загрузки сайта на сервере:</div>
+            <div class="info-code">/var/www/html/</div>
+        </div>
+        <div class="footer-note">
+            Чтобы опубликовать ваш сайт, загрузите его файлы в указанный каталог, заменив <code>index.html</code>.
+        </div>
+    </div>
+</body>
+</html>
+EOF
+    cat << 'EOF' > /var/www/html/robots.txt
+User-agent: *
+Disallow: /
+EOF
+    chown -R www-data:www-data /var/www/html 2>/dev/null || return 1
+    chmod 644 /var/www/html/index.html /var/www/html/robots.txt 2>/dev/null || return 1
+    msg_ok "Placeholder site installed in /var/www/html/."
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2585,6 +2703,9 @@ show_results() {
     elif [[ "${AGH_RESULT:-not_requested}" == failed_unverified || "${VISION_RESULT:-not_requested}" == failed_unverified || "${CORE_RESULT:-configured}" == failed_unverified ]]; then
         msg_warn ' Post-rollback core health could not be verified. Inspect nginx and core services.'
     fi
+    msg_inf "\n Website (placeholder / your site):"
+    msg_inf " https://${domain}/"
+    msg_inf " Upload your website files to: /var/www/html/\n"
     msg_inf '============================================================'
     msg_inf ' Save these credentials before closing the terminal.'
     msg_inf '============================================================'
