@@ -984,7 +984,7 @@ cat << EOF > /root/server_credentials.txt
        server-mgr open
     2) Или через SSH-туннель (без открытия портов в интернет вообще):
        ssh -L 8088:127.0.0.1:${MGMT_PORT} root@${DOMAIN}
-       и вход в браузере по адресу: http://localhost:8088/
+       и вход в браузере по адресу: https://localhost:8088/
 
     Закрыть порт вручную: server-mgr close (или кнопка «Выход» в веб-интерфейсе)
 

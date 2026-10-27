@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Build Timestamp: 20:55.27.10.2026
 # ==============================================================================
 # «КОНФИГУРИРОВАНИЕ СЕРВЕРА» (SERVER-MGR CLI TOOL)
 # ==============================================================================
@@ -95,6 +96,15 @@ cmd_status() {
     local ufw_status="ЗАКРЫТ (Stealth)"
     if ufw status | grep -q "${port}/tcp.*ALLOW"; then
         ufw_status="ОТКРЫТ (Активен)"
+        if [[ -f "/etc/server-manager/auto_lock.timer" ]]; then
+            local expiry
+            expiry=$(cat "/etc/server-manager/auto_lock.timer" 2>/dev/null || echo "")
+            if [[ -n "$expiry" ]]; then
+                local rem
+                rem=$(python3 -c "import time; e=float('$expiry'); r=int(e - time.time()); print(f'осталось {r//60} мин. {r%60} сек.' if r > 0 else 'таймер истекает...')")
+                ufw_status="ОТКРЫТ (Авто-таймер: ${rem})"
+            fi
+        fi
     fi
     echo -e "  Статус порта в UFW: ${ufw_status}"
     echo
