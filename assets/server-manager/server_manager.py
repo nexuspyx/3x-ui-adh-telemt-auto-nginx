@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# Build Timestamp: 19:15.28.10.2026
+# Build Timestamp: 19:40.28.10.2026
 """
 ==============================================================================
 «КОНФИГУРИРОВАНИЕ СЕРВЕРА» (SERVER CONFIGURATION MANAGER)
@@ -415,7 +415,9 @@ def normalize_path(path, style="with_slash"):
     - 'leading_only': /path (e.g. websocket, xhttp, DoH, Telemt location)
     - 'no_slash': path (e.g. gRPC serviceName, Telemt config.toml base_path)
     """
-    clean = "/" + path.strip().strip("/")
+    if not path:
+        return ""
+    clean = "/" + str(path).strip().strip("/")
     if style == "with_slash":
         return clean + "/" if not clean.endswith("/") else clean
     elif style == "leading_only":
@@ -459,7 +461,7 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
 
         # 1. 3X-UI PANEL
         if service_id == "xui_panel":
-            norm_path = normalize_path(new_path, "with_slash")
+            norm_path = normalize_path(new_path, "with_slash") if new_path else cur_path
             if os.path.exists(XUI_DB_PATH):
                 conn = sqlite3.connect(XUI_DB_PATH)
                 cur = conn.cursor()
@@ -482,7 +484,7 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
 
         # 2. SUB BASE64
         elif service_id == "sub_base64":
-            norm_path = normalize_path(new_path, "with_slash")
+            norm_path = normalize_path(new_path, "with_slash") if new_path else cur_path
             if os.path.exists(XUI_DB_PATH):
                 conn = sqlite3.connect(XUI_DB_PATH)
                 cur = conn.cursor()
@@ -508,7 +510,7 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
 
         # 3. SUB JSON (HAPP / SING-BOX)
         elif service_id == "sub_json":
-            norm_path = normalize_path(new_path, "with_slash")
+            norm_path = normalize_path(new_path, "with_slash") if new_path else cur_path
             if os.path.exists(XUI_DB_PATH):
                 conn = sqlite3.connect(XUI_DB_PATH)
                 cur = conn.cursor()
@@ -527,8 +529,8 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
 
         # 4. TELEMT TELEGRAM WEB PROXY
         elif service_id == "telemt":
-            norm_path_leading = normalize_path(new_path, "leading_only")
-            norm_path_no_slash = normalize_path(new_path, "no_slash")
+            norm_path_leading = normalize_path(new_path, "leading_only") if new_path else cur_path
+            norm_path_no_slash = normalize_path(new_path, "no_slash") if new_path else cur_path.lstrip("/")
 
             if os.path.exists(TELEMT_CONF_PATH):
                 with open(TELEMT_CONF_PATH, "r") as f:
@@ -552,7 +554,7 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
 
         # 5. ADGUARD HOME DOH
         elif service_id == "adguard_doh":
-            norm_path_leading = normalize_path(new_path, "leading_only")
+            norm_path_leading = normalize_path(new_path, "leading_only") if new_path else cur_path
             if os.path.exists(nginx_vhost):
                 with open(nginx_vhost, "r") as f:
                     content = f.read()
@@ -564,7 +566,7 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
 
         # 6. VLESS WEBSOCKET
         elif service_id == "vless_ws":
-            norm_path_leading = normalize_path(new_path, "leading_only")
+            norm_path_leading = normalize_path(new_path, "leading_only") if new_path else cur_path
             if os.path.exists(XUI_DB_PATH):
                 conn = sqlite3.connect(XUI_DB_PATH)
                 cur = conn.cursor()
@@ -594,7 +596,7 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
 
         # 7. VLESS XHTTP
         elif service_id == "vless_xhttp":
-            norm_path_leading = normalize_path(new_path, "leading_only")
+            norm_path_leading = normalize_path(new_path, "leading_only") if new_path else cur_path
             if os.path.exists(XUI_DB_PATH):
                 conn = sqlite3.connect(XUI_DB_PATH)
                 cur = conn.cursor()
@@ -618,7 +620,7 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
 
         # 8. TROJAN GRPC
         elif service_id == "trojan_grpc":
-            norm_path_no_slash = normalize_path(new_path, "no_slash")
+            norm_path_no_slash = normalize_path(new_path, "no_slash") if new_path else cur_path.lstrip("/")
             if os.path.exists(XUI_DB_PATH):
                 conn = sqlite3.connect(XUI_DB_PATH)
                 cur = conn.cursor()
@@ -648,7 +650,7 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
 
         # 9. VLESS GRPC
         elif service_id == "vless_grpc":
-            norm_path_no_slash = normalize_path(new_path, "no_slash")
+            norm_path_no_slash = normalize_path(new_path, "no_slash") if new_path else cur_path.lstrip("/")
             if os.path.exists(XUI_DB_PATH):
                 conn = sqlite3.connect(XUI_DB_PATH)
                 cur = conn.cursor()
@@ -694,10 +696,13 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
         # Reload affected services
         subprocess.run(["systemctl", "reload", "nginx"], check=False)
         if service_id in ["xui_panel", "sub_base64", "sub_json", "vless_ws", "vless_xhttp", "trojan_grpc", "vless_grpc"]:
+            subprocess.run(["systemctl", "reset-failed", "x-ui"], check=False)
             subprocess.run(["systemctl", "restart", "x-ui"], check=False)
         elif service_id == "telemt":
+            subprocess.run(["systemctl", "reset-failed", "telemt"], check=False)
             subprocess.run(["systemctl", "restart", "telemt"], check=False)
         elif service_id == "adguard_doh":
+            subprocess.run(["systemctl", "reset-failed", "AdGuardHome"], check=False)
             subprocess.run(["systemctl", "restart", "AdGuardHome"], check=False)
 
         # Cleanup backup
