@@ -465,7 +465,7 @@ VALUES (
       }
     }',
     'in-8443-tcp',
-    '{"enabled": true, "destOverride": ["http", "tls"]}'
+    '{"enabled": true, "destOverride": ["http", "tls", "quic"]}'
 );
 
 -- 2. VLESS WebSocket
@@ -483,7 +483,7 @@ VALUES (
       }
     }',
     'in-${WS_PORT}-tcp',
-    '{"enabled": true, "destOverride": ["http", "tls"]}'
+    '{"enabled": true, "destOverride": ["http", "tls", "quic"]}'
 );
 
 -- 3. VLESS XHTTP (Unix Domain Socket)
@@ -503,7 +503,7 @@ VALUES (
       }
     }',
     'inbound-/dev/shm/uds2023.sock,0666:0|',
-    '{"enabled": true, "destOverride": ["http", "tls"]}'
+    '{"enabled": true, "destOverride": ["http", "tls", "quic"]}'
 );
 
 -- 4. Trojan gRPC
@@ -521,7 +521,7 @@ VALUES (
       }
     }',
     'inbound-${TROJAN_PORT}',
-    '{"enabled": true, "destOverride": ["http", "tls"]}'
+    '{"enabled": true, "destOverride": ["http", "tls", "quic"]}'
 );
 
 -- 5. VLESS gRPC
@@ -539,7 +539,7 @@ VALUES (
       }
     }',
     'inbound-${GRPC_PORT}',
-    '{"enabled": true, "destOverride": ["http", "tls"]}'
+    '{"enabled": true, "destOverride": ["http", "tls", "quic"]}'
 );
 
 -- 6. Hysteria 2 (UDP 443)
@@ -564,7 +564,7 @@ VALUES (
       }
     }',
     'inbound-443-udp',
-    '{"enabled": true, "destOverride": ["http", "tls"]}'
+    '{"enabled": true, "destOverride": ["http", "tls", "quic"]}'
 );
 
 -- 7. AmneziaWG (UDP 8443)
@@ -585,6 +585,14 @@ VALUES
     ((SELECT id FROM inbounds WHERE tag='inbound-${GRPC_PORT}'), '$(openssl rand -hex 8)', 0, 'vless-grpc', '${DOMAIN}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-443-udp'), '$(openssl rand -hex 8)', 0, 'hysteria2', '${DOMAIN}', 443, 'same', '', '[]');
 EOF
+
+# Синхронизация DNS AdGuard Home с шаблоном Xray в SQLite 3x-ui
+msg_inf "Конфигурирование DNS AdGuard Home (порт ${ADH_DNS_PORT}) в шаблоне Xray..."
+curl -sSL "${GITHUB_RAW}/assets/adguard/configure_xui_dns.py" -o "$WORKDIR/configure_xui_dns.py" || cp "assets/adguard/configure_xui_dns.py" "$WORKDIR/configure_xui_dns.py" 2>/dev/null || true
+if [[ -f "$WORKDIR/configure_xui_dns.py" ]]; then
+    python3 "$WORKDIR/configure_xui_dns.py" "/etc/x-ui/x-ui.db" "${ADH_DNS_PORT}"
+    install -o root -g root -m 0755 "$WORKDIR/configure_xui_dns.py" /usr/local/bin/x-ui-dns-sync 2>/dev/null || true
+fi
 
 systemctl daemon-reload
 systemctl restart x-ui
