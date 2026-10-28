@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# Build Timestamp: 19:40.28.10.2026
+# Build Timestamp: 19:53.28.10.2026
 """
 ==============================================================================
 «КОНФИГУРИРОВАНИЕ СЕРВЕРА» (SERVER CONFIGURATION MANAGER)
@@ -621,6 +621,7 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
         # 8. TROJAN GRPC
         elif service_id == "trojan_grpc":
             norm_path_no_slash = normalize_path(new_path, "no_slash") if new_path else cur_path.lstrip("/")
+            cur_clean = cur_path.lstrip("/")
             if os.path.exists(XUI_DB_PATH):
                 conn = sqlite3.connect(XUI_DB_PATH)
                 cur = conn.cursor()
@@ -641,16 +642,17 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
                 with open(nginx_vhost, "r") as f:
                     content = f.read()
                 if new_path and cur_path:
-                    content = content.replace(f"location ^~ /{cur_path}", f"location ^~ /{norm_path_no_slash}")
+                    content = re.sub(r'(location\s+\^\~\s+)/?' + re.escape(cur_clean) + r'(\s*\{)', f'\\g<1>/{norm_path_no_slash}\\2', content)
                 if new_port:
-                    target_sn = norm_path_no_slash if new_path else cur_path
-                    content = re.sub(r'(location\s+\^\~\s+/' + re.escape(target_sn) + r'[\s\S]*?grpc_pass\s+grpc://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', content)
+                    target_sn = norm_path_no_slash if new_path else cur_clean
+                    content = re.sub(r'(location\s+\^\~\s+/?' + re.escape(target_sn) + r'[\s\S]*?grpc_pass\s+grpc://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', content)
                 with open(nginx_vhost, "w") as f:
                     f.write(content)
 
         # 9. VLESS GRPC
         elif service_id == "vless_grpc":
             norm_path_no_slash = normalize_path(new_path, "no_slash") if new_path else cur_path.lstrip("/")
+            cur_clean = cur_path.lstrip("/")
             if os.path.exists(XUI_DB_PATH):
                 conn = sqlite3.connect(XUI_DB_PATH)
                 cur = conn.cursor()
@@ -671,10 +673,10 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
                 with open(nginx_vhost, "r") as f:
                     content = f.read()
                 if new_path and cur_path:
-                    content = content.replace(f"location ^~ /{cur_path}", f"location ^~ /{norm_path_no_slash}")
+                    content = re.sub(r'(location\s+\^\~\s+)/?' + re.escape(cur_clean) + r'(\s*\{)', f'\\g<1>/{norm_path_no_slash}\\2', content)
                 if new_port:
-                    target_sn = norm_path_no_slash if new_path else cur_path
-                    content = re.sub(r'(location\s+\^\~\s+/' + re.escape(target_sn) + r'[\s\S]*?grpc_pass\s+grpc://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', content)
+                    target_sn = norm_path_no_slash if new_path else cur_clean
+                    content = re.sub(r'(location\s+\^\~\s+/?' + re.escape(target_sn) + r'[\s\S]*?grpc_pass\s+grpc://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', content)
                 with open(nginx_vhost, "w") as f:
                     f.write(content)
 
@@ -701,9 +703,7 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
         elif service_id == "telemt":
             subprocess.run(["systemctl", "reset-failed", "telemt"], check=False)
             subprocess.run(["systemctl", "restart", "telemt"], check=False)
-        elif service_id == "adguard_doh":
-            subprocess.run(["systemctl", "reset-failed", "AdGuardHome"], check=False)
-            subprocess.run(["systemctl", "restart", "AdGuardHome"], check=False)
+        # Note: adguard_doh changes only require nginx reload (handled above) since AdGuardHome backend is untouched
 
         # Cleanup backup
         shutil.rmtree(backup_dir, ignore_errors=True)
