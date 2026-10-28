@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# Build Timestamp: 20:55.27.10.2026
+# Build Timestamp: 19:15.28.10.2026
 """
 ==============================================================================
 «КОНФИГУРИРОВАНИЕ СЕРВЕРА» (SERVER CONFIGURATION MANAGER)
@@ -499,8 +499,10 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
                     content = f.read()
                 if new_path and cur_path:
                     content = content.replace(f"location ^~ {cur_path}", f"location ^~ {norm_path}")
-                if new_port and cur_port:
-                    content = re.sub(r'(# === \[2\] SUBSCRIPTIONS[\s\S]*?proxy_pass\s+https?://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', content)
+                if new_port:
+                    def _sub_repl(m):
+                        return re.sub(r'(proxy_pass\s+https?://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', m.group(0))
+                    content = re.sub(r'# === \[2\] SUBSCRIPTIONS[\s\S]*?(?=# === \[3\])', _sub_repl, content, count=1)
                 with open(nginx_vhost, "w") as f:
                     f.write(content)
 
