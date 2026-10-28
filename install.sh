@@ -394,6 +394,10 @@ EOF
 
 systemctl stop x-ui 2>/dev/null || true
 
+# Предотвращение блокировки частых перезапусков x-ui в systemd
+mkdir -p /etc/systemd/system/x-ui.service.d
+echo -e "[Unit]\nStartLimitIntervalSec=0" > /etc/systemd/system/x-ui.service.d/20-restart-limits.conf
+
 # Генерация ключей для Reality
 XRAY_BIN="/usr/local/x-ui/bin/xray-linux-${AGH_ARCH}"
 if [[ ! -x "$XRAY_BIN" ]]; then
