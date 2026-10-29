@@ -2,6 +2,7 @@
 """
 Синхронизация Xray Core (3x-ui) и AdGuard Home DNS.
 Выполняет безопасный идемпотентный JSON-патчинг шаблона xrayTemplateConfig в базе SQLite.
+Generated: 21:32.29.10.2026
 """
 import json
 import re
@@ -10,6 +11,92 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
+
+
+def get_default_xray_template():
+    """Возвращает стандартный шаблон конфигурации Xray для 3x-ui, если он еще не инициализирован в базе."""
+    return {
+        "log": {
+            "access": "",
+            "error": "",
+            "loglevel": "warning",
+            "dnsLog": False,
+        },
+        "api": {
+            "tag": "api",
+            "services": [
+                "HandlerService",
+                "LoggerService",
+                "StatsService",
+            ],
+        },
+        "inbounds": [
+            {
+                "tag": "api",
+                "port": 62789,
+                "listen": "127.0.0.1",
+                "protocol": "dokodemo-door",
+                "settings": {
+                    "address": "127.0.0.1",
+                },
+            }
+        ],
+        "outbounds": [
+            {
+                "tag": "direct",
+                "protocol": "freedom",
+                "settings": {
+                    "domainStrategy": "UseIPv4",
+                },
+            },
+            {
+                "tag": "blocked",
+                "protocol": "blackhole",
+                "settings": {},
+            },
+        ],
+        "policy": {
+            "levels": {
+                "0": {
+                    "statsUserUplink": True,
+                    "statsUserDownlink": True,
+                }
+            },
+            "system": {
+                "statsInboundUplink": True,
+                "statsInboundDownlink": True,
+                "statsOutboundUplink": True,
+                "statsOutboundDownlink": True,
+            },
+        },
+        "routing": {
+            "domainStrategy": "IPIfNonMatch",
+            "rules": [
+                {
+                    "type": "field",
+                    "inboundTag": [
+                        "api"
+                    ],
+                    "outboundTag": "api",
+                },
+                {
+                    "type": "field",
+                    "ip": [
+                        "geoip:private"
+                    ],
+                    "outboundTag": "blocked",
+                },
+                {
+                    "type": "field",
+                    "protocol": [
+                        "bittorrent"
+                    ],
+                    "outboundTag": "blocked",
+                },
+            ],
+        },
+        "stats": {},
+    }
 
 
 def get_adh_dns_port(yaml_path="/opt/AdGuardHome/AdGuardHome.yaml", default=57998):
@@ -52,10 +139,15 @@ def patch_xui_dns(db_path="/etc/x-ui/x-ui.db", dns_port=None):
         cur = conn.cursor()
         cur.execute("SELECT value FROM settings WHERE key=?", ("xrayTemplateConfig",))
         row = cur.fetchone()
-        if not row:
-            raise RuntimeError("xrayTemplateConfig не найден в таблице settings")
-
-        cfg = json.loads(row[0])
+        if not row or not row[0]:
+            print("[INFO] xrayTemplateConfig отсутствует в таблице settings — инициализируем шаблон по умолчанию")
+            cfg = get_default_xray_template()
+        else:
+            try:
+                cfg = json.loads(row[0])
+            except Exception:
+                print("[WARN] Не удалось распарсить существующий xrayTemplateConfig — используется шаблон по умолчанию")
+                cfg = get_default_xray_template()
 
         # 1. Секция DNS
         cfg.setdefault("dns", {})
@@ -146,28 +238,32 @@ def patch_xui_dns(db_path="/etc/x-ui/x-ui.db", dns_port=None):
         routing["rules"] = rules
 
         # Сохранение обновленного шаблона
+        cur.execute("DELETE FROM settings WHERE key=?", ("xrayTemplateConfig",))
         cur.execute(
-            "UPDATE settings SET value=? WHERE key=?",
-            (json.dumps(cfg, indent=2, ensure_ascii=False), "xrayTemplateConfig"),
+            "INSERT INTO settings (key, value) VALUES (?, ?)",
+            ("xrayTemplateConfig", json.dumps(cfg, indent=2, ensure_ascii=False)),
         )
 
         # 4. Обновление Sniffing на всех Inbounds (http, tls, quic)
-        cur.execute("SELECT id, sniffing FROM inbounds")
-        for iid, sn in cur.fetchall():
-            try:
-                data = json.loads(sn)
-                if data.get("enabled"):
-                    dest = data.get("destOverride", [])
-                    for proto in ["http", "tls", "quic"]:
-                        if proto not in dest:
-                            dest.append(proto)
-                    data["destOverride"] = dest
-                    cur.execute(
-                        "UPDATE inbounds SET sniffing=? WHERE id=?",
-                        (json.dumps(data), iid),
-                    )
-            except Exception:
-                pass
+        try:
+            cur.execute("SELECT id, sniffing FROM inbounds")
+            for iid, sn in cur.fetchall():
+                try:
+                    data = json.loads(sn)
+                    if data.get("enabled"):
+                        dest = data.get("destOverride", [])
+                        for proto in ["http", "tls", "quic"]:
+                            if proto not in dest:
+                                dest.append(proto)
+                        data["destOverride"] = dest
+                        cur.execute(
+                            "UPDATE inbounds SET sniffing=? WHERE id=?",
+                            (json.dumps(data), iid),
+                        )
+                except Exception:
+                    pass
+        except sqlite3.OperationalError:
+            pass
 
         conn.commit()
     print(f"[SUCCESS] DNS AdGuard Home (порт {dns_port}) успешно интегрирован в {db_path}")
