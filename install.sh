@@ -2,6 +2,7 @@
 # ==============================================================================
 # 3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (ONE-COMMAND INSTALLER)
 # Repository: https://github.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
+# Generated: 20:41.29.10.2026
 # ==============================================================================
 
 set -eo pipefail
@@ -33,7 +34,7 @@ mkdir -p "$WORKDIR"
 
 # Helper for random strings
 gen_random_string() {
-    tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c "$1" 2>/dev/null || openssl rand -hex "$1" | head -c "$1"
+    LC_ALL=C tr -dc 'a-zA-Z0-9' < /dev/urandom 2>/dev/null | head -c "$1" || openssl rand -hex "$1" | head -c "$1"
 }
 
 # Helper to find a free TCP port
@@ -48,50 +49,48 @@ get_free_port() {
     done
 }
 
-# Helper for interactive prompts (safely reads from /dev/tty if stdin is piped via curl ... | bash)
+# Helper for interactive prompts (всегда выводит текст подсказки через printf, исключая подавление вывода)
 read_prompt() {
     local prompt_msg="$1"
     local var_name="$2"
     local is_secret="${3:-0}"
     local input_val=""
+
+    printf "%b" "$prompt_msg"
     if [[ ! -t 0 ]] && [[ -r /dev/tty ]]; then
         if [[ "$is_secret" -eq 1 ]]; then
-            read -rsp "$prompt_msg" input_val < /dev/tty || true
+            read -rs input_val < /dev/tty || true
             echo
         else
-            read -rp "$prompt_msg" input_val < /dev/tty || true
+            read -r input_val < /dev/tty || true
         fi
     else
         if [[ "$is_secret" -eq 1 ]]; then
-            read -rsp "$prompt_msg" input_val 2>/dev/null || true
+            read -rs input_val 2>/dev/null || true
             echo
         else
-            read -rp "$prompt_msg" input_val 2>/dev/null || true
+            read -r input_val 2>/dev/null || true
         fi
     fi
     printf -v "$var_name" '%s' "$input_val"
 }
 
-# Clear screen only when terminal is capable
-[[ -t 1 ]] && clear 2>/dev/null || true
-echo -e "${C_CYAN}"
-cat << 'EOF'
-╔══════════════════════════════════════════════════════════════════════════════════╗
-║        3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (STEALTH EDITION)          ║
-║                  Автоматическая установка и полная защита от ТСПУ                ║
-╚══════════════════════════════════════════════════════════════════════════════════╝
-EOF
-echo -e "${C_RESET}"
+echo
+echo -e "${C_CYAN}╔══════════════════════════════════════════════════════════════════════════════════╗${C_RESET}"
+echo -e "${C_CYAN}║        3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (STEALTH EDITION)          ║${C_RESET}"
+echo -e "${C_CYAN}║                  Мастер автоматической установки и полной защиты                 ║${C_RESET}"
+echo -e "${C_CYAN}╚══════════════════════════════════════════════════════════════════════════════════╝${C_RESET}"
+echo
 
 # ─────────────────────────────────────────────────────────────────────────────
-# [0] OS CHECK
+# [0] OS CHECK & NETWORK DETECTION
 # ─────────────────────────────────────────────────────────────────────────────
 msg_inf "Проверка совместимости операционной системы..."
 if [[ -f /etc/os-release ]]; then
     . /etc/os-release
     case "$ID" in
         ubuntu|debian)
-            msg_ok "ОС поддерживается: ${PRETTY_NAME}"
+            msg_ok "Операционная система поддерживается: ${PRETTY_NAME}"
             ;;
         *)
             msg_err "Неподдерживаемая ОС: ${ID}. Требуется Ubuntu 24.04/26.04 или Debian 13."
@@ -103,44 +102,68 @@ else
     exit 1
 fi
 
-# Предварительное определение публичного IP сервера
-SERVER_IP=$(curl -s4 icanhazip.com || curl -s4 ifconfig.me || echo "127.0.0.1")
+msg_inf "Определение внешнего IP-адреса сервера..."
+SERVER_IP=$(curl -s4 --connect-timeout 2 --max-time 4 icanhazip.com || curl -s4 --connect-timeout 2 --max-time 4 ifconfig.me || echo "127.0.0.1")
+msg_ok "Внешний IP-адрес сервера: ${C_BOLD}${SERVER_IP}${C_RESET}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # [1] INTERACTIVE WIZARD
 # ─────────────────────────────────────────────────────────────────────────────
 echo
-echo -e "${C_BOLD}=== ШАГ [1/9]: ИНТЕРАКТИВНЫЙ МАСТЕР НАСТРОЙКИ ===${C_RESET}"
+echo -e "${C_BOLD}=== ШАГ [1/9]: ИНТЕРАКТИВНЫЙ МАСТЕР НАСТРОЙКИ СЕРВЕРА ===${C_RESET}"
+echo -e "Ответьте на несколько простых вопросов. Все подсказки снабжены примерами."
+echo
 
-# 1.1 Домен
+# 1.1 Доменное имя сервера
+echo -e "${C_BOLD}1. Доменное имя сервера:${C_RESET}"
+msg_inf "Для работы веб-панели, прокси-протоколов и выпуска SSL-сертификата требуется домен (или поддомен)."
+msg_inf "Убедитесь, что A-запись домена направлена на IP вашего сервера: ${C_BOLD}${SERVER_IP}${C_RESET}"
+
 if [[ -z "$DOMAIN" ]]; then
     while true; do
-        read_prompt "-> Введите ваш домен (например, vps.example.com): " DOMAIN
-        DOMAIN=$(echo "$DOMAIN" | tr -d '[:space:]')
-        [[ -n "$DOMAIN" ]] && break
-        msg_warn "Домен не может быть пустым!"
+        read_prompt "${C_GREEN}?${C_RESET} Введите доменное имя сервера (например, vps.example.com): " DOMAIN
+        # Очистка от пробелов, протокола http/https и концевых слэшей
+        DOMAIN=$(echo "$DOMAIN" | sed -e 's|^https\?://||' -e 's|/.*$||' | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+        if [[ -z "$DOMAIN" ]]; then
+            msg_warn "Ошибка: доменное имя не может быть пустым. Пожалуйста, введите ваш домен."
+            continue
+        fi
+        if [[ "$DOMAIN" != *.* || "$DOMAIN" == *. || "$DOMAIN" == .* ]]; then
+            msg_warn "Ошибка: '${DOMAIN}' не похоже на валидное доменное имя (требуется точка, например vps.domain.com)."
+            continue
+        fi
+        break
     done
+    msg_ok "Доменное имя сервера: ${C_BOLD}${DOMAIN}${C_RESET}"
 else
-    DOMAIN=$(echo "$DOMAIN" | tr -d '[:space:]')
-    msg_ok "Используется домен из окружения: ${DOMAIN}"
+    DOMAIN=$(echo "$DOMAIN" | sed -e 's|^https\?://||' -e 's|/.*$||' | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    msg_ok "Используется доменное имя из переменной окружения: ${C_BOLD}${DOMAIN}${C_RESET}"
 fi
 
 # 1.2 Cloudflare учетные данные
 echo
-msg_inf "Настройка тихого выпуска SSL через Cloudflare DNS-01 (порт 80 будет закрыт навсегда):"
+echo -e "${C_BOLD}2. Настройка тихого выпуска SSL через Cloudflare DNS-01 API:${C_RESET}"
+msg_inf "Сертификат выпускается через DNS-01 API. Порт 80 на сервере останется закрыт навсегда."
+msg_inf "Поддерживаются два способа авторизации:"
+echo -e "   • ${C_BOLD}Вариант А (API Token)${C_RESET}: введите токен с правами Zone.DNS, а поле Email оставьте пустым (Enter)."
+echo -e "   • ${C_BOLD}Вариант Б (Global API Key)${C_RESET}: введите Email от аккаунта Cloudflare и Global API Key."
+
 if [[ -z "$CF_EMAIL" && -z "$CF_KEY" ]]; then
     while true; do
-        read_prompt "-> Введите Cloudflare Email (или оставьте пустым, если используете API Token): " CF_EMAIL
+        read_prompt "${C_GREEN}?${C_RESET} Введите Cloudflare Email (или нажмите Enter, если используете API Token): " CF_EMAIL
         CF_EMAIL=$(echo "$CF_EMAIL" | tr -d '[:space:]')
         break
     done
 
     while true; do
-        read_prompt "-> Введите Cloudflare Global API Key (или API Token): " CF_KEY 1
+        read_prompt "${C_GREEN}?${C_RESET} Введите Cloudflare API Token или Global API Key: " CF_KEY 1
         CF_KEY=$(echo "$CF_KEY" | tr -d '[:space:]')
-        [[ -n "$CF_KEY" ]] && break
-        msg_warn "Ключ/токен не может быть пустым!"
+        if [[ -n "$CF_KEY" ]]; then
+            break
+        fi
+        msg_warn "Ошибка: ключ или токен Cloudflare не может быть пустым!"
     done
+    msg_ok "Учетные данные Cloudflare приняты."
 else
     CF_EMAIL=$(echo "$CF_EMAIL" | tr -d '[:space:]')
     CF_KEY=$(echo "$CF_KEY" | tr -d '[:space:]')
@@ -148,26 +171,30 @@ else
 fi
 
 # 1.3 Кастомизация путей и портов
+echo
+echo -e "${C_BOLD}3. Маскировка путей (Locations) и внутренних портов:${C_RESET}"
+msg_inf "Все сервисы (3X-UI, Telemt, AdGuard DoH, VLESS, Trojan) работают через единый HTTPS-порт 443."
+msg_inf "Каждый сервис скрывается за собственным секретным веб-путем (Location)."
+
 if [[ -z "$PATH_CHOICE" ]]; then
-    echo
-    echo -e "${C_BOLD}Кастомизация путей (Locations) и внутренних портов:${C_RESET}"
-    echo "1 - Настроить вручную свои пути и порты"
-    echo "2 - Использовать случайные скрытые пути и порты (Enter - рекомендуется)"
-    read_prompt "Выберите вариант [1/2]: " PATH_CHOICE
-    PATH_CHOICE="${PATH_CHOICE:-2}"
+    echo -e "   ${C_BOLD}[1]${C_RESET} Случайные скрытые пути (${C_GREEN}Рекомендуется${C_RESET} — максимальная стойкость к ТСПУ)"
+    echo -e "   ${C_BOLD}[2]${C_RESET} Задать свои пути вручную (если нужны определенные адреса)"
+    read_prompt "${C_GREEN}?${C_RESET} Выберите вариант настройки путей [1/2] (по умолчанию: 1): " PATH_CHOICE
+    PATH_CHOICE="${PATH_CHOICE:-1}"
 fi
 
-if [[ "$PATH_CHOICE" == "1" ]]; then
+if [[ "$PATH_CHOICE" == "2" ]]; then
     echo
-    read_prompt "-> Путь для панели 3x-ui [/xui/]: " USER_PANEL_PATH
-    read_prompt "-> Путь для обычной подписки Base64 [/sub/]: " USER_SUB_PATH
-    read_prompt "-> Путь для JSON подписки Happ/Sing-box [/sub-json/]: " USER_SUB_JSON_PATH
-    read_prompt "-> Путь для Telemt Telegram Proxy [${TG_PATH:-/tg}]: " USER_TG_PATH
-    read_prompt "-> Путь для AdGuard Home DoH [${ADH_DOH_PATH:-/dns-query}]: " USER_ADH_DOH_PATH
-    read_prompt "-> Путь для VLESS WebSocket [/vless-ws]: " USER_WS_PATH
-    read_prompt "-> Путь для VLESS XHTTP [/vless-xhttp]: " USER_XHTTP_PATH
-    read_prompt "-> ServiceName для VLESS gRPC [vless-grpc]: " USER_GRPC_PATH
-    read_prompt "-> ServiceName для Trojan gRPC [/trojan-grpc]: " USER_TROJAN_PATH
+    echo -e "${C_BOLD}Ручной ввод путей (нажмите Enter, чтобы использовать значение по умолчанию):${C_RESET}"
+    read_prompt "${C_CYAN}->${C_RESET} Введите путь к веб-панели управления 3X-UI [/xui/]: " USER_PANEL_PATH
+    read_prompt "${C_CYAN}->${C_RESET} Введите путь для стандартной Base64 подписки [/sub/]: " USER_SUB_PATH
+    read_prompt "${C_CYAN}->${C_RESET} Введите путь для JSON подписки (Sing-box / Happ) [/sub-json/]: " USER_SUB_JSON_PATH
+    read_prompt "${C_CYAN}->${C_RESET} Введите путь для Telegram Web Proxy (Telemt) [${TG_PATH:-/tg}]: " USER_TG_PATH
+    read_prompt "${C_CYAN}->${C_RESET} Введите путь для AdGuard Home DoH DNS [${ADH_DOH_PATH:-/dns-query}]: " USER_ADH_DOH_PATH
+    read_prompt "${C_CYAN}->${C_RESET} Введите путь для VLESS WebSocket [/vless-ws]: " USER_WS_PATH
+    read_prompt "${C_CYAN}->${C_RESET} Введите путь для VLESS XHTTP [/vless-xhttp]: " USER_XHTTP_PATH
+    read_prompt "${C_CYAN}->${C_RESET} Введите имя сервиса (ServiceName) для VLESS gRPC [vless-grpc]: " USER_GRPC_PATH
+    read_prompt "${C_CYAN}->${C_RESET} Введите имя сервиса или путь для Trojan gRPC [/trojan-grpc]: " USER_TROJAN_PATH
     
     PANEL_PATH="${USER_PANEL_PATH:-/xui/}"
     SUB_PATH="${USER_SUB_PATH:-/sub/}"
@@ -178,6 +205,7 @@ if [[ "$PATH_CHOICE" == "1" ]]; then
     XHTTP_PATH="${USER_XHTTP_PATH:-/vless-xhttp}"
     GRPC_PATH="${USER_GRPC_PATH:-vless-grpc}"
     TROJAN_PATH="${USER_TROJAN_PATH:-/trojan-grpc}"
+    msg_ok "Пользовательские пути сохранены."
 else
     # Генерация случайных путей
     PANEL_PATH="${PANEL_PATH:-/$(gen_random_string 10)/}"
@@ -189,28 +217,55 @@ else
     XHTTP_PATH="${XHTTP_PATH:-/$(gen_random_string 10)}"
     GRPC_PATH="${GRPC_PATH:-vless-grpc}"
     TROJAN_PATH="${TROJAN_PATH:-/$(gen_random_string 10)}"
+    msg_ok "Сгенерированы случайные стойкие пути для защиты от ТСПУ."
 fi
 
 # 1.4 Настройка модуля «Конфигурирование сервера»
+echo
+echo -e "${C_BOLD}4. Модуль управления «Конфигурирование сервера» (Stealth Dashboard):${C_RESET}"
+msg_inf "Веб-интерфейс для изменения путей, портов и мониторинга сервера."
+msg_inf "Работает на скрытом порту и защищен файрволом UFW."
+
 if [[ -z "$MGMT_CHOICE" ]]; then
-    echo
-    echo -e "${C_BOLD}Модуль управления «Конфигурирование сервера» (Stealth Dashboard):${C_RESET}"
-    echo "1 - Случайный скрытый порт (Enter - рекомендуется)"
-    echo "2 - Задать свой порт вручную"
-    read_prompt "Выберите вариант [1/2]: " MGMT_CHOICE
+    echo -e "   ${C_BOLD}[1]${C_RESET} Случайный защищенный порт (${C_GREEN}Рекомендуется${C_RESET} — порт скрыт от сканеров)"
+    echo -e "   ${C_BOLD}[2]${C_RESET} Задать свой порт вручную"
+    read_prompt "${C_GREEN}?${C_RESET} Выберите вариант порта [1/2] (по умолчанию: 1): " MGMT_CHOICE
     MGMT_CHOICE="${MGMT_CHOICE:-1}"
 fi
 
 if [[ "$MGMT_CHOICE" == "2" ]]; then
-    read_prompt "-> Введите порт для модуля управления [54892]: " USER_MGMT_PORT
-    MGMT_PORT="${USER_MGMT_PORT:-54892}"
+    while true; do
+        read_prompt "${C_CYAN}->${C_RESET} Введите порт для модуля управления [по умолчанию: 54892]: " USER_MGMT_PORT
+        USER_MGMT_PORT="${USER_MGMT_PORT:-54892}"
+        if [[ "$USER_MGMT_PORT" =~ ^[0-9]+$ ]] && (( USER_MGMT_PORT >= 1024 && USER_MGMT_PORT <= 65535 )); then
+            MGMT_PORT="$USER_MGMT_PORT"
+            break
+        fi
+        msg_warn "Ошибка: порт должен быть числом от 1024 до 65535."
+    done
+    msg_ok "Выбран порт модуля управления: ${MGMT_PORT}"
 else
     MGMT_PORT=$(get_free_port)
+    msg_ok "Сгенерирован случайный скрытый порт: ${MGMT_PORT}"
 fi
 
 MGMT_SECRET_PATH="cfg-$(gen_random_string 8)"
 MGMT_USER="admin_$(gen_random_string 4)"
 MGMT_PASS="$(gen_random_string 16)"
+
+# Сводка параметров перед стартом
+echo
+echo -e "${C_CYAN}╔══════════════════════════════════════════════════════════════════════════════════╗${C_RESET}"
+echo -e "${C_CYAN}║                     СВОДКА ПАРАМЕТРОВ ДЛЯ УСТАНОВКИ                              ║${C_RESET}"
+echo -e "${C_CYAN}╚══════════════════════════════════════════════════════════════════════════════════╝${C_RESET}"
+printf "  • Доменное имя сервера:        %b%s%b\n" "$C_BOLD" "$DOMAIN" "$C_RESET"
+printf "  • Внешний IP сервера:          %b%s%b\n" "$C_BOLD" "$SERVER_IP" "$C_RESET"
+printf "  • Выпуск Cloudflare SSL:       %s\n" "$([[ -n "$CF_EMAIL" ]] && echo "Global API Key ($CF_EMAIL)" || echo "Cloudflare API Token")"
+printf "  • Режим путей (Locations):     %s\n" "$([[ "$PATH_CHOICE" == "2" ]] && echo "Пользовательские пути" || echo "Случайные скрытые пути")"
+printf "  • Порт Stealth Dashboard:      %s\n" "$([[ "$MGMT_CHOICE" == "2" ]] && echo "$MGMT_PORT (задан вручную)" || echo "$MGMT_PORT (случайный защищенный)")"
+echo -e "${C_CYAN}────────────────────────────────────────────────────────────────────────────────────${C_RESET}"
+msg_ok "Все параметры приняты. Переходим к автоматической установке компонентов..."
+echo
 
 # Нормализация слэшей
 [[ "$PANEL_PATH" != /* ]] && PANEL_PATH="/$PANEL_PATH"
