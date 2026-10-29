@@ -2,7 +2,7 @@
 # ==============================================================================
 # 3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (ONE-COMMAND INSTALLER)
 # Repository: https://github.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
-# Generated: 20:41.29.10.2026
+# Generated: 20:56.29.10.2026
 # ==============================================================================
 
 set -eo pipefail
@@ -140,34 +140,26 @@ else
     msg_ok "Используется доменное имя из переменной окружения: ${C_BOLD}${DOMAIN}${C_RESET}"
 fi
 
-# 1.2 Cloudflare учетные данные
+# 1.2 Cloudflare API Token
 echo
-echo -e "${C_BOLD}2. Настройка тихого выпуска SSL через Cloudflare DNS-01 API:${C_RESET}"
-msg_inf "Сертификат выпускается через DNS-01 API. Порт 80 на сервере останется закрыт навсегда."
-msg_inf "Поддерживаются два способа авторизации:"
-echo -e "   • ${C_BOLD}Вариант А (API Token)${C_RESET}: введите токен с правами Zone.DNS, а поле Email оставьте пустым (Enter)."
-echo -e "   • ${C_BOLD}Вариант Б (Global API Key)${C_RESET}: введите Email от аккаунта Cloudflare и Global API Key."
+echo -e "${C_BOLD}2. Выпуск SSL-сертификата (Cloudflare DNS-01 API):${C_RESET}"
+msg_inf "Сертификат выпускается через DNS-01 API без открытия 80-го порта в файрволе."
 
-if [[ -z "$CF_EMAIL" && -z "$CF_KEY" ]]; then
-    while true; do
-        read_prompt "${C_GREEN}?${C_RESET} Введите Cloudflare Email (или нажмите Enter, если используете API Token): " CF_EMAIL
-        CF_EMAIL=$(echo "$CF_EMAIL" | tr -d '[:space:]')
-        break
-    done
+CF_KEY="${CF_KEY:-$CF_TOKEN}"
 
+if [[ -z "$CF_KEY" ]]; then
     while true; do
-        read_prompt "${C_GREEN}?${C_RESET} Введите Cloudflare API Token или Global API Key: " CF_KEY 1
+        read_prompt "${C_GREEN}?${C_RESET} Введите Cloudflare API Token: " CF_KEY
         CF_KEY=$(echo "$CF_KEY" | tr -d '[:space:]')
         if [[ -n "$CF_KEY" ]]; then
             break
         fi
-        msg_warn "Ошибка: ключ или токен Cloudflare не может быть пустым!"
+        msg_warn "Ошибка: Cloudflare API Token не может быть пустым!"
     done
-    msg_ok "Учетные данные Cloudflare приняты."
+    msg_ok "Cloudflare API Token принят."
 else
-    CF_EMAIL=$(echo "$CF_EMAIL" | tr -d '[:space:]')
     CF_KEY=$(echo "$CF_KEY" | tr -d '[:space:]')
-    msg_ok "Используются учетные данные Cloudflare из окружения."
+    msg_ok "Используется Cloudflare API Token из переменной окружения."
 fi
 
 # 1.3 Кастомизация путей и портов
@@ -260,7 +252,7 @@ echo -e "${C_CYAN}║                     СВОДКА ПАРАМЕТРОВ ДЛ
 echo -e "${C_CYAN}╚══════════════════════════════════════════════════════════════════════════════════╝${C_RESET}"
 printf "  • Доменное имя сервера:        %b%s%b\n" "$C_BOLD" "$DOMAIN" "$C_RESET"
 printf "  • Внешний IP сервера:          %b%s%b\n" "$C_BOLD" "$SERVER_IP" "$C_RESET"
-printf "  • Выпуск Cloudflare SSL:       %s\n" "$([[ -n "$CF_EMAIL" ]] && echo "Global API Key ($CF_EMAIL)" || echo "Cloudflare API Token")"
+printf "  • Выпуск Cloudflare SSL:       %s\n" "Cloudflare API Token"
 printf "  • Режим путей (Locations):     %s\n" "$([[ "$PATH_CHOICE" == "2" ]] && echo "Пользовательские пути" || echo "Случайные скрытые пути")"
 printf "  • Порт Stealth Dashboard:      %s\n" "$([[ "$MGMT_CHOICE" == "2" ]] && echo "$MGMT_PORT (задан вручную)" || echo "$MGMT_PORT (случайный защищенный)")"
 echo -e "${C_CYAN}────────────────────────────────────────────────────────────────────────────────────${C_RESET}"
