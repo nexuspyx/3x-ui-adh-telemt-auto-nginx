@@ -2,7 +2,7 @@
 # ==============================================================================
 # 3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (ONE-COMMAND INSTALLER)
 # Repository: https://github.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
-# Generated: 20:56.29.10.2026
+# Generated: 21:05.29.10.2026
 # ==============================================================================
 
 set -eo pipefail
@@ -75,6 +75,41 @@ read_prompt() {
     printf -v "$var_name" '%s' "$input_val"
 }
 
+# Функция нормализации доменного имени:
+# - Очистка от пробелов, неразрывных пробелов (NBSP), невидимых unicode-символов
+# - Удаление http://, https://, портов (:443) и путей (/...)
+# - Автоматическая конвертация IDN / кириллических доменов в Punycode (xn--...) для исключения ошибок Certbot
+normalize_domain() {
+    local raw="$1"
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c "
+import sys, re
+raw = sys.argv[1].strip()
+if '://' in raw:
+    raw = raw.split('://', 1)[1]
+raw = raw.split('/', 1)[0]
+if ':' in raw:
+    raw = raw.split(':', 1)[0]
+raw = re.sub(r'[\s\u00a0\u1680\u2000-\u200b\u202f\u205f\u3000\ufeff\u200e\u200f\x00-\x1f\x7f]+', '', raw)
+if not raw:
+    sys.exit(0)
+try:
+    puny = raw.encode('idna').decode('ascii').lower()
+except Exception:
+    sys.exit(0)
+if re.match(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$', puny):
+    print(puny)
+" "$raw" 2>/dev/null
+    else
+        # Fallback на случай отсутствия python3: базовая очистка в ASCII
+        local d
+        d=$(echo "$raw" | sed -e 's|^https\?://||' -e 's|/.*$||' -e 's|:.*$||' | LC_ALL=C tr -d '[:space:]\r\n\t\000-\037\177-\377' | tr '[:upper:]' '[:lower:]')
+        if [[ "$d" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; then
+            echo "$d"
+        fi
+    fi
+}
+
 echo
 echo -e "${C_CYAN}╔══════════════════════════════════════════════════════════════════════════════════╗${C_RESET}"
 echo -e "${C_CYAN}║        3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (STEALTH EDITION)          ║${C_RESET}"
@@ -121,22 +156,43 @@ msg_inf "Убедитесь, что A-запись домена направле
 
 if [[ -z "$DOMAIN" ]]; then
     while true; do
-        read_prompt "${C_GREEN}?${C_RESET} Введите доменное имя сервера (например, vps.example.com): " DOMAIN
-        # Очистка от пробелов, протокола http/https и концевых слэшей
-        DOMAIN=$(echo "$DOMAIN" | sed -e 's|^https\?://||' -e 's|/.*$||' | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
-        if [[ -z "$DOMAIN" ]]; then
+        read_prompt "${C_GREEN}?${C_RESET} Введите доменное имя сервера (например, vps.example.com): " USER_INPUT_DOMAIN
+        if [[ -z "$USER_INPUT_DOMAIN" ]]; then
             msg_warn "Ошибка: доменное имя не может быть пустым. Пожалуйста, введите ваш домен."
             continue
         fi
-        if [[ "$DOMAIN" != *.* || "$DOMAIN" == *. || "$DOMAIN" == .* ]]; then
-            msg_warn "Ошибка: '${DOMAIN}' не похоже на валидное доменное имя (требуется точка, например vps.domain.com)."
+
+        DOMAIN=$(normalize_domain "$USER_INPUT_DOMAIN")
+        if [[ -z "$DOMAIN" ]]; then
+            msg_warn "Ошибка: '${USER_INPUT_DOMAIN}' не является корректным доменным именем."
+            msg_warn "Убедитесь, что домен не содержит пробелов или спецсимволов (например: vps.example.com или мой-сервер.рф)."
             continue
+        fi
+
+        if [[ "$USER_INPUT_DOMAIN" != "$DOMAIN" ]]; then
+            if [[ "$DOMAIN" == *"xn--"* ]]; then
+                msg_inf "Обнаружен кириллический / IDN домен. Автоматически сконвертирован в Punycode: ${C_BOLD}${DOMAIN}${C_RESET}"
+            else
+                msg_inf "Доменное имя очищено от лишних символов/пробелов: ${C_BOLD}${DOMAIN}${C_RESET}"
+            fi
         fi
         break
     done
     msg_ok "Доменное имя сервера: ${C_BOLD}${DOMAIN}${C_RESET}"
 else
-    DOMAIN=$(echo "$DOMAIN" | sed -e 's|^https\?://||' -e 's|/.*$||' | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    RAW_DOMAIN="$DOMAIN"
+    DOMAIN=$(normalize_domain "$RAW_DOMAIN")
+    if [[ -z "$DOMAIN" ]]; then
+        msg_err "Ошибка: некорректное доменное имя в переменной окружения DOMAIN='${RAW_DOMAIN}'."
+        exit 1
+    fi
+    if [[ "$RAW_DOMAIN" != "$DOMAIN" ]]; then
+        if [[ "$DOMAIN" == *"xn--"* ]]; then
+            msg_inf "Домен из окружения сконвертирован в Punycode: ${C_BOLD}${DOMAIN}${C_RESET}"
+        else
+            msg_inf "Домен из окружения нормализован: ${C_BOLD}${DOMAIN}${C_RESET}"
+        fi
+    fi
     msg_ok "Используется доменное имя из переменной окружения: ${C_BOLD}${DOMAIN}${C_RESET}"
 fi
 
@@ -150,7 +206,7 @@ CF_KEY="${CF_KEY:-$CF_TOKEN}"
 if [[ -z "$CF_KEY" ]]; then
     while true; do
         read_prompt "${C_GREEN}?${C_RESET} Введите Cloudflare API Token: " CF_KEY
-        CF_KEY=$(echo "$CF_KEY" | tr -d '[:space:]')
+        CF_KEY=$(python3 -c "import sys, re; print(re.sub(r'[\s\u00a0\u200b\ufeff]+', '', sys.argv[1]))" "$CF_KEY" 2>/dev/null || echo "$CF_KEY" | tr -d '[:space:]')
         if [[ -n "$CF_KEY" ]]; then
             break
         fi
@@ -158,7 +214,7 @@ if [[ -z "$CF_KEY" ]]; then
     done
     msg_ok "Cloudflare API Token принят."
 else
-    CF_KEY=$(echo "$CF_KEY" | tr -d '[:space:]')
+    CF_KEY=$(python3 -c "import sys, re; print(re.sub(r'[\s\u00a0\u200b\ufeff]+', '', sys.argv[1]))" "$CF_KEY" 2>/dev/null || echo "$CF_KEY" | tr -d '[:space:]')
     msg_ok "Используется Cloudflare API Token из переменной окружения."
 fi
 
