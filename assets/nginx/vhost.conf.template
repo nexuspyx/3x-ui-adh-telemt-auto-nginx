@@ -77,7 +77,7 @@ server {
         proxy_pass http://127.0.0.1:__SUB_PORT__;
     }
 
-    # === [3] TELEMT (TELEGRAM WEB PROXY) + 200 OK DECOY ===
+    # === [3] TELEMT (TELEGRAM WEB PROXY) ===
     location ^~ __TG_PATH__ {
         proxy_pass http://telemt_web;
         proxy_http_version 1.1;
@@ -92,10 +92,10 @@ server {
         proxy_buffering off;
         proxy_request_buffering off;
         proxy_next_upstream off;
+        tcp_nodelay on;
 
-        # Intercept scanning errors and return Genuine 200 OK Decoy
-        proxy_intercept_errors on;
-        error_page 400 403 404 = @telemt_decoy;
+        # Keep proxy_intercept_errors off so Telegram client receives legitimate protocol responses directly
+        proxy_intercept_errors off;
     }
 
     location @telemt_decoy {
