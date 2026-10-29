@@ -2,7 +2,7 @@
 # ==============================================================================
 # 3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (ONE-COMMAND INSTALLER)
 # Repository: https://github.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
-# Generated: 21:05.29.10.2026
+# Generated: 21:15.29.10.2026
 # ==============================================================================
 
 set -eo pipefail
@@ -110,6 +110,22 @@ if re.match(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z
     fi
 }
 
+# Очистка учетных данных Cloudflare от кавычек, пробелов и невидимых символов
+clean_cf_credential() {
+    local raw="$1"
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c "
+import sys, re
+val = sys.argv[1].strip()
+val = re.sub(r'^[\"\'\s]+|[\"\'\s]+$', '', val)
+val = re.sub(r'[\s\u00a0\u1680\u2000-\u200b\u202f\u205f\u3000\ufeff\u200e\u200f\r\n\t]+', '', val)
+print(val)
+" "$raw" 2>/dev/null
+    else
+        echo "$raw" | LC_ALL=C tr -d '[:space:]\"'\'' '
+    fi
+}
+
 echo
 echo -e "${C_CYAN}╔══════════════════════════════════════════════════════════════════════════════════╗${C_RESET}"
 echo -e "${C_CYAN}║        3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (STEALTH EDITION)          ║${C_RESET}"
@@ -203,18 +219,107 @@ msg_inf "Сертификат выпускается через DNS-01 API бе�
 
 CF_KEY="${CF_KEY:-$CF_TOKEN}"
 
+validate_cf_credentials() {
+    local key="$1"
+    local email="$2"
+
+    if [[ -n "$email" ]]; then
+        # Проверка Global API Key
+        local check_res
+        check_res=$(curl -s --connect-timeout 6 --max-time 12 -X GET "https://api.cloudflare.com/client/v4/user" \
+            -H "X-Auth-Key: ${key}" \
+            -H "X-Auth-Email: ${email}" 2>/dev/null || echo "")
+        if [[ "$check_res" == *'"success":true'* ]]; then
+            return 0
+        else
+            return 1
+        fi
+    else
+        # Проверка API Token
+        local check_res
+        check_res=$(curl -s --connect-timeout 6 --max-time 12 -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+            -H "Authorization: Bearer ${key}" 2>/dev/null || echo "")
+        if [[ "$check_res" == *'"status":"active"'* || "$check_res" == *'"code":10000'* ]]; then
+            return 0
+        elif [[ "$check_res" == *'"code":6003'* || "$check_res" == *"Invalid request headers"* ]]; then
+            return 2
+        elif [[ "$check_res" == *'"code":1000'* || "$check_res" == *"Invalid API Token"* ]]; then
+            return 3
+        else
+            # Если проверка недоступна по сети
+            return 4
+        fi
+    fi
+}
+
 if [[ -z "$CF_KEY" ]]; then
     while true; do
         read_prompt "${C_GREEN}?${C_RESET} Введите Cloudflare API Token: " CF_KEY
-        CF_KEY=$(python3 -c "import sys, re; print(re.sub(r'[\s\u00a0\u200b\ufeff]+', '', sys.argv[1]))" "$CF_KEY" 2>/dev/null || echo "$CF_KEY" | tr -d '[:space:]')
-        if [[ -n "$CF_KEY" ]]; then
+        CF_KEY=$(clean_cf_credential "$CF_KEY")
+        if [[ -z "$CF_KEY" ]]; then
+            msg_warn "Ошибка: Cloudflare API Token не может быть пустым!"
+            continue
+        fi
+
+        # Проверка на Zone ID / Account ID (32 hex-символа)
+        if [[ ${#CF_KEY} -eq 32 && "$CF_KEY" =~ ^[0-9a-fA-F]{32}$ ]]; then
+            msg_warn "Внимание: вы ввели Zone ID или Account ID (32 символа), а не API Token!"
+            echo -e "   Zone ID находится на странице домена, но для выпуска SSL нужен именно ${C_BOLD}API Token${C_RESET}."
+            echo -e "   Как создать правильный API Token в Cloudflare:"
+            echo -e "   1. В Cloudflare нажмите на аватар (вверху справа) -> ${C_BOLD}My Profile${C_RESET} -> ${C_BOLD}API Tokens${C_RESET}"
+            echo -e "   2. Нажмите ${C_BOLD}Create Token${C_RESET} -> шаблон ${C_BOLD}Edit zone DNS${C_RESET} -> ${C_BOLD}Use template${C_RESET}"
+            echo -e "   3. В секции Zone Resources выберите ${C_BOLD}All zones${C_RESET} (или зону с вашим доменом)"
+            echo -e "   4. Нажмите ${C_BOLD}Continue to summary${C_RESET} -> ${C_BOLD}Create Token${C_RESET} и скопируйте 40-значный токен."
+            echo
+            continue
+        fi
+
+        # Проверка на Global API Key (37 hex-символов)
+        if [[ ${#CF_KEY} -eq 37 && "$CF_KEY" =~ ^[0-9a-fA-F]{37}$ ]]; then
+            msg_inf "Обнаружен Cloudflare Global API Key (37 символов)."
+            echo -e "   Для работы Global API Key требуется Email аккаунта Cloudflare."
+            while true; do
+                read_prompt "${C_GREEN}?${C_RESET} Введите Email аккаунта Cloudflare: " CF_EMAIL
+                CF_EMAIL=$(echo "$CF_EMAIL" | tr -d '[:space:]')
+                if [[ "$CF_EMAIL" == *@*.* ]]; then
+                    break
+                fi
+                msg_warn "Введите корректный Email (например, user@example.com)."
+            done
+        fi
+
+        msg_inf "Проверка учетных данных в Cloudflare API..."
+        status=0
+        validate_cf_credentials "$CF_KEY" "$CF_EMAIL" || status=$?
+
+        if (( status == 0 )); then
+            if [[ -n "$CF_EMAIL" ]]; then
+                msg_ok "Cloudflare Global API Key и Email успешно проверены!"
+            else
+                msg_ok "Cloudflare API Token успешно проверен (статус: активен)!"
+            fi
+            break
+        elif (( status == 1 )); then
+            msg_warn "Ошибка: неверный Global API Key или Email. Проверьте данные и попробуйте снова."
+            CF_EMAIL=""
+            continue
+        elif (( status == 2 )); then
+            msg_warn "Ошибка Cloudflare 6003 (Invalid request headers)."
+            echo -e "   Токен имеет неверный формат. Проверьте, что скопировали токен целиком без лишних символов."
+            echo -e "   Для выпуска SSL нужен API Token с шаблоном 'Edit zone DNS' (длина 40 символов)."
+            continue
+        elif (( status == 3 )); then
+            msg_warn "Ошибка Cloudflare: Токен не найден или был отозван (Invalid API Token)."
+            echo -e "   Проверьте правильность токена и попробуйте снова."
+            continue
+        else
+            # status == 4: таймаут сети при проверке
+            msg_ok "Cloudflare API Token принят (проверка через сеть пропущена)."
             break
         fi
-        msg_warn "Ошибка: Cloudflare API Token не может быть пустым!"
     done
-    msg_ok "Cloudflare API Token принят."
 else
-    CF_KEY=$(python3 -c "import sys, re; print(re.sub(r'[\s\u00a0\u200b\ufeff]+', '', sys.argv[1]))" "$CF_KEY" 2>/dev/null || echo "$CF_KEY" | tr -d '[:space:]')
+    CF_KEY=$(clean_cf_credential "$CF_KEY")
     msg_ok "Используется Cloudflare API Token из переменной окружения."
 fi
 
@@ -421,14 +526,23 @@ EOF
 fi
 chmod 0600 /etc/letsencrypt/cloudflare.ini
 
-certbot certonly \
+if ! certbot certonly \
     --dns-cloudflare \
     --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
+    --dns-cloudflare-propagation-seconds 15 \
     --cert-name "${DOMAIN}" \
     -d "${DOMAIN}" \
     --non-interactive \
     --agree-tos \
-    --register-unsafely-without-email
+    --register-unsafely-without-email; then
+    msg_err "Не удалось выпустить SSL-сертификат через Cloudflare DNS-01."
+    echo -e "\nВозможные причины ошибки:"
+    echo -e " 1. Домен ${C_BOLD}${DOMAIN}${C_RESET} не добавлен в аккаунт Cloudflare, к которому привязан токен."
+    echo -e " 2. У токена нет прав на редактирование DNS (требуется шаблон 'Edit zone DNS' с правом Zone -> DNS -> Edit)."
+    echo -e " 3. В Cloudflare в секции Zone Resources не выбран домен или не указано 'All zones'."
+    echo -e "\nПроверьте права токена в Cloudflare и перезапустите установку."
+    exit 1
+fi
 
 mkdir -p "/root/cert/${DOMAIN}"
 ln -sf "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" "/root/cert/${DOMAIN}/fullchain.pem"
