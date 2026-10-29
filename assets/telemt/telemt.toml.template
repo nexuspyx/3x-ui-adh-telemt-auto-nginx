@@ -55,10 +55,11 @@ runtime_edge_events_capacity = 512
 
 [web]
 carrier = "https"
-carrier_learning = true
+carrier_learning = false
 carrier_method = "post"
 carrier_negotiation_aggressiveness = "conservative"
-carriers = ["websocket-lanes", "websocket", "https-lanes", "https"]
+# Fixed "https" carrier for iOS and universal cross-platform compatibility without negotiation latency
+# carriers = ["https"]
 conveyor = true
 decoy_fasttrack_mode = "off"
 enabled = true
@@ -134,16 +135,16 @@ bridge_request_secs = 10
 bridge_retry_secs = 90
 carrier_health_secs = 30
 carrier_learning_secs = 600
-carrier_negotiation_deadlines_secs = [3, 5, 8, 12]
+carrier_negotiation_deadlines_secs = [2, 3, 5, 8]
 carrier_probe_coalesce_ms = 0
 decoy_header_secs = 30
 decoy_resolve_secs = 5
 header_secs = 10
-http_idle_secs = 75
+http_idle_secs = 45
 http_overload_timeout_ms = 250
 lane_open_wait_secs = 2
 long_poll_secs = 25
-reconnect_grace_secs = 120
+reconnect_grace_secs = 30
 shutdown_secs = 15
 stream_first_byte_secs = 30
 stream_handshake_secs = 10
