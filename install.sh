@@ -2,7 +2,7 @@
 # ==============================================================================
 # 3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (ONE-COMMAND INSTALLER)
 # Repository: https://github.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
-# Generated: 21:18.29.10.2026
+# Generated: 21:32.29.10.2026
 # ==============================================================================
 
 set -eo pipefail
@@ -807,9 +807,9 @@ EOF
 
 # Синхронизация DNS AdGuard Home с шаблоном Xray в SQLite 3x-ui
 msg_inf "Конфигурирование DNS AdGuard Home (порт ${ADH_DNS_PORT}) в шаблоне Xray..."
-curl -sSL "${GITHUB_RAW}/assets/adguard/configure_xui_dns.py" -o "$WORKDIR/configure_xui_dns.py" || cp "assets/adguard/configure_xui_dns.py" "$WORKDIR/configure_xui_dns.py" 2>/dev/null || true
+curl -fsSL --connect-timeout 5 --max-time 15 "${GITHUB_RAW}/assets/adguard/configure_xui_dns.py" -o "$WORKDIR/configure_xui_dns.py" || cp "assets/adguard/configure_xui_dns.py" "$WORKDIR/configure_xui_dns.py" 2>/dev/null || true
 if [[ -f "$WORKDIR/configure_xui_dns.py" ]]; then
-    python3 "$WORKDIR/configure_xui_dns.py" "/etc/x-ui/x-ui.db" "${ADH_DNS_PORT}"
+    python3 "$WORKDIR/configure_xui_dns.py" "/etc/x-ui/x-ui.db" "${ADH_DNS_PORT}" || msg_warn "Предупреждение: авто-патчинг DNS шаблона вернул ошибку, продолжаем установку..."
     install -o root -g root -m 0755 "$WORKDIR/configure_xui_dns.py" /usr/local/bin/x-ui-dns-sync 2>/dev/null || true
 fi
 
