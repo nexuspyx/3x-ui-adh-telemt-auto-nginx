@@ -2,7 +2,7 @@
 # ==============================================================================
 # 3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (ONE-COMMAND INSTALLER)
 # Repository: https://github.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
-# Generated: 21:15.29.10.2026
+# Generated: 21:18.29.10.2026
 # ==============================================================================
 
 set -eo pipefail
@@ -327,27 +327,29 @@ fi
 echo
 echo -e "${C_BOLD}3. Маскировка путей (Locations) и внутренних портов:${C_RESET}"
 msg_inf "Все сервисы (3X-UI, Telemt, AdGuard DoH, VLESS, Trojan) работают через единый HTTPS-порт 443."
-msg_inf "Каждый сервис скрывается за собственным секретным веб-путем (Location)."
+msg_inf "Каждый сервис скрывается за собственным веб-путем (Location)."
 
 if [[ -z "$PATH_CHOICE" ]]; then
-    echo -e "   ${C_BOLD}[1]${C_RESET} Случайные скрытые пути (${C_GREEN}Рекомендуется${C_RESET} — максимальная стойкость к ТСПУ)"
-    echo -e "   ${C_BOLD}[2]${C_RESET} Задать свои пути вручную (если нужны определенные адреса)"
-    read_prompt "${C_GREEN}?${C_RESET} Выберите вариант настройки путей [1/2] (по умолчанию: 1): " PATH_CHOICE
+    echo -e "   ${C_BOLD}[1]${C_RESET} Автоматический режим (${C_GREEN}Рекомендуется — нажмите Enter${C_RESET})"
+    echo -e "       Скрипт всё настроит сам с максимальной защитой от ТСПУ. В клиентах всё заработает по подписке."
+    echo -e "   ${C_BOLD}[2]${C_RESET} Ручная настройка путей (только для экспертов, кому нужны конкретные URL-адреса)"
+    read_prompt "${C_GREEN}?${C_RESET} Выберите вариант [1/2] (по умолчанию: 1): " PATH_CHOICE
     PATH_CHOICE="${PATH_CHOICE:-1}"
 fi
 
 if [[ "$PATH_CHOICE" == "2" ]]; then
     echo
-    echo -e "${C_BOLD}Ручной ввод путей (нажмите Enter, чтобы использовать значение по умолчанию):${C_RESET}"
-    read_prompt "${C_CYAN}->${C_RESET} Введите путь к веб-панели управления 3X-UI [/xui/]: " USER_PANEL_PATH
-    read_prompt "${C_CYAN}->${C_RESET} Введите путь для стандартной Base64 подписки [/sub/]: " USER_SUB_PATH
-    read_prompt "${C_CYAN}->${C_RESET} Введите путь для JSON подписки (Sing-box / Happ) [/sub-json/]: " USER_SUB_JSON_PATH
-    read_prompt "${C_CYAN}->${C_RESET} Введите путь для Telegram Web Proxy (Telemt) [${TG_PATH:-/tg}]: " USER_TG_PATH
-    read_prompt "${C_CYAN}->${C_RESET} Введите путь для AdGuard Home DoH DNS [${ADH_DOH_PATH:-/dns-query}]: " USER_ADH_DOH_PATH
-    read_prompt "${C_CYAN}->${C_RESET} Введите путь для VLESS WebSocket [/vless-ws]: " USER_WS_PATH
-    read_prompt "${C_CYAN}->${C_RESET} Введите путь для VLESS XHTTP [/vless-xhttp]: " USER_XHTTP_PATH
-    read_prompt "${C_CYAN}->${C_RESET} Введите имя сервиса (ServiceName) для VLESS gRPC [vless-grpc]: " USER_GRPC_PATH
-    read_prompt "${C_CYAN}->${C_RESET} Введите имя сервиса или путь для Trojan gRPC [/trojan-grpc]: " USER_TROJAN_PATH
+    echo -e "${C_BOLD}Ручная настройка (нажимайте Enter на каждом шаге для значения по умолчанию):${C_RESET}"
+    msg_inf "Все клиентские приложения (Happ, Sing-box, V2Box) получают эти параметры автоматически из подписки."
+    read_prompt "${C_CYAN}->${C_RESET} Путь к веб-панели управления 3X-UI [/xui/]: " USER_PANEL_PATH
+    read_prompt "${C_CYAN}->${C_RESET} Путь для обычной Base64 подписки [/sub/]: " USER_SUB_PATH
+    read_prompt "${C_CYAN}->${C_RESET} Путь для JSON подписки (Sing-box / Happ) [/sub-json/]: " USER_SUB_JSON_PATH
+    read_prompt "${C_CYAN}->${C_RESET} Путь для Telegram Web Proxy (Telemt) [${TG_PATH:-/tg}]: " USER_TG_PATH
+    read_prompt "${C_CYAN}->${C_RESET} Путь для AdGuard Home DoH DNS [${ADH_DOH_PATH:-/dns-query}]: " USER_ADH_DOH_PATH
+    read_prompt "${C_CYAN}->${C_RESET} Путь для VLESS WebSocket [/vless-ws]: " USER_WS_PATH
+    read_prompt "${C_CYAN}->${C_RESET} Путь для VLESS XHTTP [/vless-xhttp]: " USER_XHTTP_PATH
+    read_prompt "${C_CYAN}->${C_RESET} ServiceName (внутреннее имя канала) для VLESS gRPC [vless-grpc]: " USER_GRPC_PATH
+    read_prompt "${C_CYAN}->${C_RESET} ServiceName (внутреннее имя канала) для Trojan gRPC [/trojan-grpc]: " USER_TROJAN_PATH
     
     PANEL_PATH="${USER_PANEL_PATH:-/xui/}"
     SUB_PATH="${USER_SUB_PATH:-/sub/}"
