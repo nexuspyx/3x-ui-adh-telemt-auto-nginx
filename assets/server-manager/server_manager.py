@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# Build Timestamp: 12:55.31.10.2026
+# Build Timestamp: 13:28.31.10.2026
 """
 ==============================================================================
 «КОНФИГУРИРОВАНИЕ СЕРВЕРА» (SERVER CONFIGURATION MANAGER)
@@ -838,8 +838,33 @@ def firewall_monitor_thread():
         time.sleep(5)
 
 
+# ==============================================================================
 # [5] EMBEDDED APPLE HIG WEB FRONTEND (HTML / CSS / JS)
 # ==============================================================================
+
+FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="b" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0A84FF"/>
+      <stop offset="100%" stop-color="#0055D4"/>
+    </linearGradient>
+    <linearGradient id="s" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#CFE4FF"/>
+    </linearGradient>
+    <filter id="g" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="1.5" result="u"/>
+      <feComposite in="SourceGraphic" in2="u" operator="over"/>
+    </filter>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#b)"/>
+  <path d="M32 12 L46 17 C46 30 39 44 32 50 C25 44 18 30 18 17 Z" fill="rgba(255,255,255,0.15)" stroke="url(#s)" stroke-width="2.5" stroke-linejoin="round"/>
+  <circle cx="32" cy="29" r="4" fill="#30D158" filter="url(#g)"/>
+  <path d="M26 37 L38 37" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M28 41 L36 41" stroke="rgba(255,255,255,0.7)" stroke-width="1.8" stroke-linecap="round"/>
+</svg>"""
+
+FAVICON_DATA_URI = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%230A84FF'/%3E%3Cstop offset='100%25' stop-color='%230055D4'/%3E%3C/linearGradient%3E%3ClinearGradient id='s' x1='0%25' y1='0%25' x2='0%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23FFFFFF'/%3E%3Cstop offset='100%25' stop-color='%23CFE4FF'/%3E%3C/linearGradient%3E%3Cfilter id='g' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeGaussianBlur stdDeviation='1.5' result='u'/%3E%3CfeComposite in='SourceGraphic' in2='u' operator='over'/%3E%3C/filter%3E%3C/defs%3E%3Crect width='64' height='64' rx='15' fill='url(%23b)'/%3E%3Cpath d='M32 12 L46 17 C46 30 39 44 32 50 C25 44 18 30 18 17 Z' fill='rgba(255,255,255,0.15)' stroke='url(%23s)' stroke-width='2.5' stroke-linejoin='round'/%3E%3Ccircle cx='32' cy='29' r='4' fill='%2330D158' filter='url(%23g)'/%3E%3Cpath d='M26 37 L38 37' stroke='%23FFFFFF' stroke-width='2.2' stroke-linecap='round'/%3E%3Cpath d='M28 41 L36 41' stroke='rgba(255,255,255,0.7)' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E"
 
 HTML_PAGE = r"""<!DOCTYPE html>
 <html lang="ru">
@@ -847,24 +872,110 @@ HTML_PAGE = r"""<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Конфигурирование сервера</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%230A84FF'/%3E%3Cstop offset='100%25' stop-color='%230055D4'/%3E%3C/linearGradient%3E%3ClinearGradient id='s' x1='0%25' y1='0%25' x2='0%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23FFFFFF'/%3E%3Cstop offset='100%25' stop-color='%23CFE4FF'/%3E%3C/linearGradient%3E%3Cfilter id='g' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeGaussianBlur stdDeviation='1.5' result='u'/%3E%3CfeComposite in='SourceGraphic' in2='u' operator='over'/%3E%3C/filter%3E%3C/defs%3E%3Crect width='64' height='64' rx='15' fill='url(%23b)'/%3E%3Cpath d='M32 12 L46 17 C46 30 39 44 32 50 C25 44 18 30 18 17 Z' fill='rgba(255,255,255,0.15)' stroke='url(%23s)' stroke-width='2.5' stroke-linejoin='round'/%3E%3Ccircle cx='32' cy='29' r='4' fill='%2330D158' filter='url(%23g)'/%3E%3Cpath d='M26 37 L38 37' stroke='%23FFFFFF' stroke-width='2.2' stroke-linecap='round'/%3E%3Cpath d='M28 41 L36 41' stroke='rgba(255,255,255,0.7)' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%230A84FF'/%3E%3Cstop offset='100%25' stop-color='%230055D4'/%3E%3C/linearGradient%3E%3ClinearGradient id='s' x1='0%25' y1='0%25' x2='0%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23FFFFFF'/%3E%3Cstop offset='100%25' stop-color='%23CFE4FF'/%3E%3C/linearGradient%3E%3Cfilter id='g' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeGaussianBlur stdDeviation='1.5' result='u'/%3E%3CfeComposite in='SourceGraphic' in2='u' operator='over'/%3E%3C/filter%3E%3C/defs%3E%3Crect width='64' height='64' rx='15' fill='url(%23b)'/%3E%3Cpath d='M32 12 L46 17 C46 30 39 44 32 50 C25 44 18 30 18 17 Z' fill='rgba(255,255,255,0.15)' stroke='url(%23s)' stroke-width='2.5' stroke-linejoin='round'/%3E%3Ccircle cx='32' cy='29' r='4' fill='%2330D158' filter='url(%23g)'/%3E%3Cpath d='M26 37 L38 37' stroke='%23FFFFFF' stroke-width='2.2' stroke-linecap='round'/%3E%3Cpath d='M28 41 L36 41' stroke='rgba(255,255,255,0.7)' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E">
   <style>
     :root {
       --bg-color: #000000;
-      --card-bg: rgba(28, 28, 30, 0.72);
+      --card-bg: rgba(28, 28, 30, 0.88);
+      --card-bg-elevated: rgba(44, 44, 46, 0.88);
       --card-border: rgba(255, 255, 255, 0.08);
-      --input-bg: rgba(44, 44, 46, 0.75);
+      --card-border-hover: rgba(255, 255, 255, 0.16);
+      --input-bg: rgba(44, 44, 46, 0.85);
       --text-main: #FFFFFF;
       --text-secondary: #8E8E93;
+      --text-tertiary: #A1A1A6;
+      --accent-blue: #0A84FF;
+      --accent-blue-hover: #409CFF;
+      --accent-green: #30D158;
+      --accent-orange: #FF9F0A;
+      --accent-red: #FF453A;
+      --accent-purple: #BF5AF2;
+      --accent-teal: #64D2FF;
+      --badge-bg: rgba(10, 132, 255, 0.16);
+      --badge-text: #70B5FF;
+      --radius-large: 18px;
+      --radius-medium: 14px;
+      --radius-small: 10px;
+      --blur-strength: blur(32px) saturate(190%);
+      --touch-target-min: 44px;
+      --shadow-nav: 0 10px 30px rgba(0, 0, 0, 0.4);
+      --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.3);
+      --drawer-bg: rgba(0, 0, 0, 0.35);
+      --btn-sec-bg: rgba(255, 255, 255, 0.08);
+      --btn-sec-border: rgba(255, 255, 255, 0.12);
+      --btn-sec-hover: rgba(255, 255, 255, 0.16);
+      --val-mono-color: #E5E5EA;
+      --modal-card-bg: rgba(32, 32, 36, 0.96);
+      --brand-gradient: linear-gradient(135deg, #FFF 30%, #A1A1A6 100%);
+    }
+
+    /* Light Appearance (Apple HIG System Light) */
+    @media (prefers-color-scheme: light) {
+      :root:not(.theme-dark) {
+        --bg-color: #F2F2F7;
+        --card-bg: rgba(255, 255, 255, 0.94);
+        --card-bg-elevated: rgba(242, 242, 247, 0.94);
+        --card-border: rgba(0, 0, 0, 0.08);
+        --card-border-hover: rgba(0, 0, 0, 0.16);
+        --input-bg: rgba(235, 235, 240, 0.9);
+        --text-main: #000000;
+        --text-secondary: #6C6C70;
+        --text-tertiary: #8E8E93;
+        --accent-blue: #007AFF;
+        --accent-blue-hover: #0062CC;
+        --accent-green: #34C759;
+        --accent-orange: #FF9500;
+        --accent-red: #FF3B30;
+        --accent-purple: #AF52DE;
+        --accent-teal: #32ADE6;
+        --badge-bg: rgba(0, 122, 255, 0.1);
+        --badge-text: #0066D6;
+        --shadow-nav: 0 8px 24px rgba(0, 0, 0, 0.08);
+        --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.06);
+        --drawer-bg: rgba(245, 245, 247, 0.85);
+        --btn-sec-bg: rgba(0, 0, 0, 0.05);
+        --btn-sec-border: rgba(0, 0, 0, 0.1);
+        --btn-sec-hover: rgba(0, 0, 0, 0.09);
+        --val-mono-color: #1C1C1E;
+        --modal-card-bg: rgba(255, 255, 255, 0.98);
+        --brand-gradient: linear-gradient(135deg, #1C1C1E 30%, #636366 100%);
+      }
+    }
+
+    html.theme-light {
+      --bg-color: #F2F2F7;
+      --card-bg: rgba(255, 255, 255, 0.94);
+      --card-bg-elevated: rgba(242, 242, 247, 0.94);
+      --card-border: rgba(0, 0, 0, 0.08);
+      --card-border-hover: rgba(0, 0, 0, 0.16);
+      --input-bg: rgba(235, 235, 240, 0.9);
+      --text-main: #000000;
+      --text-secondary: #6C6C70;
+      --text-tertiary: #8E8E93;
       --accent-blue: #007AFF;
-      --accent-blue-hover: #0A84FF;
+      --accent-blue-hover: #0062CC;
       --accent-green: #34C759;
       --accent-orange: #FF9500;
       --accent-red: #FF3B30;
       --accent-purple: #AF52DE;
-      --radius-large: 20px;
-      --radius-medium: 14px;
-      --radius-small: 10px;
-      --blur-strength: blur(28px) saturate(190%);
+      --accent-teal: #32ADE6;
+      --badge-bg: rgba(0, 122, 255, 0.1);
+      --badge-text: #0066D6;
+      --shadow-nav: 0 8px 24px rgba(0, 0, 0, 0.08);
+      --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.06);
+      --drawer-bg: rgba(245, 245, 247, 0.85);
+      --btn-sec-bg: rgba(0, 0, 0, 0.05);
+      --btn-sec-border: rgba(0, 0, 0, 0.1);
+      --btn-sec-hover: rgba(0, 0, 0, 0.09);
+      --val-mono-color: #1C1C1E;
+      --modal-card-bg: rgba(255, 255, 255, 0.98);
+      --brand-gradient: linear-gradient(135deg, #1C1C1E 30%, #636366 100%);
+    }
+
+    button:focus-visible, input:focus-visible {
+      outline: 2px solid var(--accent-blue);
+      outline-offset: 2px;
     }
 
     * {
@@ -884,10 +995,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
       padding-bottom: max(30px, env(safe-area-inset-bottom));
       padding-left: max(16px, env(safe-area-inset-left));
       padding-right: max(16px, env(safe-area-inset-right));
-      background-image:
-        radial-gradient(at 0% 0%, rgba(0, 122, 255, 0.12) 0px, transparent 50%),
-        radial-gradient(at 100% 100%, rgba(175, 82, 222, 0.1) 0px, transparent 50%);
-      background-attachment: fixed;
+      /* Pure OLED Black with clean contrast (Apple HIG) */
+      background-image: none;
     }
 
     .container {
@@ -911,7 +1020,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
       border: 1px solid var(--card-border);
       border-radius: var(--radius-large);
       margin-bottom: 24px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      box-shadow: var(--shadow-nav);
     }
 
     .brand-title {
@@ -924,7 +1033,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     }
 
     .brand-title span {
-      background: linear-gradient(135deg, #FFF 30%, #A1A1A6 100%);
+      background: var(--brand-gradient);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
@@ -968,6 +1077,28 @@ HTML_PAGE = r"""<!DOCTYPE html>
       border-radius: 4px;
       transition: width 0.4s ease;
       background: var(--accent-blue);
+    }
+
+        .btn-theme-toggle {
+      width: 36px;
+      height: 36px;
+      min-width: 36px;
+      border-radius: 50%;
+      background: var(--btn-sec-bg);
+      border: 1px solid var(--btn-sec-border);
+      color: var(--text-main);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+    }
+    .btn-theme-toggle:hover {
+      background: var(--btn-sec-hover);
+      transform: scale(1.05);
+    }
+    .btn-theme-toggle:active {
+      transform: scale(0.95);
     }
 
     .btn-settings {
@@ -1055,22 +1186,34 @@ HTML_PAGE = r"""<!DOCTYPE html>
     }
 
     .status-dot {
-      width: 10px;
-      height: 10px;
+      width: 18px;
+      height: 18px;
       border-radius: 50%;
       background: var(--text-secondary);
-      box-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      box-shadow: 0 0 10px rgba(255, 255, 255, 0.15);
+      transition: all 0.3s ease;
     }
 
     .status-dot.active {
       background: var(--accent-green);
-      box-shadow: 0 0 10px rgba(52, 199, 89, 0.6);
-      animation: pulse 2.5s infinite;
+      box-shadow: 0 0 12px rgba(48, 209, 88, 0.5);
     }
 
     .status-dot.inactive {
       background: var(--accent-red);
-      box-shadow: 0 0 10px rgba(255, 59, 48, 0.6);
+      box-shadow: 0 0 12px rgba(255, 69, 58, 0.5);
+    }
+
+    .status-state.text-active {
+      color: var(--accent-green);
+    }
+
+    .status-state.text-inactive {
+      color: var(--accent-red);
     }
 
     @keyframes pulse {
@@ -1128,113 +1271,270 @@ HTML_PAGE = r"""<!DOCTYPE html>
       transform: scale(0.98);
     }
 
-    /* === SERVICES & INBOUNDS GRID === */
-    .services-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-      gap: 16px;
-      margin-bottom: 34px;
+    /* === INSET GROUPED SECTIONS (APPLE HIG) === */
+    .inset-section {
+      margin-bottom: 28px;
     }
 
-    .service-card {
-      background: var(--card-bg);
-      backdrop-filter: var(--blur-strength);
-      -webkit-backdrop-filter: var(--blur-strength);
-      border: 1px solid var(--card-border);
-      border-radius: var(--radius-large);
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      transition: all 0.25s cubic-bezier(0.25, 1, 0.5, 1);
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
-    }
-
-    .service-card:hover {
-      border-color: rgba(255, 255, 255, 0.18);
-      transform: translateY(-2px);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
-    }
-
-    .card-header {
+    .section-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 14px;
+      margin: 0 6px 10px 6px;
     }
 
-    .card-title {
-      font-size: 16px;
+    .section-header-title {
+      font-size: 13px;
       font-weight: 600;
-      letter-spacing: -0.2px;
-    }
-
-    .badge {
-      display: inline-block;
-      padding: 4px 10px;
-      border-radius: 20px;
-      font-size: 11px;
-      font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
-      background: rgba(0, 122, 255, 0.18);
-      color: var(--accent-blue);
-      border: 1px solid rgba(0, 122, 255, 0.3);
+      letter-spacing: 0.6px;
+      color: var(--text-tertiary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
-    .current-props {
+    .inset-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-large);
+      overflow: hidden;
+      box-shadow: var(--shadow-card);
+    }
+
+    .service-row-item {
+      border-bottom: 1px solid var(--card-border);
+      transition: background 0.15s ease;
+    }
+
+    .service-row-item:last-child {
+      border-bottom: none;
+    }
+
+    .service-row-main {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      cursor: pointer;
+      user-select: none;
+      gap: 12px;
+      min-height: 64px;
+      transition: background 0.15s ease;
+    }
+
+    .service-row-main:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .service-row-main:active {
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .service-row-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .service-icon-box {
+      width: 40px;
+      height: 40px;
+      min-width: 40px;
+      border-radius: 11px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    /* Protocol Squircle Tints */
+    .icon-blue { background: rgba(10, 132, 255, 0.18); color: var(--accent-blue); }
+    .icon-purple { background: rgba(191, 90, 242, 0.18); color: var(--accent-purple); }
+    .icon-orange { background: rgba(255, 159, 10, 0.18); color: var(--accent-orange); }
+    .icon-teal { background: rgba(100, 210, 255, 0.18); color: var(--accent-teal); }
+    .icon-green { background: rgba(48, 209, 88, 0.18); color: var(--accent-green); }
+    .icon-gray { background: rgba(142, 142, 147, 0.18); color: var(--text-secondary); }
+
+    .service-titles {
       display: flex;
       flex-direction: column;
-      gap: 4px;
-      background: rgba(0, 0, 0, 0.25);
-      border-radius: var(--radius-small);
-      padding: 10px 12px;
-      margin-bottom: 16px;
-      font-size: 13px;
+      gap: 3px;
+      min-width: 0;
     }
 
-    .prop-row {
-      display: flex;
-      justify-content: space-between;
+    .service-name-text {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-main);
+      letter-spacing: -0.2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .service-sub-details {
+      font-size: 12px;
       color: var(--text-secondary);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-variant-numeric: tabular-nums;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
     }
 
-    .prop-val {
-      color: #E5E5EA;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    .detail-sep {
+      color: rgba(255, 255, 255, 0.2);
+    }
+
+    .val-mono {
+      color: var(--val-mono-color);
       font-weight: 500;
     }
 
-    .inputs-area {
+    .service-row-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      background: var(--badge-bg);
+      color: var(--badge-text);
+      border: 1px solid rgba(10, 132, 255, 0.3);
+    }
+
+    .btn-tune-chevron {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--l-input-border);
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      cursor: pointer;
+    }
+
+    .service-row-item.open .btn-tune-chevron {
+      transform: rotate(90deg);
+      background: var(--accent-blue);
+      color: #FFF;
+      border-color: var(--accent-blue);
+    }
+
+    /* Progressive Disclosure Drawer */
+    .service-edit-drawer {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      background: var(--drawer-bg);
+      border-top: 1px solid transparent;
+    }
+
+    .service-row-item.open .service-edit-drawer {
+      max-height: 280px;
+      border-top-color: var(--card-border);
+    }
+
+    .drawer-content {
+      padding: 16px 18px 18px 18px;
       display: flex;
       flex-direction: column;
+      gap: 14px;
+    }
+
+    .drawer-inputs {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+    }
+
+    .drawer-actions {
+      display: flex;
+      justify-content: flex-end;
       gap: 10px;
-      margin-bottom: 16px;
+      margin-top: 4px;
+    }
+
+    .btn-cancel-edit {
+      min-height: 40px;
+      padding: 8px 16px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--l-input-border);
+      border-radius: var(--radius-small);
+      color: var(--text-main);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-cancel-edit:hover {
+      background: rgba(255, 255, 255, 0.14);
+    }
+
+    .btn-apply-inline {
+      min-height: 40px;
+      padding: 8px 20px;
+      background: var(--accent-blue);
+      border: none;
+      border-radius: var(--radius-small);
+      color: #FFF;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .btn-apply-inline:hover {
+      background: var(--accent-blue-hover);
+    }
+
+    .btn-apply-inline:active {
+      transform: scale(0.98);
     }
 
     .input-row {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 5px;
     }
 
     .input-label {
       font-size: 12px;
       font-weight: 500;
-      color: var(--text-secondary);
+      color: var(--text-tertiary);
     }
 
     .input-field-wrap {
       display: flex;
-      gap: 6px;
+      gap: 8px;
     }
 
     .apple-input {
       flex: 1;
       background: var(--input-bg);
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      border: 1px solid var(--l-input-border);
       border-radius: var(--radius-small);
-      padding: 10px 12px;
+      padding: 10px 14px;
       color: var(--text-main);
       font-size: 14px;
       outline: none;
@@ -1244,52 +1544,29 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
     .apple-input:focus {
       border-color: var(--accent-blue);
-      box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.25);
+      box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.25);
     }
 
     .btn-dice {
       background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      border: 1px solid var(--l-input-border);
       color: var(--text-main);
       border-radius: var(--radius-small);
-      width: 38px;
+      min-width: var(--touch-target-min);
+      min-height: var(--touch-target-min);
+      width: 44px;
+      height: 44px;
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      font-size: 16px;
+      font-size: 18px;
       transition: all 0.2s ease;
     }
 
     .btn-dice:hover {
       background: rgba(255, 255, 255, 0.16);
       transform: rotate(15deg);
-    }
-
-    .btn-apply {
-      width: 100%;
-      padding: 11px 16px;
-      background: var(--accent-blue);
-      border: none;
-      border-radius: var(--radius-medium);
-      color: #FFF;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
-    }
-
-    .btn-apply:hover {
-      background: var(--accent-blue-hover);
-      box-shadow: 0 4px 15px rgba(0, 122, 255, 0.4);
-    }
-
-    .btn-apply:active {
-      transform: scale(0.98);
     }
 
     /* === LINKS SUMMARY SECTION === */
@@ -1389,15 +1666,15 @@ HTML_PAGE = r"""<!DOCTYPE html>
     }
 
     .modal-card {
-      background: rgba(32, 32, 36, 0.96);
+      background: var(--modal-card-bg);
       backdrop-filter: blur(36px) saturate(190%);
       -webkit-backdrop-filter: blur(36px) saturate(190%);
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      border: 1px solid var(--card-border);
       border-radius: var(--radius-large);
       max-width: 460px;
       width: 100%;
       padding: 24px;
-      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--card-border);
       transform: scale(0.96) translateY(8px);
       transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.28s ease;
     }
@@ -1445,7 +1722,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
       min-height: 44px;
       padding: 10px 20px;
       background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      border: 1px solid var(--l-input-border);
       border-radius: var(--radius-medium);
       color: var(--text-main);
       font-size: 14px;
@@ -1576,6 +1853,16 @@ HTML_PAGE = r"""<!DOCTYPE html>
       }
     }
   </style>
+  <script>
+    (function() {
+      const saved = localStorage.getItem('mgmt_theme');
+      if (saved === 'light') {
+        document.documentElement.classList.add('theme-light');
+      } else if (saved === 'dark') {
+        document.documentElement.classList.add('theme-dark');
+      }
+    })();
+  </script>
 </head>
 <body>
   <div class="container">
@@ -1587,6 +1874,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
           <span>⚙️ Конфигурирование сервера</span>
         </div>
         <div style="display:flex; align-items:center; gap:8px;">
+          <button class="btn-theme-toggle" onclick="toggleTheme()" aria-label="Светлая / Тёмная тема" title="Переключить тему">
+            <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+            <svg id="theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+          </button>
           <button class="btn-settings" onclick="openSettingsModal()">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             Настройки
@@ -1678,9 +1969,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
     </div>
 
     <!-- SERVICES & INBOUNDS CONFIGURATION -->
-    <div class="section-title">Службы, Inbounds и маршрутизация</div>
-    <div id="services-grid" class="services-grid">
-      <!-- Dynamically generated service cards -->
+    <div id="services-grid">
+      <!-- Dynamically generated Inset Grouped sections -->
     </div>
 
     <!-- ACTIVE LINKS SUMMARY -->
@@ -2009,78 +2299,209 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       const text = document.getElementById(`text-${id}`);
       if (active) {
         dot.className = 'status-dot active';
+        dot.innerHTML = `<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="4.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
         text.innerText = 'Активен';
+        text.className = 'status-state text-active';
       } else {
         dot.className = 'status-dot inactive';
+        dot.innerHTML = `<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#FFF" stroke-width="4.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
         text.innerText = 'Остановлен';
+        text.className = 'status-state text-inactive';
+      }
+    }
+
+    function toggleRowEdit(id) {
+      const row = document.getElementById(`row-${id}`);
+      if (!row) return;
+      const isOpen = row.classList.contains('open');
+      document.querySelectorAll('.service-row-item.open').forEach(el => {
+        if (el !== row) el.classList.remove('open');
+      });
+      if (isOpen) {
+        row.classList.remove('open');
+      } else {
+        row.classList.add('open');
+        setTimeout(() => {
+          const inp = row.querySelector('.apple-input');
+          if (inp) inp.focus();
+        }, 120);
+      }
+    }
+
+    function getServiceIconMeta(id) {
+      if (id === 'vless_ws') {
+        return {
+          cls: 'icon-blue',
+          svg: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>'
+        };
+      } else if (id === 'vless_xhttp') {
+        return {
+          cls: 'icon-purple',
+          svg: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>'
+        };
+      } else if (id === 'trojan_grpc') {
+        return {
+          cls: 'icon-orange',
+          svg: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>'
+        };
+      } else if (id === 'vless_grpc') {
+        return {
+          cls: 'icon-teal',
+          svg: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>'
+        };
+      } else if (id === 'hysteria2') {
+        return {
+          cls: 'icon-purple',
+          svg: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"></path><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"></path></svg>'
+        };
+      } else if (id === 'amneziawg') {
+        return {
+          cls: 'icon-blue',
+          svg: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21 2-2 2m-1.5 1.5L14 9l-1.5-1.5L11 9l-1.5-1.5L8 9l-1.5-1.5L5 9l-1.5-1.5L2 9l6 6 13-13"></path><path d="M10 14.66V17c0 .55-.45 1-1 1H7c-.55 0-1 .45-1 1v2c0 .55-.45 1-1 1H3c-.55 0-1-.45-1-1v-4.34"></path></svg>'
+        };
+      } else if (id === 'telemt') {
+        return {
+          cls: 'icon-blue',
+          svg: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>'
+        };
+      } else if (id === 'telemt_panel' || id === 'xui_panel') {
+        return {
+          cls: 'icon-teal',
+          svg: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>'
+        };
+      } else if (id.startsWith('sub_')) {
+        return {
+          cls: 'icon-green',
+          svg: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>'
+        };
+      } else if (id === 'adguard_doh') {
+        return {
+          cls: 'icon-green',
+          svg: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><polyline points="9 12 11 14 15 10"></polyline></svg>'
+        };
+      } else {
+        return {
+          cls: 'icon-gray',
+          svg: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>'
+        };
       }
     }
 
     function renderServices(services) {
       const container = document.getElementById('services-grid');
+      if (!container) return;
       container.innerHTML = '';
 
-      Object.values(services).forEach(s => {
-        const card = document.createElement('div');
-        card.className = 'service-card';
+      const GROUPS = [
+        {
+          title: "Сетевые прокси и туннели (Xray Core)",
+          icon: "🌐",
+          ids: ["vless_ws", "vless_xhttp", "trojan_grpc", "vless_grpc", "hysteria2", "amneziawg"]
+        },
+        {
+          title: "Мессенджеры и веб-инфраструктура",
+          icon: "💬",
+          ids: ["telemt", "telemt_panel", "xui_panel", "sub_base64", "sub_json"]
+        },
+        {
+          title: "DNS, блокировка рекламы и DoH",
+          icon: "🛡️",
+          ids: ["adguard_doh", "adguard_web"]
+        }
+      ];
 
-        let pathInputs = '';
-        if (s.has_path) {
-          pathInputs = `
-            <div class="input-row">
-              <label class="input-label">Новый путь / ServiceName</label>
-              <div class="input-field-wrap">
-                <input id="input-path-${s.id}" class="apple-input" placeholder="${s.current_path}" />
-                <button class="btn-dice" onclick="rollPath('${s.id}')" title="Сгенерировать случайный путь">🎲</button>
+      GROUPS.forEach(grp => {
+        const items = grp.ids.map(id => services[id]).filter(Boolean);
+        if (!items.length) return;
+
+        const sec = document.createElement('div');
+        sec.className = 'inset-section';
+
+        let rowsHtml = '';
+        items.forEach(s => {
+          const iconMeta = getServiceIconMeta(s.id);
+
+          let pathInputs = '';
+          if (s.has_path) {
+            pathInputs = `
+              <div class="input-row">
+                <label class="input-label" for="input-path-${s.id}">Новый путь / ServiceName</label>
+                <div class="input-field-wrap">
+                  <input id="input-path-${s.id}" class="apple-input" placeholder="${s.current_path}" onclick="event.stopPropagation()" />
+                  <button type="button" class="btn-dice" onclick="event.stopPropagation(); rollPath('${s.id}')" title="Сгенерировать случайный путь" aria-label="Случайный путь">🎲</button>
+                </div>
+              </div>
+            `;
+          }
+
+          let portInputs = '';
+          if (s.has_port) {
+            portInputs = `
+              <div class="input-row">
+                <label class="input-label" for="input-port-${s.id}">Новый внутренний порт</label>
+                <div class="input-field-wrap">
+                  <input id="input-port-${s.id}" type="number" class="apple-input" placeholder="${s.current_port}" onclick="event.stopPropagation()" />
+                  <button type="button" class="btn-dice" onclick="event.stopPropagation(); rollPort('${s.id}')" title="Сгенерировать случайный свободный порт" aria-label="Случайный порт">🎲</button>
+                </div>
+              </div>
+            `;
+          }
+
+          rowsHtml += `
+            <div class="service-row-item" id="row-${s.id}">
+              <div class="service-row-main" onclick="toggleRowEdit('${s.id}')" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' ')toggleRowEdit('${s.id}')">
+                <div class="service-row-left">
+                  <div class="service-icon-box ${iconMeta.cls}">
+                    ${iconMeta.svg}
+                  </div>
+                  <div class="service-titles">
+                    <div class="service-name-text">${s.name}</div>
+                    <div class="service-sub-details">
+                      <span>порт: <strong class="val-mono">${s.current_port}</strong></span>
+                      ${s.has_path ? `<span class="detail-sep">•</span><span>путь: <strong class="val-mono">${s.current_path}</strong></span>` : ''}
+                    </div>
+                  </div>
+                </div>
+                <div class="service-row-right">
+                  <span class="badge">${s.badge || s.protocol}</span>
+                  <div class="btn-tune-chevron" aria-hidden="true">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Collapsible Edit Drawer (Progressive Disclosure) -->
+              <div class="service-edit-drawer" id="drawer-${s.id}">
+                <div class="drawer-content">
+                  <div class="drawer-inputs">
+                    ${portInputs}
+                    ${pathInputs}
+                  </div>
+                  <div class="drawer-actions">
+                    <button type="button" class="btn-cancel-edit" onclick="toggleRowEdit('${s.id}')">Отмена</button>
+                    <button type="button" class="btn-apply-inline" onclick="promptApply('${s.id}')">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                      Применить
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           `;
-        }
+        });
 
-        let portInputs = '';
-        if (s.has_port) {
-          portInputs = `
-            <div class="input-row">
-              <label class="input-label">Новый внутренний порт</label>
-              <div class="input-field-wrap">
-                <input id="input-port-${s.id}" type="number" class="apple-input" placeholder="${s.current_port}" />
-                <button class="btn-dice" onclick="rollPort('${s.id}')" title="Сгенерировать случайный свободный порт">🎲</button>
-              </div>
-            </div>
-          `;
-        }
-
-        card.innerHTML = `
-          <div>
-            <div class="card-header">
-              <div class="card-title">${s.name}</div>
-              <span class="badge">${s.badge || s.protocol}</span>
-            </div>
-
-            <div class="current-props">
-              <div class="prop-row">
-                <span>Текущий порт:</span>
-                <span class="prop-val">${s.current_port}</span>
-              </div>
-              ${s.has_path ? `
-              <div class="prop-row">
-                <span>Текущий путь:</span>
-                <span class="prop-val">${s.current_path}</span>
-              </div>
-              ` : ''}
-            </div>
-
-            <div class="inputs-area">
-              ${portInputs}
-              ${pathInputs}
+        sec.innerHTML = `
+          <div class="section-header">
+            <div class="section-header-title">
+              <span>${grp.icon}</span> ${grp.title}
             </div>
           </div>
-
-          <button class="btn-apply" onclick="promptApply('${s.id}')">
-            Применить изменения
-          </button>
+          <div class="inset-card">
+            ${rowsHtml}
+          </div>
         `;
-        container.appendChild(card);
+
+        container.appendChild(sec);
       });
     }
 
@@ -2209,7 +2630,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
             <div style="background:rgba(0,0,0,0.5); padding:12px; border-radius:10px; font-family:monospace; font-size:13px; color:#30D158; margin-bottom:20px;">
               # Для повторного открытия выполните в SSH:<br>server-mgr open
             </div>
-            <p style="font-size:12px; color:#636366">Вы можете безопасно закрыть эту вкладку браузера.</p>
+            <p style="font-size:13px; color:#A1A1A6; margin-top:14px;">Вы можете безопасно закрыть эту вкладку браузера.</p>
           </div>
         </div>
       `;
@@ -2226,6 +2647,39 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       }
     });
 
+    function toggleTheme() {
+      const isLight = document.documentElement.classList.contains('theme-light') ||
+        (!document.documentElement.classList.contains('theme-dark') && window.matchMedia('(prefers-color-scheme: light)').matches);
+      if (isLight) {
+        document.documentElement.classList.remove('theme-light');
+        document.documentElement.classList.add('theme-dark');
+        localStorage.setItem('mgmt_theme', 'dark');
+      } else {
+        document.documentElement.classList.remove('theme-dark');
+        document.documentElement.classList.add('theme-light');
+        localStorage.setItem('mgmt_theme', 'light');
+      }
+      updateThemeIcon();
+    }
+
+    function updateThemeIcon() {
+      const isLight = document.documentElement.classList.contains('theme-light') ||
+        (!document.documentElement.classList.contains('theme-dark') && window.matchMedia('(prefers-color-scheme: light)').matches);
+      const sun = document.getElementById('theme-icon-sun');
+      const moon = document.getElementById('theme-icon-moon');
+      if (sun && moon) {
+        if (isLight) {
+          sun.style.display = 'block';
+          moon.style.display = 'none';
+        } else {
+          sun.style.display = 'none';
+          moon.style.display = 'block';
+        }
+      }
+    }
+
+    updateThemeIcon();
+
     // Initial load
     fetchFullState();
     fetchStats();
@@ -2241,52 +2695,81 @@ LOGIN_PAGE = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Вход — Конфигурирование сервера</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%230A84FF'/%3E%3Cstop offset='100%25' stop-color='%230055D4'/%3E%3C/linearGradient%3E%3ClinearGradient id='s' x1='0%25' y1='0%25' x2='0%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23FFFFFF'/%3E%3Cstop offset='100%25' stop-color='%23CFE4FF'/%3E%3C/linearGradient%3E%3Cfilter id='g' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeGaussianBlur stdDeviation='1.5' result='u'/%3E%3CfeComposite in='SourceGraphic' in2='u' operator='over'/%3E%3C/filter%3E%3C/defs%3E%3Crect width='64' height='64' rx='15' fill='url(%23b)'/%3E%3Cpath d='M32 12 L46 17 C46 30 39 44 32 50 C25 44 18 30 18 17 Z' fill='rgba(255,255,255,0.15)' stroke='url(%23s)' stroke-width='2.5' stroke-linejoin='round'/%3E%3Ccircle cx='32' cy='29' r='4' fill='%2330D158' filter='url(%23g)'/%3E%3Cpath d='M26 37 L38 37' stroke='%23FFFFFF' stroke-width='2.2' stroke-linecap='round'/%3E%3Cpath d='M28 41 L36 41' stroke='rgba(255,255,255,0.7)' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
+    :root {
+      --l-bg: #000000;
+      --l-card: rgba(28, 28, 30, 0.88);
+      --l-border: rgba(255, 255, 255, 0.1);
+      --l-text: #FFFFFF;
+      --l-sub: #8E8E93;
+      --l-label: #A1A1A6;
+      --l-input-bg: rgba(44, 44, 46, 0.85);
+      --l-input-border: rgba(255, 255, 255, 0.12);
+      --l-accent: #0A84FF;
+      --l-accent-hover: #409CFF;
+      --l-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --l-bg: #F2F2F7;
+        --l-card: rgba(255, 255, 255, 0.94);
+        --l-border: rgba(0, 0, 0, 0.08);
+        --l-text: #000000;
+        --l-sub: #6C6C70;
+        --l-label: #8E8E93;
+        --l-input-bg: rgba(235, 235, 240, 0.9);
+        --l-input-border: rgba(0, 0, 0, 0.1);
+        --l-accent: #007AFF;
+        --l-accent-hover: #0062CC;
+        --l-shadow: 0 20px 50px rgba(0, 0, 0, 0.08);
+      }
+    }
     body {
-      background: #000;
-      color: #FFF;
+      background: var(--l-bg);
+      color: var(--l-text);
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
       padding: 20px;
-      background-image: radial-gradient(at 50% 50%, rgba(0, 122, 255, 0.15) 0px, transparent 60%);
     }
     .login-card {
-      background: rgba(28, 28, 30, 0.8);
-      backdrop-filter: blur(30px);
-      -webkit-backdrop-filter: blur(30px);
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: var(--l-card);
+      backdrop-filter: blur(36px) saturate(190%);
+      -webkit-backdrop-filter: blur(36px) saturate(190%);
+      border: 1px solid var(--l-border);
       border-radius: 22px;
       padding: 36px 30px;
       width: 100%;
       max-width: 380px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
+      box-shadow: var(--l-shadow);
       text-align: center;
     }
     .icon { font-size: 40px; margin-bottom: 12px; }
-    h1 { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
-    p { font-size: 13px; color: #8E8E93; margin-bottom: 24px; }
-    .input-wrap { margin-bottom: 14px; text-align: left; }
-    .input-wrap label { font-size: 12px; color: #8E8E93; display: block; margin-bottom: 5px; font-weight: 500; }
+    h1 { font-size: 20px; font-weight: 700; margin-bottom: 6px; letter-spacing: -0.3px; }
+    p { font-size: 13px; color: var(--l-sub); margin-bottom: 24px; }
+    .input-wrap { margin-bottom: 16px; text-align: left; }
+    .input-wrap label { font-size: 13px; color: var(--l-label); display: block; margin-bottom: 6px; font-weight: 500; }
     input {
       width: 100%;
-      background: rgba(44, 44, 46, 0.8);
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: var(--l-input-bg);
+      border: 1px solid var(--l-input-border);
       border-radius: 12px;
       padding: 12px 14px;
-      color: #FFF;
-      font-size: 15px;
+      color: var(--l-text);
+      font-size: 16px;
       outline: none;
       transition: all 0.2s;
     }
-    input:focus { border-color: #007AFF; box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.3); }
+    input:focus { border-color: #0A84FF; box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.28); }
     .btn-login {
       width: 100%;
+      min-height: 44px;
       padding: 13px;
-      background: #007AFF;
+      background: var(--l-accent);
       border: none;
       border-radius: 12px;
       color: #FFF;
@@ -2296,10 +2779,20 @@ LOGIN_PAGE = """<!DOCTYPE html>
       margin-top: 10px;
       transition: all 0.2s;
     }
-    .btn-login:hover { background: #0A84FF; }
+    .btn-login:hover { background: var(--l-accent-hover); }
     .btn-login:active { transform: scale(0.98); }
     .error-msg { color: #FF453A; font-size: 13px; margin-top: 12px; display: none; }
   </style>
+  <script>
+    (function() {
+      const saved = localStorage.getItem('mgmt_theme');
+      if (saved === 'light') {
+        document.documentElement.classList.add('theme-light');
+      } else if (saved === 'dark') {
+        document.documentElement.classList.add('theme-dark');
+      }
+    })();
+  </script>
 </head>
 <body>
   <div class="login-card">
@@ -2354,6 +2847,7 @@ LOGGED_OUT_PAGE = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Сессия завершена</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%230A84FF'/%3E%3Cstop offset='100%25' stop-color='%230055D4'/%3E%3C/linearGradient%3E%3ClinearGradient id='s' x1='0%25' y1='0%25' x2='0%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23FFFFFF'/%3E%3Cstop offset='100%25' stop-color='%23CFE4FF'/%3E%3C/linearGradient%3E%3Cfilter id='g' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeGaussianBlur stdDeviation='1.5' result='u'/%3E%3CfeComposite in='SourceGraphic' in2='u' operator='over'/%3E%3C/filter%3E%3C/defs%3E%3Crect width='64' height='64' rx='15' fill='url(%23b)'/%3E%3Cpath d='M32 12 L46 17 C46 30 39 44 32 50 C25 44 18 30 18 17 Z' fill='rgba(255,255,255,0.15)' stroke='url(%23s)' stroke-width='2.5' stroke-linejoin='round'/%3E%3Ccircle cx='32' cy='29' r='4' fill='%2330D158' filter='url(%23g)'/%3E%3Cpath d='M26 37 L38 37' stroke='%23FFFFFF' stroke-width='2.2' stroke-linecap='round'/%3E%3Cpath d='M28 41 L36 41' stroke='rgba(255,255,255,0.7)' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
     body {
@@ -2390,6 +2884,16 @@ LOGGED_OUT_PAGE = """<!DOCTYPE html>
       margin-bottom: 20px;
     }
   </style>
+  <script>
+    (function() {
+      const saved = localStorage.getItem('mgmt_theme');
+      if (saved === 'light') {
+        document.documentElement.classList.add('theme-light');
+      } else if (saved === 'dark') {
+        document.documentElement.classList.add('theme-dark');
+      }
+    })();
+  </script>
 </head>
 <body>
   <div class="card">
@@ -2400,7 +2904,7 @@ LOGGED_OUT_PAGE = """<!DOCTYPE html>
       # Для повторного открытия выполните в SSH:<br>
       server-mgr open
     </div>
-    <p style="font-size:12px; color:#636366">Вы можете безопасно закрыть эту вкладку браузера.</p>
+    <p style="font-size:13px; color:#A1A1A6; margin-top:14px;">Вы можете безопасно закрыть эту вкладку браузера.</p>
   </div>
 </body>
 </html>
@@ -2482,6 +2986,22 @@ class ServerManagerHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         expected_prefix = f"/{secret_path}/"
+
+        # Favicon direct delivery
+        if path in ("/favicon.ico", "/favicon.svg") or path.endswith("/favicon.ico") or path.endswith("/favicon.svg"):
+            body = FAVICON_SVG.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+                self.wfile.flush()
+            except Exception:
+                pass
+            return
 
         # 1. Bare root or incorrect path -> redirect to secret path with trailing slash
         if path == "/" or path == f"/{secret_path}" or not path.startswith(expected_prefix):
