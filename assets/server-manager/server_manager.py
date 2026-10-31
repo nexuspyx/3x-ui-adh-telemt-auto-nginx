@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# Build Timestamp: 12:35.31.10.2026
+# Build Timestamp: 12:55.31.10.2026
 """
 ==============================================================================
 «КОНФИГУРИРОВАНИЕ СЕРВЕРА» (SERVER CONFIGURATION MANAGER)
@@ -302,6 +302,28 @@ def detect_live_services(cfg):
                         "has_port": True,
                         "badge": "AmneziaWG"
                     }
+
+            # Check for any created clients in inbounds
+            client_sub_id = None
+            for ib in inbounds:
+                try:
+                    ib_settings = json.loads(ib[4]) if ib[4] else {}
+                    for c in ib_settings.get("clients", []):
+                        sid = c.get("subId") or c.get("id")
+                        if sid:
+                            client_sub_id = sid
+                            break
+                    if client_sub_id:
+                        break
+                except Exception:
+                    pass
+
+            if client_sub_id:
+                if "sub_base64" in services:
+                    services["sub_base64"]["client_sub_id"] = client_sub_id
+                if "sub_json" in services:
+                    services["sub_json"]["client_sub_id"] = client_sub_id
+
             conn.close()
         except Exception as e:
             print(f"[WARN] Error reading x-ui db: {e}")
@@ -2391,7 +2413,6 @@ LOGGED_OUT_PAGE = """<!DOCTYPE html>
 
 class ServerManagerHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    close_connection = True
 
     def do_HEAD(self):
         self.do_GET()
@@ -2426,7 +2447,7 @@ class ServerManagerHandler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Connection", "close")
+        self.send_header("Connection", "keep-alive")
         self.send_header("Cache-Control", "no-store")
         if set_cookie:
             self.send_header("Set-Cookie", set_cookie)
@@ -2443,7 +2464,7 @@ class ServerManagerHandler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Connection", "close")
+        self.send_header("Connection", "keep-alive")
         self.send_header("Cache-Control", "no-store")
         if set_cookie:
             self.send_header("Set-Cookie", set_cookie)
@@ -2467,7 +2488,7 @@ class ServerManagerHandler(BaseHTTPRequestHandler):
             self.send_response(302)
             self.send_header("Location", expected_prefix)
             self.send_header("Content-Length", "0")
-            self.send_header("Connection", "close")
+            self.send_header("Connection", "keep-alive")
             self.end_headers()
             try:
                 self.wfile.flush()
@@ -2510,34 +2531,64 @@ class ServerManagerHandler(BaseHTTPRequestHandler):
                     "url": f"https://{domain}{services['xui_panel']['current_path']}"
                 })
             if "sub_base64" in services:
-                links.append({
-                    "name": "Подписка Base64 (Обычная)",
-                    "url": f"https://{domain}{services['sub_base64']['current_path']}"
-                })
+                sub_path = services['sub_base64']['current_path'].rstrip("/") + "/"
+                client_sid = services['sub_base64'].get("client_sub_id")
+                if client_sid:
+                    links.append({
+                        "name": "Подписка Base64 (V2Ray / Clash)",
+                        "url": f"https://{domain}{sub_path}{client_sid}"
+                    })
+                else:
+                    links.append({
+                        "name": "Подписка Base64 (Базовый путь — добавьте клиента в 3X-UI)",
+                        "url": f"https://{domain}{sub_path}"
+                    })
             if "sub_json" in services:
-                links.append({
-                    "name": "Подписка JSON (Happ / Sing-box)",
-                    "url": f"https://{domain}{services['sub_json']['current_path']}"
-                })
+                sub_json_path = services['sub_json']['current_path'].rstrip("/") + "/"
+                client_sid = services['sub_json'].get("client_sub_id")
+                if client_sid:
+                    links.append({
+                        "name": "Подписка JSON (Happ / Sing-box)",
+                        "url": f"https://{domain}{sub_json_path}{client_sid}"
+                    })
             if "telemt" in services:
                 tg_s = ""
                 if os.path.exists(TELEMT_CONF_PATH):
                     try:
                         with open(TELEMT_CONF_PATH, "r") as f:
-                            tm = re.search(r'\[access\.users\][\s\S]*?=\s*"([^"]+)"', f.read())
-                            if tm:
-                                tg_s = tm.group(1)
+                            lines = f.read().splitlines()
+                        in_users = False
+                        for line in lines:
+                            line = line.strip()
+                            if line.startswith("#"):
+                                continue
+                            if line == "[access.users]":
+                                in_users = True
+                                continue
+                            if in_users:
+                                if line.startswith("["):
+                                    break
+                                m = re.match(r'^[a-zA-Z0-9_-]+\s*=\s*"([0-9a-fA-F]{32})"', line)
+                                if m:
+                                    tg_s = m.group(1)
+                                    break
                     except Exception:
                         pass
                 tg_p = services['telemt']['current_path'].strip("/")
-                links.append({
-                    "name": "Telemt Web Proxy (Telegram)",
-                    "url": f"tg://webproxy?server={domain}%2F{tg_p}&secret={tg_s}"
-                })
-                links.append({
-                    "name": "Classic MTProto (через порт 443)",
-                    "url": f"tg://proxy?server={domain}&port=443&secret=dd{tg_s}"
-                })
+                if tg_s:
+                    links.append({
+                        "name": "Telemt Web Proxy (Telegram)",
+                        "url": f"tg://webproxy?server={domain}%2F{tg_p}&secret={tg_s}"
+                    })
+                    links.append({
+                        "name": "Classic MTProto (через порт 443)",
+                        "url": f"tg://proxy?server={domain}&port=443&secret=dd{tg_s}"
+                    })
+                else:
+                    links.append({
+                        "name": "Telemt Web Proxy (Telegram)",
+                        "url": f"tg://webproxy?server={domain}%2F{tg_p}"
+                    })
             if "adguard_doh" in services:
                 links.append({
                     "name": "AdGuard Home DoH (HTTPS)",
