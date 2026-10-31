@@ -240,7 +240,7 @@ printf 'CPU_STATE|%s|%s\n' "$CPU_SUPPORT_LEVEL" "$CPU_SUPPORT_TEXT"
         mocks = '\n'.join(name + '() { :; }' for name in (
             "preflight_base_os", "prepare_base_os", "prepare_system_dns", "finish_initial_reboot",
             "select_security", "select_vision", "select_client", "preflight_integrated_features", "select_amneziawg", "preflight_amneziawg", "preflight_panel_release", "make_port", "select_adguard", "cleanup_adguard", "validate_domains", "clean_previous_install", "install_packages", "setup_firewall", "get_server_ip",
-            "get_ssl_certs", "install_panel", "configure_nginx", "configure_xui_db", "install_clash_sub",
+            "get_ssl_certs", "install_panel", "configure_nginx", "configure_xui_db", "install_sub_template", "install_clash_sub",
             "install_fake_site", "install_diagnostics", "tune_system", "install_backup_tool", "setup_certificate_renewal", "setup_acme_http", "confirm_destructive_reinstall",
         )) + r'''
 systemctl() { echo "systemctl $*" >> "$SUMMARY_LOG"; [[ "$*" == 'is-enabled --quiet x-ui' ]]; }
@@ -925,8 +925,9 @@ curl() {
 }
 '''
         initialization = SOURCE[SOURCE.index('PROJECT_REF='):SOURCE.index('FAKE_SITE_COUNT=')]
-        names = ('install_clash_sub','install_fake_site','install_diagnostics','install_backup_tool')
-        expected = {'assets/clash/clash.yaml',
+        names = ('install_sub_template','install_clash_sub','install_fake_site','install_diagnostics','install_backup_tool')
+        expected = {'assets/sub-template/index.html',
+                    'assets/clash/clash.yaml',
                     'assets/diagnostics/index.html','assets/diagnostics/librespeed/speedtest.js',
                     'assets/diagnostics/librespeed/speedtest_worker.js','assets/diagnostics/mtr-backend.py',
                     'assets/backup/x-ui-backup.sh'}

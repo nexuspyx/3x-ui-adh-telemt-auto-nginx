@@ -276,7 +276,7 @@ class AdGuardInstaller(unittest.TestCase):
     def test_core_first_and_opt_out_has_no_optional_installation(self):
         operations=('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','select_security','select_vision','select_client','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','make_port','confirm_destructive_reinstall','validate_domains','clean_previous_install','install_packages',
                     'setup_firewall','get_server_ip','setup_acme_http','get_ssl_certs','install_panel','configure_nginx',
-                    'configure_xui_db','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
+                    'configure_xui_db','install_sub_template','install_clash_sub','install_fake_site','install_diagnostics','tune_system',
                     'install_backup_tool','setup_certificate_renewal','check_installation','show_results')
         stubs='\n'.join(n+'() { echo '+n+' >> "$CALLS"; }' for n in operations)
         stubs+='\ninstall_adguard() { echo optional-AGH >> "$CALLS"; }\nx-ui() { :; }\n'
@@ -440,7 +440,7 @@ class AdGuardInstaller(unittest.TestCase):
         operations = ('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','select_security','select_vision','select_client','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','make_port','confirm_destructive_reinstall', 'validate_domains', 'clean_previous_install',
                       'install_packages', 'setup_firewall', 'get_server_ip', 'setup_acme_http',
                       'get_ssl_certs', 'install_panel', 'configure_nginx', 'configure_xui_db',
-                      'install_clash_sub', 'install_fake_site', 'install_diagnostics', 'tune_system',
+                      'install_sub_template', 'install_clash_sub', 'install_fake_site', 'install_diagnostics', 'tune_system',
                       'install_backup_tool', 'setup_certificate_renewal')
         stubs = '\n'.join(n + '() { :; }' for n in operations)
         for name in ('var/www/diagnostics/index.html', 'var/www/diagnostics/speedtest.js',
