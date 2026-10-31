@@ -391,7 +391,7 @@ msg_inf "Работает на скрытом порту и защищен фа�
 
 if [[ -z "$MGMT_CHOICE" ]]; then
     echo -e "   ${C_BOLD}[1]${C_RESET} Автоматический защищенный режим (${C_GREEN}Рекомендуется${C_RESET} — случайный порт и путь)"
-    echo -e "   ${C_BOLD}[2]${C_RESET} Задать порт и секретный веб-путь вручную"
+    echo -e "   ${C_BOLD}[2]${C_RESET} Задать порт, путь и данные входа вручную"
     read_prompt "${C_GREEN}?${C_RESET} Выберите вариант [1/2] (по умолчанию: 1): " MGMT_CHOICE
     MGMT_CHOICE="${MGMT_CHOICE:-1}"
 fi
@@ -411,14 +411,26 @@ if [[ "$MGMT_CHOICE" == "2" ]]; then
     MGMT_SECRET_PATH=$(echo "$MGMT_SECRET_PATH" | tr -d '/[:space:]')
     [[ -z "$MGMT_SECRET_PATH" ]] && MGMT_SECRET_PATH="cfg-admin"
     msg_ok "Выбран порт: ${MGMT_PORT}, секретный путь: /${MGMT_SECRET_PATH}/"
+
+    read_prompt "${C_CYAN}->${C_RESET} Введите логин администратора для модуля управления [по умолчанию: admin]: " USER_MGMT_USER
+    MGMT_USER="${USER_MGMT_USER:-admin}"
+    MGMT_USER=$(echo "$MGMT_USER" | tr -d '[:space:]')
+    [[ -z "$MGMT_USER" ]] && MGMT_USER="admin"
+
+    read_prompt "${C_CYAN}->${C_RESET} Введите пароль администратора [Enter для автогенерации]: " USER_MGMT_PASS
+    if [[ -n "$USER_MGMT_PASS" ]]; then
+        MGMT_PASS="$USER_MGMT_PASS"
+    else
+        MGMT_PASS="$(gen_random_string 16)"
+    fi
+    msg_ok "Логин администратора: ${MGMT_USER}"
 else
     MGMT_PORT=$(get_free_port)
     MGMT_SECRET_PATH="cfg-$(gen_random_string 8)"
+    MGMT_USER="admin_$(gen_random_string 4)"
+    MGMT_PASS="$(gen_random_string 16)"
     msg_ok "Сгенерирован случайный скрытый порт (${MGMT_PORT}) и защищенный путь (/${MGMT_SECRET_PATH}/)."
 fi
-
-MGMT_USER="admin_$(gen_random_string 4)"
-MGMT_PASS="$(gen_random_string 16)"
 
 # Сводка параметров перед стартом
 echo
