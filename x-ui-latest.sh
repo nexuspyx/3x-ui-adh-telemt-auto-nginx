@@ -1426,7 +1426,7 @@ configure_xui_db() {
            $(openssl rand -hex 8) $(openssl rand -hex 8) $(openssl rand -hex 8) $(openssl rand -hex 8))
 
     sqlite3 $XUIDB <<EOF
-DELETE FROM "settings" WHERE "key" IN ("webCertFile","webKeyFile","webListen","subListen","subJsonEnable","subJsonPath","subJsonURI");
+DELETE FROM "settings" WHERE "key" IN ("webCertFile","webKeyFile","webListen","subListen","subJsonEnable","subJsonPath","subJsonURI","subThemeDir");
 
 INSERT INTO "settings" ("key","value") VALUES ("subPort",             '${sub_port}');
 UPDATE "settings" SET "value" = '/${sub_path}/' WHERE "key" = 'subPath';
@@ -1437,6 +1437,7 @@ INSERT INTO "settings" ("key","value") VALUES ("subJsonURI",          '${json_ur
 INSERT INTO "settings" ("key","value") VALUES ("subClashEnable",      'false');
 INSERT INTO "settings" ("key","value") VALUES ("subEnableRouting",    'false');
 INSERT INTO "settings" ("key","value") VALUES ("subEnable",           'true');
+INSERT INTO "settings" ("key","value") VALUES ("subThemeDir",         '/etc/x-ui/sub_templates/apple');
 INSERT INTO "settings" ("key","value") VALUES ("webListen",           '127.0.0.1');
 INSERT INTO "settings" ("key","value") VALUES ("subListen",           '127.0.0.1');
 INSERT INTO "settings" ("key","value") VALUES ("webDomain",           '');
@@ -1635,6 +1636,19 @@ EOF
 # ─────────────────────────────────────────────────────────────────────────────
 # INSTALL FAKE SITE
 # ─────────────────────────────────────────────────────────────────────────────
+install_sub_template() {
+    local tpl_dir="/etc/x-ui/sub_templates/apple"
+    mkdir -p "${tpl_dir}" || return 1
+    if curl -fsSL "${GITHUB_RAW}/assets/sub-template/index.html" -o "${tpl_dir}/index.html"; then
+        ln -sf "${tpl_dir}/index.html" "${tpl_dir}/sub.html" 2>/dev/null || cp -f "${tpl_dir}/index.html" "${tpl_dir}/sub.html" || return 1
+        chmod 644 "${tpl_dir}/index.html" "${tpl_dir}/sub.html" || return 1
+        msg_ok "Subscription template installed."
+    else
+        msg_err "Failed to download subscription template from GitHub."
+        return 1
+    fi
+}
+
 install_clash_sub() {
     local clash_dir="/var/www/subpage"
     mkdir -p "${clash_dir}" || return 1
@@ -2998,6 +3012,7 @@ main() {
 
     configure_nginx || { msg_err "nginx configuration failed (exit $?). See the cause above; installation stopped."; exit 1; }
     configure_xui_db || { msg_err "3X-UI database configuration failed (exit $?). See the cause above; installation stopped."; exit 1; }
+    install_sub_template || { msg_err "Subscription template download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
     install_clash_sub || { msg_err "Clash template download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
     install_fake_site || { msg_err "Cover site download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }
     install_diagnostics || { msg_err "Diagnostics download/setup failed (exit $?). See the cause above; installation stopped."; exit 1; }

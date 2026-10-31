@@ -12,7 +12,7 @@ class AmneziaWG(unittest.TestCase):
                'select_adguard','select_client','preflight_base_os','preflight_panel_release','make_port','preflight_amneziawg',
                'preflight_integrated_features','prepare_base_os','prepare_system_dns','install_packages','setup_firewall',
                'get_server_ip','setup_acme_http','get_ssl_certs','install_panel','configure_nginx','configure_xui_db',
-               'install_clash_sub','install_fake_site','install_diagnostics','tune_system','install_backup_tool',
+               'install_sub_template','install_clash_sub','install_fake_site','install_diagnostics','tune_system','install_backup_tool',
                'setup_certificate_renewal','check_installation','install_amneziawg','finish_initial_reboot')
         stubs='\n'.join(name+'() { :; }' for name in names)
         stubs+='''

@@ -1,0 +1,2269 @@
+<!DOCTYPE html>
+<!-- Build Timestamp: 19:00.31.10.2026 -->
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#000000" id="metaThemeColor">
+  <title>VPN сервис</title>
+
+  <!-- Apple Blue Shield Favicon -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'%3E%3Crect width='32' height='32' rx='8' fill='%230A84FF'/%3E%3Cpath d='M16 6l7 3.5v7.2c0 5-3.3 8.3-7 9.3-3.7-1-7-4.3-7-9.3V9.5L16 6z' fill='white'/%3E%3Cpath d='M16 8.2l-5 2.5v5.8c0 3.7 2.3 6.3 5 7.2 2.7-.9 5-3.5 5-7.2v-5.8l-5-2.5z' fill='%230A84FF'/%3E%3Cpath d='M13.5 16l2 2 4-4' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+
+  <!-- Immediate Theme Initializer: loads default from device color scheme if not explicitly chosen -->
+  <script>
+    (function() {
+      try {
+        var saved = localStorage.getItem("sub_theme_pref");
+        var theme = "dark";
+        if (saved === "light" || saved === "dark") {
+          theme = saved;
+        } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) {
+          theme = "light";
+        }
+        document.documentElement.setAttribute("data-theme", theme);
+        var meta = document.getElementById("metaThemeColor");
+        if (meta) meta.setAttribute("content", theme === "light" ? "#F2F2F7" : "#000000");
+      } catch (e) {}
+    })();
+  </script>
+
+  <style>
+    /* ==========================================================================
+       Apple HIG Design Tokens & Dynamic Theming
+       ========================================================================== */
+    :root,
+    html[data-theme="dark"] {
+      --font-stack: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "SF Pro", -system-ui, "Helvetica Neue", Helvetica, Arial, sans-serif;
+      --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+      --sys-bg: #000000;
+      --sys-bg-mesh: radial-gradient(circle at 50% -15%, #181824 0%, #000000 70%);
+      --sys-card: rgba(28, 28, 30, 0.72);
+      --sys-card-solid: #1c1c1e;
+      --sys-card-elevated: rgba(44, 44, 46, 0.85);
+      --sys-border: rgba(255, 255, 255, 0.12);
+      --sys-border-subtle: rgba(255, 255, 255, 0.06);
+      --sys-text: #FFFFFF;
+      --sys-text-sec: rgba(235, 235, 245, 0.62);
+      --sys-text-ter: rgba(235, 235, 245, 0.35);
+      --sys-separator: rgba(84, 84, 88, 0.35);
+      --sys-fill: rgba(255, 255, 255, 0.08);
+      --sys-fill-hover: rgba(255, 255, 255, 0.14);
+      --sys-input-bg: rgba(118, 118, 128, 0.22);
+      --sys-nav-bg: rgba(20, 20, 22, 0.82);
+
+      --accent-blue: #0A84FF;
+      --accent-blue-hover: #0071E3;
+      --accent-green: #30D158;
+      --accent-orange: #FF9F0A;
+      --accent-red: #FF453A;
+      --accent-purple: #BF5AF2;
+      --accent-indigo: #5E5CE6;
+      --accent-teal: #64D2FF;
+
+      --ring-track: rgba(255, 255, 255, 0.07);
+      --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+      --shadow-m: 0 8px 24px rgba(0, 0, 0, 0.45);
+      --shadow-l: 0 16px 48px rgba(0, 0, 0, 0.60);
+      --qr-card-border: rgba(255, 255, 255, 0.15);
+
+      --radius-xl: 22px;
+      --radius-l: 16px;
+      --radius-m: 13px;
+      --radius-s: 10px;
+      --radius-full: 9999px;
+      --touch-min: 44px;
+      --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    html[data-theme="light"] {
+      --sys-bg: #F2F2F7;
+      --sys-bg-mesh: radial-gradient(circle at 50% -15%, #E5E5EA 0%, #F2F2F7 70%);
+      --sys-card: rgba(255, 255, 255, 0.86);
+      --sys-card-solid: #FFFFFF;
+      --sys-card-elevated: rgba(255, 255, 255, 0.98);
+      --sys-border: rgba(0, 0, 0, 0.08);
+      --sys-border-subtle: rgba(0, 0, 0, 0.04);
+      --sys-text: #000000;
+      --sys-text-sec: rgba(60, 60, 67, 0.65);
+      --sys-text-ter: rgba(60, 60, 67, 0.38);
+      --sys-separator: rgba(60, 60, 67, 0.16);
+      --sys-fill: rgba(118, 118, 128, 0.12);
+      --sys-fill-hover: rgba(118, 118, 128, 0.18);
+      --sys-input-bg: rgba(118, 118, 128, 0.12);
+      --sys-nav-bg: rgba(255, 255, 255, 0.85);
+
+      --accent-blue: #007AFF;
+      --accent-blue-hover: #0062CC;
+      --accent-green: #34C759;
+      --accent-orange: #FF9500;
+      --accent-red: #FF3B30;
+      --accent-purple: #AF52DE;
+      --accent-indigo: #5856D6;
+      --accent-teal: #32ADE6;
+
+      --ring-track: rgba(0, 0, 0, 0.06);
+      --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.05);
+      --shadow-m: 0 8px 24px rgba(0, 0, 0, 0.08);
+      --shadow-l: 0 16px 40px rgba(0, 0, 0, 0.12);
+      --qr-card-border: rgba(0, 0, 0, 0.08);
+    }
+
+    /* Reset & Base */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      font-family: var(--font-stack);
+      background-color: var(--sys-bg);
+      background-image: var(--sys-bg-mesh);
+      background-attachment: fixed;
+      color: var(--sys-text);
+      line-height: 1.45;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      padding-bottom: env(safe-area-inset-bottom, 24px);
+      transition: background-color 0.25s ease, color 0.25s ease;
+    }
+
+    /* Container */
+    .container {
+      width: 100%;
+      max-width: 660px;
+      margin: 0 auto;
+      padding: 16px 16px 48px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Navigation Bar */
+    .nav-bar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      width: 100%;
+      background: var(--sys-nav-bg);
+      backdrop-filter: blur(24px) saturate(190%);
+      -webkit-backdrop-filter: blur(24px) saturate(190%);
+      border-bottom: 1px solid var(--sys-border-subtle);
+      transition: background 0.25s ease, border-color 0.25s ease;
+    }
+
+    .nav-content {
+      max-width: 660px;
+      margin: 0 auto;
+      height: 54px;
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 17px;
+      letter-spacing: -0.02em;
+      color: var(--sys-text);
+    }
+
+    .nav-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, var(--accent-blue), var(--accent-indigo));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #FFFFFF;
+      box-shadow: 0 3px 10px rgba(10, 132, 255, 0.35);
+    }
+
+    .nav-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Segmented Controls (Apple HIG) */
+    .segmented-control {
+      display: inline-flex;
+      align-items: center;
+      background: var(--sys-fill);
+      padding: 3px;
+      border-radius: var(--radius-full);
+      gap: 2px;
+      border: 1px solid var(--sys-border-subtle);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+
+    .segment-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      padding: 4px 10px;
+      border-radius: var(--radius-full);
+      border: none;
+      background: transparent;
+      color: var(--sys-text-sec);
+      font-family: var(--font-stack);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s var(--ease-spring);
+      min-height: 28px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .segment-btn:hover {
+      color: var(--sys-text);
+    }
+
+    .segment-btn.active {
+      background: var(--sys-card-solid);
+      color: var(--sys-text);
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* Glass Cards */
+    .card {
+      background: var(--sys-card);
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      border: 1px solid var(--sys-border);
+      border-radius: var(--radius-xl);
+      padding: 20px;
+      box-shadow: var(--shadow-m);
+      transition: background 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+    }
+
+    /* Hero Card */
+    .hero-card {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-top {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .hero-title {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      color: var(--sys-text);
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: var(--radius-full);
+      font-size: 13px;
+      font-weight: 600;
+      background: var(--sys-fill);
+      color: var(--sys-text-sec);
+      border: 1px solid var(--sys-border-subtle);
+    }
+
+    .badge-active {
+      background: rgba(48, 209, 88, 0.15);
+      color: var(--accent-green);
+      border-color: rgba(48, 209, 88, 0.25);
+    }
+
+    .badge-paused {
+      background: rgba(255, 159, 10, 0.15);
+      color: var(--accent-orange);
+      border-color: rgba(255, 159, 10, 0.25);
+    }
+
+    .badge-expired {
+      background: rgba(255, 69, 58, 0.15);
+      color: var(--accent-red);
+      border-color: rgba(255, 69, 58, 0.25);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .pulse {
+      animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+    }
+
+    @keyframes pulse-ring {
+      0% { transform: scale(0.9); opacity: 1; }
+      50% { transform: scale(1.3); opacity: 0.6; }
+      100% { transform: scale(0.9); opacity: 1; }
+    }
+
+    /* Centered QR Box */
+    .qr-container-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      margin: 14px 0 16px;
+      text-align: center;
+      width: 100%;
+    }
+
+    .qr-frame {
+      width: 204px;
+      height: 204px;
+      background: #FFFFFF;
+      border-radius: var(--radius-l);
+      padding: 12px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--qr-card-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.25s var(--ease-spring);
+    }
+
+    .qr-frame:hover {
+      transform: scale(1.02);
+    }
+
+    .qr-canvas-holder {
+      width: 180px;
+      height: 180px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .qr-canvas-holder canvas,
+    .qr-canvas-holder img {
+      width: 180px !important;
+      height: 180px !important;
+      display: block;
+    }
+
+    .qr-caption {
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--sys-text-sec);
+      max-width: 320px;
+      line-height: 1.35;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 12px 20px;
+      min-height: var(--touch-min);
+      border-radius: var(--radius-m);
+      font-family: var(--font-stack);
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s var(--ease-spring);
+      text-decoration: none;
+      user-select: none;
+      -webkit-user-select: none;
+      width: 100%;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn-primary {
+      background: var(--accent-blue);
+      color: #FFFFFF;
+      box-shadow: 0 4px 14px rgba(10, 132, 255, 0.35);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-blue-hover);
+    }
+
+    .btn-secondary {
+      background: var(--sys-fill);
+      color: var(--sys-text);
+      border: 1px solid var(--sys-border);
+    }
+
+    .btn-secondary:hover {
+      background: var(--sys-fill-hover);
+    }
+
+    /* Prominent Sub & JSON Action Buttons */
+    .sub-actions-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      width: 100%;
+      margin-top: 10px;
+    }
+
+    .action-pill-btn {
+      padding: 10px 14px;
+      min-height: 42px;
+      font-size: 13.5px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border-radius: var(--radius-m);
+      background: var(--sys-fill);
+      border: 1px solid var(--sys-border);
+      color: var(--sys-text);
+      text-decoration: none;
+      transition: all 0.2s var(--ease-spring);
+    }
+
+    .action-pill-btn:hover {
+      background: var(--sys-fill-hover);
+      border-color: var(--accent-blue);
+    }
+
+    .action-pill-btn:active {
+      transform: scale(0.98);
+    }
+
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    @media (max-width: 540px) {
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .stat-card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .stat-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--sys-text-sec);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    /* Stylish iOS Activity Ring Box with gradient shimmer */
+    .ring-container {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 4px 0;
+    }
+
+    .ring-svg-wrap {
+      position: relative;
+      width: 76px;
+      height: 76px;
+      flex-shrink: 0;
+      filter: drop-shadow(0 4px 12px rgba(10, 132, 255, 0.35));
+      animation: ring-pulse-glow 4s ease-in-out infinite alternate;
+    }
+
+    @keyframes ring-pulse-glow {
+      0% {
+        filter: drop-shadow(0 3px 8px rgba(10, 132, 255, 0.28));
+      }
+      100% {
+        filter: drop-shadow(0 5px 16px rgba(10, 132, 255, 0.52));
+      }
+    }
+
+    .ring-svg {
+      width: 100%;
+      height: 100%;
+      transform: rotate(-90deg);
+    }
+
+    .ring-bg {
+      fill: none;
+      stroke: var(--ring-track);
+      stroke-width: 7.5;
+    }
+
+    .ring-progress {
+      fill: none;
+      stroke: url(#trafficGradientBlue);
+      stroke-width: 7.5;
+      stroke-linecap: round;
+      stroke-dasharray: 201;
+      stroke-dashoffset: 201;
+      transition: stroke-dashoffset 0.9s var(--ease-spring), stroke 0.4s ease;
+    }
+
+    .ring-percent-text {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 800;
+      color: var(--sys-text);
+      font-family: var(--font-stack);
+      letter-spacing: -0.02em;
+    }
+
+    .stat-main-val {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--sys-text);
+      line-height: 1.15;
+    }
+
+    .stat-sub-val {
+      font-size: 13px;
+      color: var(--sys-text-sec);
+      margin-top: 2px;
+    }
+
+    .stat-breakdown {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-top: 10px;
+      border-top: 1px solid var(--sys-separator);
+    }
+
+    .breakdown-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+    }
+
+    .breakdown-label {
+      color: var(--sys-text-sec);
+    }
+
+    .breakdown-val {
+      font-weight: 600;
+      color: var(--sys-text);
+      font-family: var(--font-mono);
+    }
+
+    /* Section Headings */
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+
+    .section-title {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      color: var(--sys-text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Platform Segmented Tabs (iOS, Android, Windows, macOS) */
+    .platform-tabs {
+      display: flex;
+      align-items: center;
+      background: var(--sys-fill);
+      padding: 4px;
+      border-radius: var(--radius-m);
+      gap: 4px;
+      border: 1px solid var(--sys-border-subtle);
+      margin-bottom: 14px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .platform-tabs::-webkit-scrollbar {
+      display: none;
+    }
+
+    .platform-tab-btn {
+      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border-radius: var(--radius-s);
+      border: none;
+      background: transparent;
+      color: var(--sys-text-sec);
+      font-family: var(--font-stack);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s var(--ease-spring);
+      min-height: 36px;
+      white-space: nowrap;
+    }
+
+    .platform-tab-btn:hover {
+      color: var(--sys-text);
+    }
+
+    .platform-tab-btn.active {
+      background: var(--sys-card-solid);
+      color: var(--sys-text);
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* Apps Grid & Rows */
+    .apps-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .app-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: var(--sys-fill);
+      border: 1px solid var(--sys-border-subtle);
+      border-radius: var(--radius-l);
+      transition: all 0.2s var(--ease-spring);
+      gap: 12px;
+    }
+
+    .app-card:hover {
+      background: var(--sys-fill-hover);
+      border-color: var(--sys-border);
+      transform: translateY(-1px);
+    }
+
+    .app-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .app-icon-wrap {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      background: var(--sys-card-solid);
+      border: 1px solid var(--sys-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      color: var(--sys-text);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+
+    .app-icon-wrap svg {
+      width: 26px;
+      height: 26px;
+    }
+
+    .app-icon-wrap img {
+      width: 32px;
+      height: 32px;
+      object-fit: contain;
+      border-radius: 6px;
+    }
+
+    .app-info {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .app-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--sys-text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .app-desc {
+      font-size: 12px;
+      color: var(--sys-text-sec);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .app-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .app-btn-connect {
+      padding: 7px 14px;
+      border-radius: var(--radius-full);
+      font-size: 13px;
+      font-weight: 600;
+      background: var(--accent-blue);
+      color: #FFFFFF;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s var(--ease-spring);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 32px;
+    }
+
+    .app-btn-connect:hover {
+      background: var(--accent-blue-hover);
+    }
+
+    .app-btn-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius-full);
+      background: var(--sys-card-solid);
+      border: 1px solid var(--sys-border);
+      color: var(--sys-text-sec);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s var(--ease-spring);
+    }
+
+    .app-btn-icon:hover {
+      color: var(--sys-text);
+      border-color: var(--sys-border);
+      background: var(--sys-fill-hover);
+    }
+
+    /* Servers Search & List */
+    .search-box {
+      position: relative;
+      width: 100%;
+      margin-bottom: 12px;
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--sys-text-ter);
+      pointer-events: none;
+    }
+
+    .search-input {
+      width: 100%;
+      height: 42px;
+      padding: 0 14px 0 38px;
+      border-radius: var(--radius-m);
+      background: var(--sys-input-bg);
+      border: 1px solid var(--sys-border-subtle);
+      color: var(--sys-text);
+      font-family: var(--font-stack);
+      font-size: 14px;
+      outline: none;
+      transition: all 0.2s ease;
+    }
+
+    .search-input:focus {
+      background: var(--sys-card-solid);
+      border-color: var(--accent-blue);
+      box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.2);
+    }
+
+    .search-input::placeholder {
+      color: var(--sys-text-ter);
+    }
+
+    .servers-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .server-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: var(--sys-fill);
+      border: 1px solid var(--sys-border-subtle);
+      border-radius: var(--radius-l);
+      gap: 12px;
+      transition: all 0.2s var(--ease-spring);
+    }
+
+    .server-item:hover {
+      background: var(--sys-fill-hover);
+      border-color: var(--sys-border);
+    }
+
+    .server-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .server-flag {
+      font-size: 19px;
+      line-height: 1;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      border-radius: 10px;
+      background: var(--sys-card-solid);
+      border: 1px solid var(--sys-border);
+      box-shadow: var(--shadow-sm);
+      color: var(--accent-blue);
+    }
+
+    .server-info {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .server-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--sys-text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .server-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 2px;
+    }
+
+    .server-tag {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(10, 132, 255, 0.15);
+      color: var(--accent-blue);
+      letter-spacing: 0.03em;
+    }
+
+    .server-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .server-btn {
+      padding: 6px 12px;
+      border-radius: var(--radius-full);
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--sys-card-solid);
+      border: 1px solid var(--sys-border);
+      color: var(--sys-text);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.2s var(--ease-spring);
+    }
+
+    .server-btn:hover {
+      background: var(--sys-fill-hover);
+      border-color: var(--accent-blue);
+      color: var(--accent-blue);
+    }
+
+    /* Modal for Server QR Code */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 16px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+    }
+
+    .modal-overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal-sheet {
+      width: 100%;
+      max-width: 360px;
+      background: var(--sys-card-solid);
+      border: 1px solid var(--sys-border);
+      border-radius: var(--radius-xl);
+      padding: 24px;
+      text-align: center;
+      box-shadow: var(--shadow-l);
+      transform: scale(0.92);
+      transition: transform 0.25s var(--ease-spring);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .modal-overlay.active .modal-sheet {
+      transform: scale(1);
+    }
+
+    .modal-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--sys-text);
+      word-break: break-word;
+    }
+
+    /* Toast Notification */
+    .toast-pill {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(60px);
+      background: rgba(30, 30, 32, 0.95);
+      color: #FFFFFF;
+      padding: 10px 18px;
+      border-radius: var(--radius-full);
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: var(--shadow-l);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 200;
+      opacity: 0;
+      transition: all 0.3s var(--ease-spring);
+      pointer-events: none;
+    }
+
+    .toast-pill.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+
+    /* Footer: Clean, No Apple Edition text */
+    footer {
+      text-align: center;
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--sys-text-ter);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Bar -->
+  <header class="nav-bar">
+    <div class="nav-content">
+      <div class="nav-brand">
+        <div class="nav-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+        </div>
+        <span id="navTitleText" data-i18n="navTitle">VPN сервис</span>
+      </div>
+
+      <div class="nav-controls">
+        <!-- Language Switcher: RU | EU -->
+        <div class="segmented-control" id="langSwitch" role="group" aria-label="Language">
+          <button type="button" class="segment-btn active" id="langRuBtn" onclick="setAppLang('ru')">RU</button>
+          <button type="button" class="segment-btn" id="langEuBtn" onclick="setAppLang('eu')">EU</button>
+        </div>
+
+        <!-- Theme Switcher: Day | Night -->
+        <div class="segmented-control" id="themeSwitch" role="group" aria-label="Theme">
+          <button type="button" class="segment-btn" id="themeDayBtn" onclick="setAppTheme('light')" title="День">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+            <span class="segment-text" data-i18n="themeDay">День</span>
+          </button>
+          <button type="button" class="segment-btn active" id="themeNightBtn" onclick="setAppTheme('dark')" title="Ночь">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+            <span class="segment-text" data-i18n="themeNight">Ночь</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Announcement Alert (if provided by 3x-ui) -->
+    {{ if .announce }}
+    <div class="card" style="padding: 14px 16px; background: rgba(10, 132, 255, 0.12); border-color: rgba(10, 132, 255, 0.25); display: flex; align-items: center; gap: 10px;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      <div style="font-size: 14px; color: var(--sys-text);">{{ .announce }}</div>
+    </div>
+    {{ end }}
+
+    <!-- Hero Card: Status, Centered QR Code & Copy Actions -->
+    <section class="card hero-card">
+      <div class="hero-top">
+        <h1 class="hero-title" id="heroTitleText" data-i18n="heroTitle">VPN сервис</h1>
+        <div class="badge {{ if .enabled }}badge-active{{ else }}badge-expired{{ end }}" id="statusBadge">
+          <span class="status-dot {{ if .enabled }}pulse{{ end }}"></span>
+          <span id="statusText" data-i18n="{{ if .enabled }}statusActive{{ else }}statusInactive{{ end }}">{{ if .enabled }}Активна{{ else }}Не активна{{ end }}</span>
+        </div>
+      </div>
+
+      <!-- Prominent Centered QR Code directly visible on page -->
+      <div class="qr-container-card">
+        <div class="qr-frame" id="subQrFrame">
+          <div id="subQrCode" class="qr-canvas-holder"></div>
+        </div>
+        <div class="qr-caption" data-i18n="qrScanHint">Отсканируйте камерой или приложением для подключения</div>
+      </div>
+
+      <!-- Primary Action: Copy Subscription URL -->
+      <button class="btn btn-primary" onclick="copySubscriptionUrl()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+        </svg>
+        <span data-i18n="copySubBtn">Скопировать ссылку подписки</span>
+      </button>
+
+      <!-- Prominent Secondary Action Buttons: SUB and JSON -->
+      <div class="sub-actions-grid">
+        <button type="button" class="btn btn-secondary action-pill-btn" onclick="copySubscriptionUrl()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+          </svg>
+          <span data-i18n="subLinkBtn">Ссылка SUB</span>
+        </button>
+
+        <a id="jsonSubLinkBtn" class="btn btn-secondary action-pill-btn" href="#" target="_blank" rel="noopener">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-purple)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="16 18 22 12 16 6"/>
+            <polyline points="8 6 2 12 8 18"/>
+          </svg>
+          <span data-i18n="jsonLinkBtn">Конфиг JSON</span>
+        </a>
+      </div>
+    </section>
+
+    <!-- Metrics Dashboard: Traffic & Validity/Last Online -->
+    <div class="stats-grid">
+      <!-- Traffic Card (iOS-style Activity Ring with Shimmering Gradient) -->
+      <section class="card stat-card">
+        <div class="stat-header">
+          <span data-i18n="trafficTitle">Трафик</span>
+          <span id="trafficPercentLabel">0%</span>
+        </div>
+
+        <div class="ring-container">
+          <div class="ring-svg-wrap">
+            <svg class="ring-svg" viewBox="0 0 80 80">
+              <defs>
+                <linearGradient id="trafficGradientBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#2AC8FF" />
+                  <stop offset="60%" stop-color="#0A84FF" />
+                  <stop offset="100%" stop-color="#5E5CE6" />
+                </linearGradient>
+                <linearGradient id="trafficGradientOrange" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#FFD60A" />
+                  <stop offset="100%" stop-color="#FF9F0A" />
+                </linearGradient>
+                <linearGradient id="trafficGradientRed" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#FF453A" />
+                  <stop offset="100%" stop-color="#FF2D55" />
+                </linearGradient>
+              </defs>
+              <circle class="ring-bg" cx="40" cy="40" r="32" />
+              <circle class="ring-progress" id="trafficRing" cx="40" cy="40" r="32" />
+            </svg>
+            <div class="ring-percent-text" id="ringCenterText">0%</div>
+          </div>
+
+          <div>
+            <div class="stat-main-val" id="usedTrafficText">{{ if .used }}{{ .used }}{{ else }}0 B{{ end }}</div>
+            <div class="stat-sub-val" id="totalTrafficText"><span data-i18n="trafficOf">из</span> {{ if .total }}{{ .total }}{{ else }}Безлимит{{ end }}</div>
+          </div>
+        </div>
+
+        <div class="stat-breakdown">
+          <div class="breakdown-row">
+            <span class="breakdown-label" data-i18n="download">↓ Загрузка</span>
+            <span class="breakdown-val" id="downTrafficText">{{ if .download }}{{ .download }}{{ else }}0 B{{ end }}</span>
+          </div>
+          <div class="breakdown-row">
+            <span class="breakdown-label" data-i18n="upload">↑ Отдача</span>
+            <span class="breakdown-val" id="upTrafficText">{{ if .upload }}{{ .upload }}{{ else }}0 B{{ end }}</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Validity & Last Online Card -->
+      <section class="card stat-card">
+        <div class="stat-header">
+          <span data-i18n="validityTitle">Срок действия</span>
+          <span id="expireStatusBadge">Активен</span>
+        </div>
+
+        <div>
+          <div class="stat-main-val" id="expireCountdown">Бессрочно</div>
+          <div class="stat-sub-val" id="expireDateFormatted">Срок не ограничен</div>
+        </div>
+
+        <div class="stat-breakdown">
+          <div class="breakdown-row">
+            <span class="breakdown-label" data-i18n="lastOnlineTitle">Был в сети</span>
+            <span class="breakdown-val" id="lastOnlineFormatted">Никогда</span>
+          </div>
+          <div class="breakdown-row">
+            <span class="breakdown-label" data-i18n="remainedDays">Осталось дней</span>
+            <span class="breakdown-val" id="remainedDaysText">Бессрочно</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Applications Section: Platform Switcher (iOS, Android, Windows, macOS) -->
+    <section class="card">
+      <div class="section-head">
+        <div class="section-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2"/>
+            <rect x="9" y="9" width="6" height="6"/>
+            <line x1="9" y1="1" x2="9" y2="4"/>
+            <line x1="15" y1="1" x2="15" y2="4"/>
+            <line x1="9" y1="20" x2="9" y2="23"/>
+            <line x1="15" y1="20" x2="15" y2="23"/>
+            <line x1="20" y1="9" x2="23" y2="9"/>
+            <line x1="20" y1="14" x2="23" y2="14"/>
+            <line x1="1" y1="9" x2="4" y2="9"/>
+            <line x1="1" y1="14" x2="4" y2="14"/>
+          </svg>
+          <span data-i18n="appsTitle">Приложения для подключения</span>
+        </div>
+      </div>
+
+      <!-- Platform Selection Segmented Tabs (No Linux) -->
+      <div class="platform-tabs" id="platformTabs">
+        <button type="button" class="platform-tab-btn" data-platform="ios" onclick="switchPlatform('ios')">iOS</button>
+        <button type="button" class="platform-tab-btn" data-platform="android" onclick="switchPlatform('android')">Android</button>
+        <button type="button" class="platform-tab-btn" data-platform="windows" onclick="switchPlatform('windows')">Windows</button>
+        <button type="button" class="platform-tab-btn" data-platform="macos" onclick="switchPlatform('macos')">macOS</button>
+      </div>
+
+      <!-- Platform Apps Container -->
+      <div class="apps-list" id="appsContainer">
+        <!-- Rendered dynamically by JavaScript based on active platform -->
+      </div>
+    </section>
+
+    <!-- Available Server Locations & Protocols -->
+    <section class="card">
+      <div class="section-head">
+        <div class="section-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+            <line x1="6" y1="6" x2="6.01" y2="6"/>
+            <line x1="6" y1="18" x2="6.01" y2="18"/>
+          </svg>
+          <span data-i18n="nodesTitle">Доступные серверы</span>
+        </div>
+        <span class="badge" id="nodesCountBadge">0 шт.</span>
+      </div>
+
+      <!-- Search Box -->
+      <div class="search-box">
+        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="search" class="search-input" id="nodeSearchInput" placeholder="Поиск серверов..." oninput="handleNodeSearch()" data-i18n-ph="searchPlaceholder">
+      </div>
+
+      <!-- Server Nodes List -->
+      <div class="servers-list" id="nodesContainer">
+        <!-- Injected via JavaScript from data links -->
+      </div>
+    </section>
+
+    <!-- Optional Support Link (if configured in 3x-ui) -->
+    {{ if .subSupportUrl }}
+    <a class="btn btn-secondary" href="{{ .subSupportUrl }}" target="_blank" rel="noopener">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+      </svg>
+      <span data-i18n="supportBtn">Поддержка</span>
+    </a>
+    {{ end }}
+
+    <!-- Clean Footer (No Apple Edition text) -->
+    <footer>
+      <span data-i18n="footerEnc">Защищено сквозным шифрованием TLS/REALITY</span>
+      <span data-i18n="footerBrand">VPN сервис</span>
+    </footer>
+  </main>
+
+  <!-- Modal for Single Node QR Code -->
+  <div class="modal-overlay" id="qrModal" onclick="closeQrModal(event)">
+    <div class="modal-sheet" onclick="event.stopPropagation()">
+      <div class="modal-title" id="modalServerTitle">Сервер</div>
+      <div class="qr-frame">
+        <div id="modalQrHolder" class="qr-canvas-holder"></div>
+      </div>
+      <button class="btn btn-primary" id="modalCopyBtn" onclick="copyModalLink()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+        </svg>
+        <span data-i18n="copyKeyBtn">Скопировать ключ</span>
+      </button>
+      <button class="btn btn-secondary" onclick="closeQrModalDirect()" data-i18n="closeModalBtn">Закрыть</button>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast-pill" id="toastPill">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="20 6 9 17 4 12"/>
+    </svg>
+    <span id="toastText">Скопировано в буфер обмена</span>
+  </div>
+
+  <!-- Hidden Data Container for 3x-ui Variables -->
+  <div id="rawTemplateData" style="display:none;" aria-hidden="true">
+    <span id="dataSubUrl">{{ .subUrl }}</span>
+    <span id="dataSubJsonUrl">{{ .subJsonUrl }}</span>
+    <span id="dataSubClashUrl">{{ .subClashUrl }}</span>
+    <span id="dataExpireSec">{{ .expire }}</span>
+    <span id="dataDownloadByte">{{ .downloadByte }}</span>
+    <span id="dataUploadByte">{{ .uploadByte }}</span>
+    <span id="dataTotalByte">{{ .totalByte }}</span>
+    <span id="dataLastOnline">{{ .lastOnline }}</span>
+    <span id="dataEnabled">{{ .enabled }}</span>
+    <div id="dataLinksList">
+      {{ range .links }}
+      <span class="raw-link">{{ . }}</span>
+      {{ end }}
+    </div>
+  </div>
+
+  <!-- Minified Standalone Pure JS QRCode Generator -->
+  <script>
+var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this.parsedData=[];for(var b=[],d=0,e=this.data.length;e>d;d++){var f=this.data.charCodeAt(d);f>65536?(b[0]=240|(1835008&f)>>>18,b[1]=128|(258048&f)>>>12,b[2]=128|(4032&f)>>>6,b[3]=128|63&f):f>2048?(b[0]=224|(61440&f)>>>12,b[1]=128|(4032&f)>>>6,b[2]=128|63&f):f>128?(b[0]=192|(1984&f)>>>6,b[1]=128|63&f):b[0]=f,this.parsedData=this.parsedData.concat(b)}this.parsedData.length!=this.data.length&&(this.parsedData.unshift(191),this.parsedData.unshift(187),this.parsedData.unshift(239))}function b(a,b){this.typeNumber=a,this.errorCorrectLevel=b,this.modules=null,this.moduleCount=0,this.dataCache=null,this.dataList=[]}function i(a,b){if(void 0==a.length)throw new Error(a.length+"/"+b);for(var c=0;c<a.length&&0==a[c];)c++;this.num=new Array(a.length-c+b);for(var d=0;d<a.length-c;d++)this.num[d]=a[d+c]}function j(a,b){this.totalCount=a,this.dataCount=b}function k(){this.buffer=[],this.length=0}function m(){return"undefined"!=typeof CanvasRenderingContext2D}function n(){var a=!1,b=navigator.userAgent;return/android/i.test(b)&&(a=!0,aMat=b.toString().match(/android ([0-9]\.[0-9])/i),aMat&&aMat[1]&&(a=parseFloat(aMat[1]))),a}function r(a,b){for(var c=1,e=s(a),f=0,g=l.length;g>=f;f++){var h=0;switch(b){case d.L:h=l[f][0];break;case d.M:h=l[f][1];break;case d.Q:h=l[f][2];break;case d.H:h=l[f][3]}if(h>=e)break;c++}if(c>l.length)throw new Error("Too long data");return c}function s(a){var b=encodeURI(a).toString().replace(/\%[0-9a-fA-F]{2}/g,"a");return b.length+(b.length!=a?3:0)}a.prototype={getLength:function(){return this.parsedData.length},write:function(a){for(var b=0,c=this.parsedData.length;c>b;b++)a.put(this.parsedData[b],8)}},b.prototype={addData:function(b){var c=new a(b);this.dataList.push(c),this.dataCache=null},isDark:function(a,b){if(0>a||this.moduleCount<=a||0>b||this.moduleCount<=b)throw new Error(a+","+b);return this.modules[a][b]},getModuleCount:function(){return this.moduleCount},make:function(){this.makeImpl(!1,this.getBestMaskPattern())},makeImpl:function(a,c){this.moduleCount=4*this.typeNumber+17,this.modules=new Array(this.moduleCount);for(var d=0;d<this.moduleCount;d++){this.modules[d]=new Array(this.moduleCount);for(var e=0;e<this.moduleCount;e++)this.modules[d][e]=null}this.setupPositionProbePattern(0,0),this.setupPositionProbePattern(this.moduleCount-7,0),this.setupPositionProbePattern(0,this.moduleCount-7),this.setupPositionAdjustPattern(),this.setupTimingPattern(),this.setupTypeInfo(a,c),this.typeNumber>=7&&this.setupTypeNumber(a),null==this.dataCache&&(this.dataCache=b.createData(this.typeNumber,this.errorCorrectLevel,this.dataList)),this.mapData(this.dataCache,c)},setupPositionProbePattern:function(a,b){for(var c=-1;7>=c;c++)if(!(-1>=a+c||this.moduleCount<=a+c))for(var d=-1;7>=d;d++)-1>=b+d||this.moduleCount<=b+d||(this.modules[a+c][b+d]=c>=0&&6>=c&&(0==d||6==d)||d>=0&&6>=d&&(0==c||6==c)||c>=2&&4>=c&&d>=2&&4>=d?!0:!1)},getBestMaskPattern:function(){for(var a=0,b=0,c=0;8>c;c++){this.makeImpl(!0,c);var d=f.getLostPoint(this);(0==c||a>d)&&(a=d,b=c)}return b},createMovieClip:function(a,b,c){var d=a.createEmptyMovieClip(b,c),e=1;this.make();for(var f=0;f<this.modules.length;f++)for(var g=f*e,h=0;h<this.modules[f].length;h++){var i=h*e,j=this.modules[f][h];j&&(d.beginFill(0,100),d.moveTo(i,g),d.lineTo(i+e,g),d.lineTo(i+e,g+e),d.lineTo(i,g+e),d.endFill())}return d},setupTimingPattern:function(){for(var a=8;a<this.moduleCount-8;a++)null==this.modules[a][6]&&(this.modules[a][6]=0==a%2);for(var b=8;b<this.moduleCount-8;b++)null==this.modules[6][b]&&(this.modules[6][b]=0==b%2)},setupPositionAdjustPattern:function(){for(var a=f.getPatternPosition(this.typeNumber),b=0;b<a.length;b++)for(var c=0;c<a.length;c++){var d=a[b],e=a[c];if(null==this.modules[d][e])for(var g=-2;2>=g;g++)for(var h=-2;2>=h;h++)this.modules[d+g][e+h]=-2==g||2==g||-2==h||2==h||0==g&&0==h?!0:!1}},setupTypeNumber:function(a){for(var b=f.getBCHTypeNumber(this.typeNumber),c=0;18>c;c++){var d=!a&&1==(1&b>>c);this.modules[Math.floor(c/3)][c%3+this.moduleCount-8-3]=d}for(var c=0;18>c;c++){var d=!a&&1==(1&b>>c);this.modules[c%3+this.moduleCount-8-3][Math.floor(c/3)]=d}},setupTypeInfo:function(a,b){for(var c=this.errorCorrectLevel<<3|b,d=f.getBCHTypeInfo(c),e=0;15>e;e++){var g=!a&&1==(1&d>>e);6>e?this.modules[e][8]=g:8>e?this.modules[e+1][8]=g:this.modules[this.moduleCount-15+e][8]=g}for(var e=0;15>e;e++){var g=!a&&1==(1&d>>e);8>e?this.modules[8][this.moduleCount-e-1]=g:9>e?this.modules[8][15-e-1+1]=g:this.modules[8][15-e-1]=g}this.modules[this.moduleCount-8][8]=!a},mapData:function(a,b){for(var c=-1,d=this.moduleCount-1,e=7,g=0,h=this.moduleCount-1;h>0;h-=2)for(6==h&&h--;;){for(var i=0;2>i;i++)if(null==this.modules[d][h-i]){var j=!1;g<a.length&&(j=1==(1&a[g]>>>e));var k=f.getMask(b,d,h-i);k&&(j=!j),this.modules[d][h-i]=j,e--,-1==e&&(g++,e=7)}if(d+=c,0>d||this.moduleCount<=d){d-=c,c=-c;break}}}},b.PAD0=236,b.PAD1=17,b.createData=function(a,c,d){for(var e=j.getRSBlocks(a,c),g=new k,h=0;h<d.length;h++){var i=d[h];g.put(i.mode,4),g.put(i.getLength(),f.getLengthInBits(i.mode,a)),i.write(g)}for(var l=0,h=0;h<e.length;h++)l+=e[h].dataCount;if(g.getLengthInBits()>8*l)throw new Error("code length overflow. ("+g.getLengthInBits()+">"+8*l+")");for(g.getLengthInBits()+4<=8*l&&g.put(0,4);0!=g.getLengthInBits()%8;)g.putBit(!1);for(;;){if(g.getLengthInBits()>=8*l)break;if(g.put(b.PAD0,8),g.getLengthInBits()>=8*l)break;g.put(b.PAD1,8)}return b.createBytes(g,e)},b.createBytes=function(a,b){for(var c=0,d=0,e=0,g=new Array(b.length),h=new Array(b.length),j=0;j<b.length;j++){var k=b[j].dataCount,l=b[j].totalCount-k;d=Math.max(d,k),e=Math.max(e,l),g[j]=new Array(k);for(var m=0;m<g[j].length;m++)g[j][m]=255&a.buffer[m+c];c+=k;var n=f.getErrorCorrectPolynomial(l),o=new i(g[j],n.getLength()-1),p=o.mod(n);h[j]=new Array(n.getLength()-1);for(var m=0;m<h[j].length;m++){var q=m+p.getLength()-h[j].length;h[j][m]=q>=0?p.get(q):0}}for(var r=0,m=0;m<b.length;m++)r+=b[m].totalCount;for(var s=new Array(r),t=0,m=0;d>m;m++)for(var j=0;j<b.length;j++)m<g[j].length&&(s[t++]=g[j][m]);for(var m=0;e>m;m++)for(var j=0;j<b.length;j++)m<h[j].length&&(s[t++]=h[j][m]);return s};for(var c={MODE_NUMBER:1,MODE_ALPHA_NUM:2,MODE_8BIT_BYTE:4,MODE_KANJI:8},d={L:1,M:0,Q:3,H:2},e={PATTERN000:0,PATTERN001:1,PATTERN010:2,PATTERN011:3,PATTERN100:4,PATTERN101:5,PATTERN110:6,PATTERN111:7},f={PATTERN_POSITION_TABLE:[[],[6,18],[6,22],[6,26],[6,30],[6,34],[6,22,38],[6,24,42],[6,26,46],[6,28,50],[6,30,54],[6,32,58],[6,34,62],[6,26,46,66],[6,26,48,70],[6,26,50,74],[6,30,54,78],[6,30,56,82],[6,30,58,86],[6,34,62,90],[6,28,50,72,94],[6,26,50,74,98],[6,30,54,78,102],[6,28,54,80,106],[6,32,58,84,110],[6,30,58,86,114],[6,34,62,90,118],[6,26,50,74,98,122],[6,30,54,78,102,126],[6,26,52,78,104,130],[6,30,56,82,108,134],[6,34,60,86,112,138],[6,30,58,86,114,142],[6,34,62,90,118,146],[6,30,54,78,102,126,150],[6,24,50,76,102,128,154],[6,28,54,80,106,132,158],[6,32,58,84,110,136,162],[6,26,54,82,110,138,166],[6,30,58,86,114,142,170]],G15:1335,G18:7973,G15_MASK:21522,getBCHTypeInfo:function(a){for(var b=a<<10;f.getBCHDigit(b)-f.getBCHDigit(f.G15)>=0;)b^=f.G15<<f.getBCHDigit(b)-f.getBCHDigit(f.G15);return(a<<10|b)^f.G15_MASK},getBCHTypeNumber:function(a){for(var b=a<<12;f.getBCHDigit(b)-f.getBCHDigit(f.G18)>=0;)b^=f.G18<<f.getBCHDigit(b)-f.getBCHDigit(f.G18);return a<<12|b},getBCHDigit:function(a){for(var b=0;0!=a;)b++,a>>>=1;return b},getPatternPosition:function(a){return f.PATTERN_POSITION_TABLE[a-1]},getMask:function(a,b,c){switch(a){case e.PATTERN000:return 0==(b+c)%2;case e.PATTERN001:return 0==b%2;case e.PATTERN010:return 0==c%3;case e.PATTERN011:return 0==(b+c)%3;case e.PATTERN100:return 0==(Math.floor(b/2)+Math.floor(c/3))%2;case e.PATTERN101:return 0==b*c%2+b*c%3;case e.PATTERN110:return 0==(b*c%2+b*c%3)%2;case e.PATTERN111:return 0==(b*c%3+(b+c)%2)%2;default:throw new Error("bad maskPattern:"+a)}},getErrorCorrectPolynomial:function(a){for(var b=new i([1],0),c=0;a>c;c++)b=b.multiply(new i([1,g.gexp(c)],0));return b},getLengthInBits:function(a,b){if(b>=1&&10>b)switch(a){case c.MODE_NUMBER:return 10;case c.MODE_ALPHA_NUM:return 9;case c.MODE_8BIT_BYTE:return 8;case c.MODE_KANJI:return 8;default:throw new Error("mode:"+a)}else if(27>b)switch(a){case c.MODE_NUMBER:return 12;case c.MODE_ALPHA_NUM:return 11;case c.MODE_8BIT_BYTE:return 16;case c.MODE_KANJI:return 10;default:throw new Error("mode:"+a)}else{if(!(41>b))throw new Error("type:"+b);switch(a){case c.MODE_NUMBER:return 14;case c.MODE_ALPHA_NUM:return 13;case c.MODE_8BIT_BYTE:return 16;case c.MODE_KANJI:return 12;default:throw new Error("mode:"+a)}}},getLostPoint:function(a){for(var b=a.getModuleCount(),c=0,d=0;b>d;d++)for(var e=0;b>e;e++){for(var f=0,g=a.isDark(d,e),h=-1;1>=h;h++)if(!(0>d+h||d+h>=b))for(var i=-1;1>=i;i++)0>e+i||e+i>=b||(0!=h||0!=i)&&g==a.isDark(d+h,e+i)&&f++;f>5&&(c+=3+f-5)}for(var d=0;b-1>d;d++)for(var e=0;b-1>e;e++){var j=0;a.isDark(d,e)&&j++,a.isDark(d+1,e)&&j++,a.isDark(d,e+1)&&j++,a.isDark(d+1,e+1)&&j++,(0==j||4==j)&&(c+=3)}for(var d=0;b>d;d++)for(var e=0;b-6>e;e++)a.isDark(d,e)&&!a.isDark(d,e+1)&&a.isDark(d,e+2)&&a.isDark(d,e+3)&&a.isDark(d,e+4)&&!a.isDark(d,e+5)&&a.isDark(d,e+6)&&(c+=40);for(var e=0;b>e;e++)for(var d=0;b-6>d;d++)a.isDark(d,e)&&!a.isDark(d+1,e)&&a.isDark(d+2,e)&&a.isDark(d+3,e)&&a.isDark(d+4,e)&&!a.isDark(d+5,e)&&a.isDark(d+6,e)&&(c+=40);for(var k=0,e=0;b>e;e++)for(var d=0;b>d;d++)a.isDark(d,e)&&k++;var l=Math.abs(100*k/b/b-50)/5;return c+=10*l}},g={glog:function(a){if(1>a)throw new Error("glog("+a+")");return g.LOG_TABLE[a]},gexp:function(a){for(;0>a;)a+=255;for(;a>=256;)a-=255;return g.EXP_TABLE[a]},EXP_TABLE:new Array(256),LOG_TABLE:new Array(256)},h=0;8>h;h++)g.EXP_TABLE[h]=1<<h;for(var h=8;256>h;h++)g.EXP_TABLE[h]=g.EXP_TABLE[h-4]^g.EXP_TABLE[h-5]^g.EXP_TABLE[h-6]^g.EXP_TABLE[h-8];for(var h=0;255>h;h++)g.LOG_TABLE[g.EXP_TABLE[h]]=h;i.prototype={get:function(a){return this.num[a]},getLength:function(){return this.num.length},multiply:function(a){for(var b=new Array(this.getLength()+a.getLength()-1),c=0;c<this.getLength();c++)for(var d=0;d<a.getLength();d++)b[c+d]^=g.gexp(g.glog(this.get(c))+g.glog(a.get(d)));return new i(b,0)},mod:function(a){if(this.getLength()-a.getLength()<0)return this;for(var b=g.glog(this.get(0))-g.glog(a.get(0)),c=new Array(this.getLength()),d=0;d<this.getLength();d++)c[d]=this.get(d);for(var d=0;d<a.getLength();d++)c[d]^=g.gexp(g.glog(a.get(d))+b);return new i(c,0).mod(a)}},j.RS_BLOCK_TABLE=[[1,26,19],[1,26,16],[1,26,13],[1,26,9],[1,44,34],[1,44,28],[1,44,22],[1,44,16],[1,70,55],[1,70,44],[2,35,17],[2,35,13],[1,100,80],[2,50,32],[2,50,24],[4,25,9],[1,134,108],[2,67,43],[2,33,15,2,34,16],[2,33,11,2,34,12],[2,86,68],[4,43,27],[4,43,19],[4,43,15],[2,98,78],[4,49,31],[2,32,14,4,33,15],[4,39,13,1,40,14],[2,121,97],[2,60,38,2,61,39],[4,40,18,2,41,19],[4,40,14,2,41,15],[2,146,116],[3,58,36,2,59,37],[4,36,16,4,37,17],[4,36,12,4,37,13],[2,86,68,2,87,69],[4,69,43,1,70,44],[6,43,19,2,44,20],[6,43,15,2,44,16],[4,101,81],[1,80,50,4,81,51],[4,50,22,4,51,23],[3,36,12,8,37,13],[2,116,92,2,117,93],[6,58,36,2,59,37],[4,46,20,6,47,21],[7,42,14,4,43,15],[4,133,107],[8,59,37,1,60,38],[8,44,20,4,45,21],[12,33,11,4,34,12],[3,145,115,1,146,116],[4,64,40,5,65,41],[11,36,16,5,37,17],[11,36,12,5,37,13],[5,109,87,1,110,88],[5,65,41,5,66,42],[5,54,24,7,55,25],[11,36,12],[5,122,98,1,123,99],[7,73,45,3,74,46],[15,43,19,2,44,20],[3,45,15,13,46,16],[1,135,107,5,136,108],[10,74,46,1,75,47],[1,50,22,15,51,23],[2,42,14,17,43,15],[5,150,120,1,151,121],[9,69,43,4,70,44],[17,50,22,1,51,23],[2,42,14,19,43,15],[3,141,113,4,142,114],[3,70,44,11,71,45],[17,47,21,4,48,22],[9,39,13,16,40,14],[3,135,107,5,136,108],[3,67,41,13,68,42],[15,54,24,5,55,25],[15,43,15,10,44,16],[4,144,116,4,145,117],[17,68,42],[17,50,22,6,51,23],[19,46,16,6,47,17],[2,139,111,7,140,112],[17,74,46],[7,54,24,16,55,25],[34,37,13],[4,151,121,5,152,122],[4,75,47,14,76,48],[11,54,24,14,55,25],[16,45,15,14,46,16],[6,147,117,4,148,118],[6,73,45,14,74,46],[11,54,24,16,55,25],[30,46,16,2,47,17],[8,132,106,4,133,107],[8,75,47,13,76,48],[7,54,24,22,55,25],[22,45,15,13,46,16],[10,142,114,2,143,115],[19,74,46,4,75,47],[28,50,22,6,51,23],[33,46,16,4,47,17],[8,152,122,4,153,123],[22,73,45,3,74,46],[8,53,23,26,54,24],[12,45,15,28,46,16],[3,147,117,10,148,118],[3,73,45,23,74,46],[4,54,24,31,55,25],[11,45,15,31,46,16],[7,146,116,7,147,117],[21,73,45,7,74,46],[1,53,23,37,54,24],[19,45,15,26,46,16],[5,145,115,10,146,116],[19,75,47,10,76,48],[15,54,24,25,55,25],[23,45,15,25,46,16],[13,145,115,3,146,116],[2,74,46,29,75,47],[42,54,24,1,55,25],[23,45,15,28,46,16],[17,145,115],[10,74,46,23,75,47],[10,54,24,35,55,25],[19,45,15,35,46,16],[17,145,115,1,146,116],[14,74,46,21,75,47],[29,54,24,19,55,25],[11,45,15,46,46,16],[13,145,115,6,146,116],[14,74,46,23,75,47],[44,54,24,7,55,25],[59,46,16,1,47,17],[12,151,121,7,152,122],[12,75,47,26,76,48],[39,54,24,14,55,25],[22,45,15,41,46,16],[6,151,121,14,152,122],[6,75,47,34,76,48],[46,54,24,10,55,25],[2,45,15,64,46,16],[17,152,122,4,153,123],[29,74,46,14,75,47],[49,54,24,10,55,25],[24,45,15,46,46,16],[4,152,122,18,153,123],[13,74,46,32,75,47],[48,54,24,14,55,25],[42,45,15,32,46,16],[20,147,117,4,148,118],[40,75,47,7,76,48],[43,54,24,22,55,25],[10,45,15,67,46,16],[19,148,118,6,149,119],[18,75,47,31,76,48],[34,54,24,34,55,25],[20,45,15,61,46,16]],j.getRSBlocks=function(a,b){var c=j.getRsBlockTable(a,b);if(void 0==c)throw new Error("bad rs block @ typeNumber:"+a+"/errorCorrectLevel:"+b);for(var d=c.length/3,e=[],f=0;d>f;f++)for(var g=c[3*f+0],h=c[3*f+1],i=c[3*f+2],k=0;g>k;k++)e.push(new j(h,i));return e},j.getRsBlockTable=function(a,b){switch(b){case d.L:return j.RS_BLOCK_TABLE[4*(a-1)+0];case d.M:return j.RS_BLOCK_TABLE[4*(a-1)+1];case d.Q:return j.RS_BLOCK_TABLE[4*(a-1)+2];case d.H:return j.RS_BLOCK_TABLE[4*(a-1)+3];default:return void 0}},k.prototype={get:function(a){var b=Math.floor(a/8);return 1==(1&this.buffer[b]>>>7-a%8)},put:function(a,b){for(var c=0;b>c;c++)this.putBit(1==(1&a>>>b-c-1))},getLengthInBits:function(){return this.length},putBit:function(a){var b=Math.floor(this.length/8);this.buffer.length<=b&&this.buffer.push(0),a&&(this.buffer[b]|=128>>>this.length%8),this.length++}};var l=[[17,14,11,7],[32,26,20,14],[53,42,32,24],[78,62,46,34],[106,84,60,44],[134,106,74,58],[154,122,86,64],[192,152,108,84],[230,180,130,98],[271,213,151,119],[321,251,177,137],[367,287,203,155],[425,331,241,177],[458,362,258,194],[520,412,292,220],[586,450,322,250],[644,504,364,280],[718,560,394,310],[792,624,442,338],[858,666,482,382],[929,711,509,403],[1003,779,565,439],[1091,857,611,461],[1171,911,661,511],[1273,997,715,535],[1367,1059,751,593],[1465,1125,805,625],[1528,1190,868,658],[1628,1264,908,698],[1732,1370,982,742],[1840,1452,1030,790],[1952,1538,1112,842],[2068,1628,1168,898],[2188,1722,1228,958],[2303,1809,1283,983],[2431,1911,1351,1051],[2563,1989,1423,1093],[2699,2099,1499,1139],[2809,2213,1579,1219],[2953,2331,1663,1273]],o=function(){var a=function(a,b){this._el=a,this._htOption=b};return a.prototype.draw=function(a){function g(a,b){var c=document.createElementNS("http://www.w3.org/2000/svg",a);for(var d in b)b.hasOwnProperty(d)&&c.setAttribute(d,b[d]);return c}var b=this._htOption,c=this._el,d=a.getModuleCount();Math.floor(b.width/d),Math.floor(b.height/d),this.clear();var h=g("svg",{viewBox:"0 0 "+String(d)+" "+String(d),width:"100%",height:"100%",fill:b.colorLight});h.setAttributeNS("http://www.w3.org/2000/xmlns/","xmlns:xlink","http://www.w3.org/1999/xlink"),c.appendChild(h),h.appendChild(g("rect",{fill:b.colorDark,width:"1",height:"1",id:"template"}));for(var i=0;d>i;i++)for(var j=0;d>j;j++)if(a.isDark(i,j)){var k=g("use",{x:String(i),y:String(j)});k.setAttributeNS("http://www.w3.org/1999/xlink","href","#template"),h.appendChild(k)}},a.prototype.clear=function(){for(;this._el.hasChildNodes();)this._el.removeChild(this._el.lastChild)},a}(),p="svg"===document.documentElement.tagName.toLowerCase(),q=p?o:m()?function(){function a(){this._elImage.src=this._elCanvas.toDataURL("image/png"),this._elImage.style.display="block",this._elCanvas.style.display="none"}function d(a,b){var c=this;if(c._fFail=b,c._fSuccess=a,null===c._bSupportDataURI){var d=document.createElement("img"),e=function(){c._bSupportDataURI=!1,c._fFail&&_fFail.call(c)},f=function(){c._bSupportDataURI=!0,c._fSuccess&&c._fSuccess.call(c)};return d.onabort=e,d.onerror=e,d.onload=f,d.src="data:image/gif;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==",void 0}c._bSupportDataURI===!0&&c._fSuccess?c._fSuccess.call(c):c._bSupportDataURI===!1&&c._fFail&&c._fFail.call(c)}if(this._android&&this._android<=2.1){var b=1/window.devicePixelRatio,c=CanvasRenderingContext2D.prototype.drawImage;CanvasRenderingContext2D.prototype.drawImage=function(a,d,e,f,g,h,i,j){if("nodeName"in a&&/img/i.test(a.nodeName))for(var l=arguments.length-1;l>=1;l--)arguments[l]=arguments[l]*b;else"undefined"==typeof j&&(arguments[1]*=b,arguments[2]*=b,arguments[3]*=b,arguments[4]*=b);c.apply(this,arguments)}}var e=function(a,b){this._bIsPainted=!1,this._android=n(),this._htOption=b,this._elCanvas=document.createElement("canvas"),this._elCanvas.width=b.width,this._elCanvas.height=b.height,a.appendChild(this._elCanvas),this._el=a,this._oContext=this._elCanvas.getContext("2d"),this._bIsPainted=!1,this._elImage=document.createElement("img"),this._elImage.style.display="none",this._el.appendChild(this._elImage),this._bSupportDataURI=null};return e.prototype.draw=function(a){var b=this._elImage,c=this._oContext,d=this._htOption,e=a.getModuleCount(),f=d.width/e,g=d.height/e,h=Math.round(f),i=Math.round(g);b.style.display="none",this.clear();for(var j=0;e>j;j++)for(var k=0;e>k;k++){var l=a.isDark(j,k),m=k*f,n=j*g;c.strokeStyle=l?d.colorDark:d.colorLight,c.lineWidth=1,c.fillStyle=l?d.colorDark:d.colorLight,c.fillRect(m,n,f,g),c.strokeRect(Math.floor(m)+.5,Math.floor(n)+.5,h,i),c.strokeRect(Math.ceil(m)-.5,Math.ceil(n)-.5,h,i)}this._bIsPainted=!0},e.prototype.makeImage=function(){this._bIsPainted&&d.call(this,a)},e.prototype.isPainted=function(){return this._bIsPainted},e.prototype.clear=function(){this._oContext.clearRect(0,0,this._elCanvas.width,this._elCanvas.height),this._bIsPainted=!1},e.prototype.round=function(a){return a?Math.floor(1e3*a)/1e3:a},e}():function(){var a=function(a,b){this._el=a,this._htOption=b};return a.prototype.draw=function(a){for(var b=this._htOption,c=this._el,d=a.getModuleCount(),e=Math.floor(b.width/d),f=Math.floor(b.height/d),g=['<table style="border:0;border-collapse:collapse;">'],h=0;d>h;h++){g.push("<tr>");for(var i=0;d>i;i++)g.push('<td style="border:0;border-collapse:collapse;padding:0;margin:0;width:'+e+"px;height:"+f+"px;background-color:"+(a.isDark(h,i)?b.colorDark:b.colorLight)+';"></td>');g.push("</tr>")}g.push("</table>"),c.innerHTML=g.join("");var j=c.childNodes[0],k=(b.width-j.offsetWidth)/2,l=(b.height-j.offsetHeight)/2;k>0&&l>0&&(j.style.margin=l+"px "+k+"px")},a.prototype.clear=function(){this._el.innerHTML=""},a}();QRCode=function(a,b){if(this._htOption={width:256,height:256,typeNumber:4,colorDark:"#000000",colorLight:"#ffffff",correctLevel:d.H},"string"==typeof b&&(b={text:b}),b)for(var c in b)this._htOption[c]=b[c];"string"==typeof a&&(a=document.getElementById(a)),this._android=n(),this._el=a,this._oQRCode=null,this._oDrawing=new q(this._el,this._htOption),this._htOption.text&&this.makeCode(this._htOption.text)},QRCode.prototype.makeCode=function(a){this._oQRCode=new b(r(a,this._htOption.correctLevel),this._htOption.correctLevel),this._oQRCode.addData(a),this._oQRCode.make(),this._el.title=a,this._oDrawing.draw(this._oQRCode),this.makeImage()},QRCode.prototype.makeImage=function(){"function"==typeof this._oDrawing.makeImage&&(!this._android||this._android>=3)&&this._oDrawing.makeImage()},QRCode.prototype.clear=function(){this._oDrawing.clear()},QRCode.CorrectLevel=d}();
+  </script>
+
+  <!-- Application Logic & Theming -->
+  <script>
+    var currentLang = "ru";
+    var currentPlatform = "ios";
+    var activeSubUrl = "";
+    var activeSubJsonUrl = "";
+    var activeSubClashUrl = "";
+    var activeModalUrl = "";
+    var serverLinks = [];
+
+    var I18N = {
+      ru: {
+        navTitle: "VPN сервис",
+        heroTitle: "VPN сервис",
+        statusActive: "Активна",
+        statusInactive: "Не активна",
+        statusPaused: "Приостановлена",
+        statusExpired: "Срок истек",
+        statusDepleted: "Лимит исчерпан",
+        trafficTitle: "Трафик",
+        trafficOf: "из",
+        unlimited: "Безлимит",
+        download: "↓ Загрузка",
+        upload: "↑ Отдача",
+        validityTitle: "Срок действия",
+        validityForever: "Бессрочно",
+        validityNoLimit: "Срок не ограничен",
+        validityDaysLeft: "Осталось",
+        daysUnit: "дн.",
+        validityExpired: "Срок истек",
+        lastOnlineTitle: "Был в сети",
+        lastOnlineNever: "Никогда",
+        remainedDays: "Осталось дней",
+        qrScanHint: "Отсканируйте камерой или приложением для подключения",
+        copySubBtn: "Скопировать ссылку подписки",
+        subLinkBtn: "Ссылка SUB",
+        jsonLinkBtn: "Конфиг JSON",
+        copiedToast: "Ссылка скопирована в буфер обмена",
+        copiedKeyToast: "Ключ сервера скопирован",
+        appsTitle: "Приложения для подключения",
+        connectBtn: "Подключить",
+        installBtn: "Скачать",
+        nodesTitle: "Доступные серверы",
+        nodesCountUnit: "шт.",
+        searchPlaceholder: "Поиск серверов...",
+        copyKeyBtn: "Скопировать",
+        closeModalBtn: "Закрыть",
+        supportBtn: "Поддержка",
+        footerEnc: "Защищено сквозным шифрованием TLS/REALITY",
+        footerBrand: "VPN сервис",
+        themeDay: "День",
+        themeNight: "Ночь"
+      },
+      eu: {
+        navTitle: "VPN Service",
+        heroTitle: "VPN Service",
+        statusActive: "Active",
+        statusInactive: "Inactive",
+        statusPaused: "Paused",
+        statusExpired: "Expired",
+        statusDepleted: "Depleted",
+        trafficTitle: "Traffic",
+        trafficOf: "of",
+        unlimited: "Unlimited",
+        download: "↓ Download",
+        upload: "↑ Upload",
+        validityTitle: "Validity",
+        validityForever: "Unlimited",
+        validityNoLimit: "No expiration date",
+        validityDaysLeft: "Remaining",
+        daysUnit: "days",
+        validityExpired: "Expired",
+        lastOnlineTitle: "Last online",
+        lastOnlineNever: "Never",
+        remainedDays: "Days left",
+        qrScanHint: "Scan with camera or VPN client to connect",
+        copySubBtn: "Copy Subscription Link",
+        subLinkBtn: "SUB Link",
+        jsonLinkBtn: "JSON Config",
+        copiedToast: "Subscription link copied to clipboard",
+        copiedKeyToast: "Server link copied to clipboard",
+        appsTitle: "Supported Applications",
+        connectBtn: "Connect",
+        installBtn: "Download",
+        nodesTitle: "Available Servers",
+        nodesCountUnit: "items",
+        searchPlaceholder: "Search servers...",
+        copyKeyBtn: "Copy",
+        closeModalBtn: "Close",
+        supportBtn: "Support",
+        footerEnc: "Secured with end-to-end TLS/REALITY encryption",
+        footerBrand: "VPN Service",
+        themeDay: "Day",
+        themeNight: "Night"
+      }
+    };
+
+    /* Standard 3x-ui Embedded App Icons */
+    var APP_ICONS_DATA = {
+      happ: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><polyline points="11.9387 18.636 11.2805 19.2322 13.2164 6.3148 21.6618 6.3148 21.082 10.1846"/><polyline points="20.2585 28.1999 18.113 42.5 9.6674 42.5 10.3198 38.1088"/><polyline points="28.1728 36.5585 27.2773 42.5 35.7228 42.5 37.9603 27.5876 36.0158 29.2999"/><polyline points="21.0144 27.3598 27.8555 27.3598 26.2122 38.3731 36.0158 29.2999 39.1998 8.0038 29.2593 17.99 28.8029 21.0714 27.2773 21.0714 26.4784 21.8658"/><polygon points="26.4784 21.8658 20.2243 28.1543 18.9689 28.1543 18.752 29.6379 8.8002 39.6355 11.9387 18.636 21.7423 9.5743 19.9047 21.8658 26.4784 21.8658"/><polyline points="38.0794 9.1294 38.6261 5.5 30.1808 5.5 28.1701 18.9112 29.2593 17.99"/></svg>',
+      singbox: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M40.7241,15.6976l-15.4896-10.8095c-.7416-.5175-1.7273-.5175-2.4689,0L7.2759,15.6976c-.9141.6379-.9141,1.9909,0,2.6288l15.4896,10.8095c.7416.5175,1.7273.5175,2.4689,0l15.4896-10.8095c.9141-.6379.9141-1.9909,0-2.6288Z"/><path d="M41.4096,17.012v13.976c0,.4977-.2285.9954-.6855,1.3144l-15.4896,10.8095c-.7416.5175-1.7273.5175-2.4689,0l-15.4896-10.8095c-.457-.3189-.6855-.8167-.6855-1.3144h0s0-13.976,0-13.976"/><line x1="24" y1="29.524" x2="24" y2="43.5"/><path d="M11.8734,12.4893l18.3951,13.1335v3.8047c0,.6869.7673,1.0951,1.3369.7111l4.3991-2.9651c.2961-.1996.4735-.5332.4735-.8903v-4.9939l-18.3951-13.1335"/></svg>',
+      v2rayng: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="m9.6185,41.4866V10.6142h-4.1185v-4.0722h10.2641v14.3936c.6957-.6404,1.2872-1.1794,1.8728-1.7248,3.5152-3.2745,7.0291-6.5504,10.5432-9.826.9416-.8777,1.8767-1.7624,2.8301-2.6271.1437-.1303.3712-.2375.5603-.2382,3.5668-.0136,10.9295,0,10.9295,0-10.9555,11.6366-21.8724,23.2736-32.8815,34.9672Z"/></svg>',
+      v2raytun: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect x="5.5" y="5.5" width="37" height="37" rx="4" ry="4"/><polyline points="28.9436 11.2023 20.4652 36.7977 11.9867 11.2023"/><path d="M28.3091,29.0207c0-2.3774,2.1537-4.2518,4.6165-3.7785,1.6155.3105,2.9055,1.7076,3.0663,3.3447.1195,1.2178-.2658,2.4194-1.1069,3.1576-1.5583,1.3675-6.5759,5.053-6.5759,5.053h7.7042"/></svg>',
+      shadowrocket: '<img src="data:image/webp;base64,UklGRj4EAABXRUJQVlA4IDIEAABwFgCdASpgAGAAPkkijkUioiETKk08KASEoA1iPH/Hcq5wDtd4z8uXlX8T9QDxN+kB5gOgB6AH9V/wHWN+gB+wHpY/uj8Fn7gftd7UurV+ANCdy1GXt8GUnyZ8Cl8AeoGkpxo+hJnj+qSPyOpwM+zSw5Jp6WQHC3D94YW7MS9k3CCiWM8gysReo0fB4wTxBVXBPzPz6tIH7sDaT/cXgt4ytUMfl0TcAsiYw6l6fXVIwx6T90N0NoJxaEDAAAD+/cCWe4WmLhHGgleFZkjqkAvda/k4Lm7f+Ziiypvox/+AN+toyfzCyd0uHO5Lx3h3NHGTpqkihpJcpP2zGhVD7Bbbko+AVKDe64CQOlgDQKvwKkDGtRaxpciVuOcnK9WZbn1aTGeXcrq1cDnox8E9SKqkevYBwVj015ayf7+wubGdxxePmQXHoxap8YiJnD3lT/i89gEhbo5tCyW3N8cP2lI1IDUsDv1EphZrvn4ucc+moDGgpJnYCKxF4aNotzXI5KOntu+23Q6Ctf3zQx2oiQo3l9XOB+9yaeWOSULVCvDT/DzV8fPHiAHdb/GKoDY2eDALT2Jd9UQylyLEqh5XMv1gA3MngprDwDTzOzsultvxlHk3pwho6KPJxT2z9NRxmPCTi5E6Y6TBKEF2Sz9/981ru3ZqJ1H2k+tWRdjfWxrebrYSBCUXWhf3bHK7cmH2qXZuutm8fl0OWilh340vEdP+RvSgndA03DE0472H4ql6Lv6anRvmjt+9vrNm83S3KSAdTrNmHMIxm8pU8hBsdydLHkIA2vbiskLbsSgRi7l+EDWHKm+eTNzj3JzxNQa4OPmscddBVICjpfxDrc9GW6Twh3r16WXhbjxv1LxOOrqRfNo3kN5kFRnxrM9TJKP/WW/c345WIi+mhj/fAfjrDCQq5s4xNWD27r0DLq9EZc0m/j5Bngzqa0ec3Ie4s8PGQY77oU9fkQF7qT27/0QUYIMXV45+Zylqv536+qwdvDAlg+bKkKkuJZQl47f+vPqji+7nX+f0zkr4y5gxi4fY7YhJIWsWLif9XKQCtSTkTdbLVP4JDQ+Krbvy4wRQrbyWs9LfGCqFRc1y10sJ/1U3XxkIBmm/EX/N+Vq3rHjGmEdcfoCUQYj+nQk7u6jXKaZlyzjT+ttFMGDFbJTP+58lNbdEAvXLanzH7bLxOjfCeQEATeo/0bGIUpLIsBbBDjC6j1j6omt/HbX8wZqJ6fw59DTxn4OXyWxH1dl1glNra2Bp+scOq+G9dskeF9BEOEQGS59AnAOJ8XdBvzob6/6MJX2CeSzZhe12ia/Y3Hbuze7oQTELx1rpjSMXO1OFNRNfmu7tNriXnvv65+T95ctItPkiIL4vV3b3YzcDaXmFbI4F6OqD6qXOECtdkEVz7bSarFJAnXB8PxsPSO084YDFtci4AAA=" alt="Shadowrocket" width="32" height="32" />',
+      streisand: '<img src="data:image/webp;base64,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" alt="Streisand" width="32" height="32" />',
+      v2box: '<img src="data:image/webp;base64,UklGRq4EAABXRUJQVlA4IKIEAABQGgCdASpgAGAAPkkijUUioiERzAb8KASEtIALZ7aafouh58jerHJ7ZefgPyV/LvUVf3b8hPzA5TrkX9G/un5l/3rWOv8b+Wmv6/4fpxfRHoY/K/7//0fcH/jn89/1v5yccB+xBq/+u4VGCCApRi/kh0UOtBeheVDbkae/vwehM0xE2nN9zxpT5EjDkAaHYVZwwYl0UoclA7PIzfMlchPY8aXYMuDvOEYYcsQHNqnLtxtb/KreGbVNajxK+2Uo6DvNSXjQHyVlvAqvxoDpw7KeYTkKxOGdau4YXQAA/v/iYxVbmNpeb9D2wZARRyc09bxGKq+TzVMQttgJlJv7v+rNNjPOtQpcmPfzjtFM5sZ/WE5vIZm1nPrIg4LI79GOGG4E8b75J/rAHgSkRpcFwV5rMOWBJprzzOKMHzqIvipffZBj8t5SDg2NuWUEB8x0h22h3KR6yk/ia2jbIV6mEY+ToZuWPjzcKUMd/5l6GyU+gh55FlF/gKU3bUdcA2RD8dTD3h80LOgLUq7iPujZn0o1ZvCT9V1QjliPrExc8Rto05ujiHbQgF2m8welwK5b5KNE861+iBao9GhziBe1Eww5QGhpolBqfmPqkuGuX+oMukf6uphzzyx+6yZ4EbEb4hyPiEfMnIsED9c7e+OUEMVGlbX5bJEWmqI5dWE3yGqZFU+hG1SxGi/06ch7LQoqVfs0UU83XuU8Y03x2WEa9CDCErzxU/aRNfAYv+1g5P5ORew8rnnyLQ3TavzJrb6TvEehWIn76QxCUJY9nbNsf/IQpA2uvDS3zg2u7ARfTa/+KzjvbZT4J347904OSMtduZaJzZcAMzJO4OworFZx32LSt7jb9lc8Nvu4cgmcq3oT5VIol1el4MUpWad8qlM/gNgj3u+oqvHxOcUlrvBVg7QCteFz4lmvjwN+ok19RKkk7aCAo/a5gDq9Iz9Tr/IUhsanu+FpLrivxM4g54S0fL3BWwAKGRL2wDfIPYb8gZ7IcOnjC0sa0EPVVRwFrXdFxqNCOV7PAVKeo2HINIz45yQKQOCllYJzEOt24nq/ReL5+Mbw//zPVcYwBdWcLLTtvpjyyJLCPH0hJPnQTQxQB4YJXLw/Y/vK9ei/v/Nycp+UIr/2MXJZEgWg6yGsfJWvM/ExIqtT7FWPB0vzbsGHaQIv/DO/m82m/zf8wWH95X9XUH5TqqDZXw6eX//dp+7IlD//JakMjS+vnXCzsiLF7ykxdHQ3f6+bIdRyV39665k+ohbXUVBfmJKJqdlofjjQQ1JQmFFNI0S1vFwOAJ3iVrn1cCzA6N/H4bZ4nthHatWCeuNzJlAfgy2ovCCaZm/eaExpPYAuYQfmyGiEyIWDuvefcJF/7x1hl03FSKb5HQ0x87KrHo3K1iBQNMQsADSxp1AHX7pNQHx7xx780TkXHeXiy3mWPHCzY89OQ6UsXfSWnCwCl0bU9yg1mHvdmNQhN2oyp/eIFsWSFa07EfTLcL0X3xaxBAlGAJKARlXFW+MSrABA0Ptqf0b5/6ehEfeXZ6cqLMpYzIkrjCvQ3lRZBchRAMQBcWkjGWi10yHNWF99AAAA" alt="V2Box" width="32" height="32" />',
+      incy: '<img src="data:image/webp;base64,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" alt="Incy" width="32" height="32" />',
+      clash: '<img src="data:image/png;base64,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" alt="Clash" width="32" height="32" />',
+      v2rayn: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="m9.6185,41.4866V10.6142h-4.1185v-4.0722h10.2641v14.3936c.6957-.6404,1.2872-1.1794,1.8728-1.7248,3.5152-3.2745,7.0291-6.5504,10.5432-9.826.9416-.8777,1.8767-1.7624,2.8301-2.6271.1437-.1303.3712-.2375.5603-.2382,3.5668-.0136,10.9295,0,10.9295,0-10.9555,11.6366-21.8724,23.2736-32.8815,34.9672Z"/></svg>'
+    };
+
+    /* Sleek Apple-styled Server Vector Icon */
+    var DEFAULT_SERVER_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
+
+    function getRawText(id) {
+      var el = document.getElementById(id);
+      return el ? (el.textContent || "").trim() : "";
+    }
+
+    function isTemplateToken(str) {
+      return !str || str.indexOf("{" + "{") !== -1;
+    }
+
+    /* Device Platform Detection: automatically opens active device tab */
+    function detectUserPlatform() {
+      var ua = navigator.userAgent || "";
+      var platform = (navigator.platform || "").toLowerCase();
+
+      // iOS check (including iPadOS requesting desktop site where userAgent contains Macintosh but has touch points)
+      var isIos = /iphone|ipad|ipod/i.test(ua) ||
+                  (navigator.maxTouchPoints && navigator.maxTouchPoints > 1 && /macintosh|mac os x/i.test(ua));
+      if (isIos) return "ios";
+
+      // Android check
+      if (/android/i.test(ua)) return "android";
+
+      // macOS check (non-touch Mac desktop/laptop)
+      if (/macintosh|mac os x/i.test(ua) || /macintel/i.test(platform)) return "macos";
+
+      // Windows check
+      if (/win32|win64|windows|wince/i.test(ua) || /win/i.test(platform)) return "windows";
+
+      return "ios";
+    }
+
+    /* Theming Functions: defaults to device theme if not explicitly chosen */
+    function initTheme() {
+      var saved = localStorage.getItem("sub_theme_pref");
+      var theme = "dark";
+      if (saved === "light" || saved === "dark") {
+        theme = saved;
+      } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) {
+        theme = "light";
+      }
+      setAppTheme(theme, false);
+
+      if (window.matchMedia) {
+        window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", function(e) {
+          if (!localStorage.getItem("sub_theme_pref")) {
+            setAppTheme(e.matches ? "light" : "dark", false);
+          }
+        });
+      }
+    }
+
+    function setAppTheme(theme, saveToStorage) {
+      if (saveToStorage !== false) {
+        try {
+          localStorage.setItem("sub_theme_pref", theme);
+        } catch (e) {}
+      }
+
+      document.documentElement.setAttribute("data-theme", theme);
+      var meta = document.getElementById("metaThemeColor");
+      if (meta) meta.setAttribute("content", theme === "light" ? "#F2F2F7" : "#000000");
+
+      var dayBtn = document.getElementById("themeDayBtn");
+      var nightBtn = document.getElementById("themeNightBtn");
+      if (theme === "light") {
+        if (dayBtn) dayBtn.classList.add("active");
+        if (nightBtn) nightBtn.classList.remove("active");
+      } else {
+        if (nightBtn) nightBtn.classList.add("active");
+        if (dayBtn) dayBtn.classList.remove("active");
+      }
+    }
+
+    /* Localization Functions */
+    function setAppLang(lang) {
+      currentLang = (lang === "eu") ? "eu" : "ru";
+      try {
+        localStorage.setItem("sub_lang_pref", currentLang);
+      } catch (e) {}
+
+      var ruBtn = document.getElementById("langRuBtn");
+      var euBtn = document.getElementById("langEuBtn");
+      if (currentLang === "eu") {
+        if (euBtn) euBtn.classList.add("active");
+        if (ruBtn) ruBtn.classList.remove("active");
+      } else {
+        if (ruBtn) ruBtn.classList.add("active");
+        if (euBtn) euBtn.classList.remove("active");
+      }
+
+      var dict = I18N[currentLang];
+      document.title = dict.navTitle;
+
+      var translatable = document.querySelectorAll("[data-i18n]");
+      for (var i = 0; i < translatable.length; i++) {
+        var key = translatable[i].getAttribute("data-i18n");
+        if (dict[key]) {
+          translatable[i].innerText = dict[key];
+        }
+      }
+
+      var placeholders = document.querySelectorAll("[data-i18n-ph]");
+      for (var j = 0; j < placeholders.length; j++) {
+        var phKey = placeholders[j].getAttribute("data-i18n-ph");
+        if (dict[phKey]) {
+          placeholders[j].setAttribute("placeholder", dict[phKey]);
+        }
+      }
+
+      renderAppsList();
+      renderNodeList(serverLinks);
+    }
+
+    /* Platform Switcher (iOS, Android, Windows, macOS) */
+    function switchPlatform(platform) {
+      currentPlatform = platform;
+      var buttons = document.querySelectorAll("#platformTabs .platform-tab-btn");
+      for (var i = 0; i < buttons.length; i++) {
+        var p = buttons[i].getAttribute("data-platform");
+        if (p === platform) {
+          buttons[i].classList.add("active");
+        } else {
+          buttons[i].classList.remove("active");
+        }
+      }
+      renderAppsList();
+    }
+
+    function renderAppsList() {
+      var container = document.getElementById("appsContainer");
+      if (!container) return;
+
+      var dict = I18N[currentLang];
+      var encSub = encodeURIComponent(activeSubUrl);
+      var rocketSource = activeSubUrl + (activeSubUrl.indexOf("?") !== -1 ? "&" : "?") + "flag=shadowrocket";
+      var rocketB64 = "";
+      try { rocketB64 = btoa(rocketSource); } catch(e) {}
+
+      // Notice: iOS list has sing-box and v2ray completely removed per user request!
+      var appsData = {
+        ios: [
+          {
+            name: "Shadowrocket",
+            desc: "iOS 12+ • Стандарт для iPhone/iPad",
+            icon: "shadowrocket",
+            connectUrl: "shadowrocket://add/sub://" + rocketB64 + "?remark=VPN%20Service",
+            downloadUrl: "https://apps.apple.com/app/shadowrocket/id932747118"
+          },
+          {
+            name: "Streisand",
+            desc: "Бесплатный быстрый клиент",
+            icon: "streisand",
+            connectUrl: "streisand://import/" + encSub,
+            downloadUrl: "https://apps.apple.com/app/streisand/id6450534064"
+          },
+          {
+            name: "V2Box",
+            desc: "Простой интерфейс и виджеты",
+            icon: "v2box",
+            connectUrl: "v2box://install-sub?url=" + encSub + "&name=VPN%20Service",
+            downloadUrl: "https://apps.apple.com/app/v2box-v2ray-client/id6446814043"
+          },
+          {
+            name: "Happ",
+            desc: "Быстрый импорт и простота",
+            icon: "happ",
+            connectUrl: "happ://add/" + activeSubUrl,
+            downloadUrl: "https://apps.apple.com/app/happ-proxy-utility/id6504287215"
+          },
+          {
+            name: "Incy",
+            desc: "Легковесный клиент",
+            icon: "incy",
+            connectUrl: "incy://add/" + activeSubUrl,
+            downloadUrl: "https://apps.apple.com/app/incy/id6475775338"
+          }
+        ],
+        android: [
+          {
+            name: "v2rayNG",
+            desc: "Официальный Xray-клиент",
+            icon: "v2rayng",
+            connectUrl: "v2rayng://install-config?url=" + encSub,
+            downloadUrl: "https://github.com/2dust/v2rayNG/releases"
+          },
+          {
+            name: "Happ",
+            desc: "Современный и простой клиент",
+            icon: "happ",
+            connectUrl: "happ://add/" + activeSubUrl,
+            downloadUrl: "https://play.google.com/store/apps/details?id=com.happproxy"
+          },
+          {
+            name: "V2Box",
+            desc: "Удобный интерфейс и Material You",
+            icon: "v2box",
+            connectUrl: "v2box://install-sub?url=" + encSub + "&name=VPN%20Service",
+            downloadUrl: "https://play.google.com/store/apps/details?id=dev.hexasoftware.v2box"
+          },
+          {
+            name: "Sing-box",
+            desc: "Низкий расход батареи и высокая скорость",
+            icon: "singbox",
+            connectUrl: "sing-box://import-remote-profile?url=" + encSub + "#VPN%20Service",
+            downloadUrl: "https://github.com/SagerNet/sing-box/releases"
+          },
+          {
+            name: "V2RayTun",
+            desc: "Поддержка всех протоколов панели",
+            icon: "v2raytun",
+            connectUrl: "v2raytun://import/" + activeSubUrl,
+            downloadUrl: "https://play.google.com/store/apps/details?id=com.v2raytun.android"
+          },
+          {
+            name: "Incy",
+            desc: "Быстрое подключение",
+            icon: "incy",
+            connectUrl: "incy://add/" + activeSubUrl,
+            downloadUrl: "https://play.google.com/store/apps/details?id=com.incy.android"
+          }
+        ],
+        windows: [
+          {
+            name: "Clash Verge Rev",
+            desc: "Современный GUI и авто-маршрутизация",
+            icon: "clash",
+            connectUrl: "clash://install-config?url=" + encodeURIComponent(activeSubClashUrl || activeSubUrl),
+            downloadUrl: "https://github.com/clash-verge-rev/clash-verge-rev/releases"
+          },
+          {
+            name: "v2rayN",
+            desc: "Классический мощный клиент Windows",
+            icon: "v2rayn",
+            connectUrl: activeSubUrl,
+            downloadUrl: "https://github.com/2dust/v2rayN/releases"
+          },
+          {
+            name: "Sing-box",
+            desc: "Официальный клиент Sing-box",
+            icon: "singbox",
+            connectUrl: "sing-box://import-remote-profile?url=" + encSub + "#VPN%20Service",
+            downloadUrl: "https://github.com/SagerNet/sing-box/releases"
+          }
+        ],
+        macos: [
+          {
+            name: "V2Box",
+            desc: "Строка меню macOS и виджеты",
+            icon: "v2box",
+            connectUrl: "v2box://install-sub?url=" + encSub + "&name=VPN%20Service",
+            downloadUrl: "https://apps.apple.com/app/v2box-v2ray-client/id6446814043"
+          },
+          {
+            name: "Sing-box",
+            desc: "Официальный клиент для Apple Silicon & Intel",
+            icon: "singbox",
+            connectUrl: "sing-box://import-remote-profile?url=" + encSub + "#VPN%20Service",
+            downloadUrl: "https://apps.apple.com/app/sing-box/id6451272673"
+          },
+          {
+            name: "Clash Verge Rev",
+            desc: "Красивый клиент для Mac",
+            icon: "clash",
+            connectUrl: "clash://install-config?url=" + encodeURIComponent(activeSubClashUrl || activeSubUrl),
+            downloadUrl: "https://github.com/clash-verge-rev/clash-verge-rev/releases"
+          },
+          {
+            name: "Streisand",
+            desc: "Поддержка Mac на Apple Silicon M1-M4",
+            icon: "streisand",
+            connectUrl: "streisand://import/" + encSub,
+            downloadUrl: "https://apps.apple.com/app/streisand/id6450534064"
+          }
+        ]
+      };
+
+      var list = appsData[currentPlatform] || appsData.ios;
+      var html = "";
+
+      for (var i = 0; i < list.length; i++) {
+        var app = list[i];
+        var iconHtml = APP_ICONS_DATA[app.icon] || APP_ICONS_DATA.v2box;
+
+        html += '<div class="app-card">' +
+                  '<div class="app-left">' +
+                    '<div class="app-icon-wrap">' + iconHtml + '</div>' +
+                    '<div class="app-info">' +
+                      '<div class="app-name">' + app.name + '</div>' +
+                      '<div class="app-desc">' + app.desc + '</div>' +
+                    '</div>' +
+                  '</div>' +
+                  '<div class="app-actions">' +
+                    '<a class="app-btn-connect" href="' + app.connectUrl + '">' +
+                      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>' +
+                      '<span>' + dict.connectBtn + '</span>' +
+                    '</a>' +
+                    '<a class="app-btn-icon" href="' + app.downloadUrl + '" target="_blank" rel="noopener" title="' + dict.installBtn + '">' +
+                      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
+                    '</a>' +
+                  '</div>' +
+                '</div>';
+      }
+
+      container.innerHTML = html;
+    }
+
+    /* Primary Data Initialization */
+    function initData() {
+      initTheme();
+
+      try {
+        var savedLang = localStorage.getItem("sub_lang_pref");
+        if (!savedLang) {
+          var browserLang = (navigator.language || "").toLowerCase();
+          savedLang = (browserLang.indexOf("ru") === 0) ? "ru" : "eu";
+        }
+        currentLang = savedLang;
+      } catch (e) {}
+
+      // Auto-detect user device platform & activate its tab
+      currentPlatform = detectUserPlatform();
+      switchPlatform(currentPlatform);
+
+      var d = window.__SUB_PAGE_DATA__ || {};
+
+      var subUrl = d.subUrl || getRawText("dataSubUrl");
+      var subJsonUrl = d.subJsonUrl || getRawText("dataSubJsonUrl");
+      var subClashUrl = d.subClashUrl || getRawText("dataSubClashUrl");
+      var expireSec = d.expire !== undefined ? Number(d.expire) : (Number(getRawText("dataExpireSec")) || 0);
+      var downloadBytes = d.downloadByte !== undefined ? Number(d.downloadByte) : (Number(getRawText("dataDownloadByte")) || 0);
+      var uploadBytes = d.uploadByte !== undefined ? Number(d.uploadByte) : (Number(getRawText("dataUploadByte")) || 0);
+      var totalBytes = d.totalByte !== undefined ? Number(d.totalByte) : (Number(getRawText("dataTotalByte")) || 0);
+      var lastOnline = d.lastOnline !== undefined ? Number(d.lastOnline) : (Number(getRawText("dataLastOnline")) || 0);
+      var isEnabled = d.enabled !== undefined ? Boolean(d.enabled) : (getRawText("dataEnabled") === "true");
+
+      /* Exact Subscription Inactivity / Expiration Validation */
+      var nowSec = Math.floor(Date.now() / 1000);
+      var isExpired = (expireSec > 0 && nowSec >= expireSec);
+      var isDepleted = (totalBytes > 0 && (downloadBytes + uploadBytes) >= totalBytes);
+      var isInactive = !isEnabled;
+
+      var statusBadge = document.getElementById("statusBadge");
+      var statusText = document.getElementById("statusText");
+      var dict = I18N[currentLang];
+
+      if (isInactive) {
+        statusBadge.className = "badge badge-expired";
+        statusText.innerText = dict.statusInactive;
+      } else if (isExpired) {
+        statusBadge.className = "badge badge-expired";
+        statusText.innerText = dict.statusExpired;
+      } else if (isDepleted) {
+        statusBadge.className = "badge badge-expired";
+        statusText.innerText = dict.statusDepleted;
+      } else {
+        statusBadge.className = "badge badge-active";
+        statusText.innerText = dict.statusActive;
+      }
+
+      var rawLinks = [];
+      if (d.links && Array.isArray(d.links) && d.links.length > 0) {
+        rawLinks = d.links;
+      } else {
+        var linkEls = document.querySelectorAll("#dataLinksList .raw-link");
+        for (var i = 0; i < linkEls.length; i++) {
+          var txt = (linkEls[i].textContent || "").trim();
+          if (txt && txt.length > 0 && !isTemplateToken(txt)) {
+            rawLinks.push(txt);
+          }
+        }
+      }
+
+      var usedStr = d.used || getRawText("usedTrafficText");
+      if (usedStr && !isTemplateToken(usedStr)) document.getElementById("usedTrafficText").innerText = usedStr;
+
+      var totalStr = d.total || getRawText("totalTrafficText");
+      if (totalStr && !isTemplateToken(totalStr)) {
+        document.getElementById("totalTrafficText").innerHTML = '<span data-i18n="trafficOf">' + I18N[currentLang].trafficOf + '</span> ' + (totalStr === "0 B" || totalStr === "∞" ? I18N[currentLang].unlimited : totalStr);
+      }
+
+      var downStr = d.download || getRawText("downTrafficText");
+      if (downStr && !isTemplateToken(downStr)) document.getElementById("downTrafficText").innerText = downStr;
+
+      var upStr = d.upload || getRawText("upTrafficText");
+      if (upStr && !isTemplateToken(upStr)) document.getElementById("upTrafficText").innerText = upStr;
+
+      var isStandalonePreview = rawLinks.length === 0;
+
+      if (isStandalonePreview) {
+        console.info("3x-ui Template: Standalone Preview Mode (mock data active).");
+        subUrl = window.location.href;
+        subJsonUrl = window.location.href + (window.location.href.indexOf("?") !== -1 ? "&" : "?") + "format=json";
+        subClashUrl = window.location.href + (window.location.href.indexOf("?") !== -1 ? "&" : "?") + "format=clash";
+        expireSec = Math.floor(Date.now() / 1000) + (86400 * 30);
+        downloadBytes = 38.6 * 1024 * 1024 * 1024;
+        uploadBytes = 6.4 * 1024 * 1024 * 1024;
+        totalBytes = 100 * 1024 * 1024 * 1024;
+        lastOnline = Date.now() - 3600000;
+
+        serverLinks = [
+          "vless://4452f570-7729-4c76-9d80-584b7a245b44@nl.corepathline.com:443?alpn=http%2F1.1&encryption=none&fp=firefox&host=nl.corepathline.com&path=%2Fws&security=tls&type=ws#%F0%9F%9A%80%20VLESS-WS-Test",
+          "vless://4452f570-7729-4c76-9d80-584b7a245b44@nl.corepathline.com:443?alpn=h2%2Chttp%2F1.1&encryption=none&extra=%7B%22mode%22%3A%22stream-up%22%7D&fp=firefox&host=&mode=stream-up&path=%2Fxhttp&security=tls&type=xhttp#%E2%9A%A1%20VLESS-XHTTP-Test",
+          "trojan://gpehcjkzwnpbl7aq@nl.corepathline.com:443?alpn=h2%2Chttp%2F1.1&authority=nl.corepathline.com&fp=firefox&security=tls&serviceName=trojan-grpc&type=grpc#%F0%9F%94%92%20Trojan-gRPC-Test",
+          "vless://4452f570-7729-4c76-9d80-584b7a245b44@nl.corepathline.com:443?alpn=h2%2Chttp%2F1.1&authority=nl.corepathline.com&encryption=none&fp=firefox&security=tls&serviceName=vless-grpc&type=grpc#%E2%9A%A1%20VLESS-gRPC-Test"
+        ];
+        document.getElementById("usedTrafficText").innerText = "45.0 GB";
+        document.getElementById("totalTrafficText").innerHTML = '<span data-i18n="trafficOf">' + I18N[currentLang].trafficOf + '</span> 100 GB';
+        document.getElementById("downTrafficText").innerText = "38.6 GB";
+        document.getElementById("upTrafficText").innerText = "6.4 GB";
+      } else {
+        serverLinks = rawLinks;
+      }
+
+      activeSubUrl = subUrl || window.location.href;
+      activeSubJsonUrl = subJsonUrl || "";
+      activeSubClashUrl = subClashUrl || "";
+
+      setupExportLinks();
+      renderTrafficRing(downloadBytes + uploadBytes, totalBytes, isInactive || isExpired || isDepleted);
+      renderExpiration(expireSec, isInactive, isExpired, isDepleted);
+      renderLastOnline(lastOnline);
+      renderMainQrCode(activeSubUrl);
+      setAppLang(currentLang);
+    }
+
+    /* Render Centered QR Code */
+    function renderMainQrCode(url) {
+      var holder = document.getElementById("subQrCode");
+      if (!holder || !url) return;
+      holder.innerHTML = "";
+      try {
+        new QRCode(holder, {
+          text: url,
+          width: 180,
+          height: 180,
+          colorDark: "#000000",
+          colorLight: "#ffffff",
+          correctLevel: QRCode.CorrectLevel.M
+        });
+      } catch (e) {
+        console.error("QR Code Error:", e);
+      }
+    }
+
+    /* Export Link Pills */
+    function setupExportLinks() {
+      var jsonBtn = document.getElementById("jsonSubLinkBtn");
+      if (jsonBtn) {
+        if (activeSubJsonUrl) {
+          jsonBtn.href = activeSubJsonUrl;
+          jsonBtn.style.display = "inline-flex";
+        } else {
+          jsonBtn.href = activeSubUrl + (activeSubUrl.indexOf("?") !== -1 ? "&" : "?") + "format=json";
+          jsonBtn.style.display = "inline-flex";
+        }
+      }
+    }
+
+    /* Traffic Ring: Styled in iOS Fitness Activity Ring with Shimmering Gradient */
+    function renderTrafficRing(used, total, isUnhealthy) {
+      var ring = document.getElementById("trafficRing");
+      var label = document.getElementById("trafficPercentLabel");
+      var center = document.getElementById("ringCenterText");
+      var circumference = 2 * Math.PI * 32;
+
+      ring.style.strokeDasharray = circumference + " " + circumference;
+
+      if (isUnhealthy) {
+        ring.style.strokeDashoffset = "0";
+        ring.style.stroke = "url(#trafficGradientRed)";
+        label.innerText = "!";
+        center.innerText = "!";
+        return;
+      }
+
+      if (!total || total <= 0) {
+        ring.style.strokeDashoffset = "0";
+        ring.style.stroke = "url(#trafficGradientBlue)";
+        label.innerText = I18N[currentLang].unlimited;
+        center.innerText = "∞";
+        return;
+      }
+
+      var pct = Math.min(100, Math.max(0, (used / total) * 100));
+      var offset = circumference - (pct / 100) * circumference;
+      ring.style.strokeDashoffset = offset;
+
+      var grad = "url(#trafficGradientBlue)";
+      if (pct >= 90) grad = "url(#trafficGradientRed)";
+      else if (pct >= 75) grad = "url(#trafficGradientOrange)";
+      ring.style.stroke = grad;
+
+      var pctString = pct.toFixed(1) + "%";
+      label.innerText = pctString;
+      center.innerText = Math.round(pct) + "%";
+    }
+
+    /* Expiration Formatting */
+    function renderExpiration(expireSec, isInactive, isExpired, isDepleted) {
+      var countEl = document.getElementById("expireCountdown");
+      var dateEl = document.getElementById("expireDateFormatted");
+      var badgeEl = document.getElementById("expireStatusBadge");
+      var remDaysEl = document.getElementById("remainedDaysText");
+      var dict = I18N[currentLang];
+
+      if (isInactive) {
+        countEl.innerText = dict.statusInactive;
+        dateEl.innerText = dict.statusInactive;
+        badgeEl.innerText = dict.statusInactive;
+        badgeEl.className = "badge badge-expired";
+        if (remDaysEl) remDaysEl.innerText = dict.statusInactive;
+        return;
+      }
+
+      if (isExpired) {
+        countEl.innerText = dict.validityExpired;
+        var expDate = new Date(expireSec * 1000);
+        dateEl.innerText = expDate.toLocaleDateString(currentLang === "eu" ? "en-US" : "ru-RU", {
+          day: "numeric",
+          month: "short",
+          year: "numeric"
+        });
+        badgeEl.innerText = dict.statusExpired;
+        badgeEl.className = "badge badge-expired";
+        if (remDaysEl) remDaysEl.innerText = dict.statusExpired;
+        return;
+      }
+
+      if (isDepleted) {
+        countEl.innerText = dict.statusDepleted;
+        dateEl.innerText = dict.statusDepleted;
+        badgeEl.innerText = dict.statusDepleted;
+        badgeEl.className = "badge badge-expired";
+        if (remDaysEl) remDaysEl.innerText = dict.statusDepleted;
+        return;
+      }
+
+      if (!expireSec || expireSec <= 0) {
+        countEl.innerText = dict.validityForever;
+        dateEl.innerText = dict.validityNoLimit;
+        badgeEl.innerText = dict.statusActive;
+        badgeEl.className = "badge badge-active";
+        if (remDaysEl) remDaysEl.innerText = dict.validityForever;
+        return;
+      }
+
+      var now = Math.floor(Date.now() / 1000);
+      var diffSec = expireSec - now;
+
+      var expDate = new Date(expireSec * 1000);
+      var dateStr = expDate.toLocaleDateString(currentLang === "eu" ? "en-US" : "ru-RU", {
+        day: "numeric",
+        month: "short",
+        year: "numeric"
+      });
+      dateEl.innerText = dateStr;
+
+      if (diffSec <= 0) {
+        countEl.innerText = dict.validityExpired;
+        badgeEl.innerText = dict.statusExpired;
+        badgeEl.className = "badge badge-expired";
+        if (remDaysEl) remDaysEl.innerText = dict.statusExpired;
+      } else {
+        var days = Math.ceil(diffSec / 86400);
+        countEl.innerText = dict.validityDaysLeft + " " + days + " " + dict.daysUnit;
+        if (remDaysEl) remDaysEl.innerText = days + " " + dict.daysUnit;
+        if (days <= 3) {
+          badgeEl.className = "badge badge-paused";
+          badgeEl.innerText = "≤ " + days + " " + dict.daysUnit;
+        } else {
+          badgeEl.className = "badge badge-active";
+          badgeEl.innerText = dict.statusActive;
+        }
+      }
+    }
+
+    /* Last Online Formatting */
+    function renderLastOnline(lastOnline) {
+      var el = document.getElementById("lastOnlineFormatted");
+      if (!el) return;
+      var dict = I18N[currentLang];
+
+      if (!lastOnline || lastOnline <= 0) {
+        el.innerText = dict.lastOnlineNever;
+        return;
+      }
+
+      var ms = lastOnline > 100000000000 ? lastOnline : lastOnline * 1000;
+      var date = new Date(ms);
+      var formatted = date.toLocaleString(currentLang === "eu" ? "en-US" : "ru-RU", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+      el.innerText = formatted;
+    }
+
+    /* Robust Server Emoji & Name Extractor */
+    function parseNodeUrl(url) {
+      var protocol = "unknown";
+      var match = url.match(/^([a-z0-9_-]+):\/\//i);
+      if (match) protocol = match[1].toLowerCase();
+
+      var hashRemark = "";
+      var hashIdx = url.indexOf("#");
+      if (hashIdx !== -1) {
+        try {
+          hashRemark = decodeURIComponent(url.substring(hashIdx + 1)).trim();
+        } catch (e) {
+          hashRemark = url.substring(hashIdx + 1).trim();
+        }
+      }
+
+      var leadingEmoji = "";
+      var cleanName = hashRemark;
+
+      // Extract leading emoji: regional flag pairs, standard emojis, and symbols (like lightning ⚡)
+      try {
+        var emojiRegex = /^([\u{1F1E6}-\u{1F1FF}]{2}|\p{Extended_Pictographic}|[\u2600-\u27BF])/u;
+        var emMatch = hashRemark.match(emojiRegex);
+        if (emMatch) {
+          leadingEmoji = emMatch[0];
+          cleanName = hashRemark.substring(leadingEmoji.length).trim();
+        }
+      } catch (err) {}
+
+      // If no leading emoji, check country code keywords
+      if (!leadingEmoji) {
+        var lower = hashRemark.toLowerCase();
+        if (lower.indexOf("🇳🇱") !== -1 || /\b(nl|amsterdam|netherlands|holland)\b/i.test(lower)) leadingEmoji = "🇳🇱";
+        else if (lower.indexOf("🇩🇪") !== -1 || /\b(de|frankfurt|germany|deutschland)\b/i.test(lower)) leadingEmoji = "🇩🇪";
+        else if (lower.indexOf("🇺🇸") !== -1 || /\b(us|usa|america|new york)\b/i.test(lower)) leadingEmoji = "🇺🇸";
+        else if (lower.indexOf("🇬🇧") !== -1 || /\b(gb|uk|london|britain)\b/i.test(lower)) leadingEmoji = "🇬🇧";
+        else if (lower.indexOf("🇫🇮") !== -1 || /\b(fi|helsinki|finland)\b/i.test(lower)) leadingEmoji = "🇫🇮";
+        else if (lower.indexOf("🇫🇷") !== -1 || /\b(fr|paris|france)\b/i.test(lower)) leadingEmoji = "🇫🇷";
+        else if (lower.indexOf("🇹🇷") !== -1 || /\b(tr|turkey|istanbul)\b/i.test(lower)) leadingEmoji = "🇹🇷";
+        else if (lower.indexOf("🇸🇬") !== -1 || /\b(sg|singapore)\b/i.test(lower)) leadingEmoji = "🇸🇬";
+        else if (lower.indexOf("🇯🇵") !== -1 || /\b(jp|japan|tokyo)\b/i.test(lower)) leadingEmoji = "🇯🇵";
+      }
+
+      cleanName = cleanName.replace(/^[-–—:|•\s]+/, "").trim();
+      if (!cleanName) cleanName = protocol.toUpperCase() + " Server";
+
+      return {
+        url: url,
+        protocol: protocol,
+        emoji: leadingEmoji,
+        name: cleanName
+      };
+    }
+
+    function renderNodeList(links) {
+      var container = document.getElementById("nodesContainer");
+      var badge = document.getElementById("nodesCountBadge");
+      var searchInput = document.getElementById("nodeSearchInput");
+      var query = searchInput ? (searchInput.value || "").trim().toLowerCase() : "";
+      var dict = I18N[currentLang];
+
+      if (!container) return;
+
+      var parsed = [];
+      for (var i = 0; i < links.length; i++) {
+        var node = parseNodeUrl(links[i]);
+        if (query) {
+          var haystack = (node.name + " " + node.protocol + " " + node.url).toLowerCase();
+          if (haystack.indexOf(query) === -1) continue;
+        }
+        parsed.push(node);
+      }
+
+      if (badge) {
+        badge.innerText = parsed.length + " " + dict.nodesCountUnit;
+      }
+
+      if (parsed.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 24px 0; color: var(--sys-text-ter); font-size: 14px;">Серверы не найдены</div>';
+        return;
+      }
+
+      var html = "";
+      for (var j = 0; j < parsed.length; j++) {
+        var n = parsed[j];
+        var protoUpper = n.protocol.toUpperCase();
+        var safeUrl = encodeURIComponent(n.url);
+        var iconHtml = n.emoji ? n.emoji : DEFAULT_SERVER_SVG;
+
+        html += '<div class="server-item">' +
+                  '<div class="server-left">' +
+                    '<div class="server-flag">' + iconHtml + '</div>' +
+                    '<div class="server-info">' +
+                      '<div class="server-name">' + n.name + '</div>' +
+                      '<div class="server-meta">' +
+                        '<span class="server-tag">' + protoUpper + '</span>' +
+                      '</div>' +
+                    '</div>' +
+                  '</div>' +
+                  '<div class="server-actions">' +
+                    '<button class="server-btn" onclick="copyServerKey(\'' + safeUrl + '\')">' +
+                      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' +
+                      '<span>' + dict.copyKeyBtn + '</span>' +
+                    '</button>' +
+                    '<button class="server-btn" onclick="openServerModal(\'' + safeUrl + '\', \'' + encodeURIComponent(n.name) + '\')">' +
+                      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>' +
+                    '</button>' +
+                  '</div>' +
+                '</div>';
+      }
+
+      container.innerHTML = html;
+    }
+
+    function handleNodeSearch() {
+      renderNodeList(serverLinks);
+    }
+
+    /* Copy Actions */
+    function copySubscriptionUrl() {
+      if (!activeSubUrl) return;
+      copyToClipboard(activeSubUrl, I18N[currentLang].copiedToast);
+    }
+
+    function copyServerKey(encodedUrl) {
+      var url = decodeURIComponent(encodedUrl);
+      copyToClipboard(url, I18N[currentLang].copiedKeyToast);
+    }
+
+    function copyModalLink() {
+      if (!activeModalUrl) return;
+      copyToClipboard(activeModalUrl, I18N[currentLang].copiedKeyToast);
+    }
+
+    function copyToClipboard(text, message) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() {
+          showToast(message);
+        }).catch(function() {
+          fallbackCopyText(text, message);
+        });
+      } else {
+        fallbackCopyText(text, message);
+      }
+    }
+
+    function fallbackCopyText(text, message) {
+      var textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.position = "fixed";
+      textArea.style.opacity = "0";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      try {
+        document.execCommand("copy");
+        showToast(message);
+      } catch (err) {}
+      document.body.removeChild(textArea);
+    }
+
+    function showToast(msg) {
+      var pill = document.getElementById("toastPill");
+      var text = document.getElementById("toastText");
+      if (!pill || !text) return;
+      text.innerText = msg;
+      pill.classList.add("show");
+      setTimeout(function() {
+        pill.classList.remove("show");
+      }, 2400);
+    }
+
+    /* Modal */
+    function openServerModal(encodedUrl, encodedName) {
+      var url = decodeURIComponent(encodedUrl);
+      var name = decodeURIComponent(encodedName);
+      activeModalUrl = url;
+
+      var modal = document.getElementById("qrModal");
+      var title = document.getElementById("modalServerTitle");
+      var holder = document.getElementById("modalQrHolder");
+
+      if (title) title.innerText = name;
+      if (holder) {
+        holder.innerHTML = "";
+        try {
+          new QRCode(holder, {
+            text: url,
+            width: 180,
+            height: 180,
+            colorDark: "#000000",
+            colorLight: "#ffffff",
+            correctLevel: QRCode.CorrectLevel.M
+          });
+        } catch(e) {}
+      }
+
+      if (modal) modal.classList.add("active");
+    }
+
+    function closeQrModal(event) {
+      if (event.target.id === "qrModal") {
+        closeQrModalDirect();
+      }
+    }
+
+    function closeQrModalDirect() {
+      var modal = document.getElementById("qrModal");
+      if (modal) modal.classList.remove("active");
+      activeModalUrl = "";
+    }
+
+    window.addEventListener("DOMContentLoaded", initData);
+  </script>
+</body>
+</html>
