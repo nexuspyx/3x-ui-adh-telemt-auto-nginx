@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# Build Timestamp: 19:53.28.10.2026
+# Build Timestamp: 12:35.31.10.2026
 """
 ==============================================================================
 «КОНФИГУРИРОВАНИЕ СЕРВЕРА» (SERVER CONFIGURATION MANAGER)
@@ -1056,6 +1056,11 @@ HTML_PAGE = r"""<!DOCTYPE html>
       50% { opacity: 0.7; transform: scale(1.15); }
     }
 
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
     .status-name {
       font-size: 15px;
       font-weight: 600;
@@ -1343,16 +1348,16 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .modal-overlay {
       position: fixed;
       top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0, 0, 0, 0.6);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 999;
       opacity: 0;
       pointer-events: none;
-      transition: opacity 0.25s ease;
+      transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1);
       padding: 20px;
     }
 
@@ -1362,19 +1367,37 @@ HTML_PAGE = r"""<!DOCTYPE html>
     }
 
     .modal-card {
-      background: rgba(36, 36, 38, 0.95);
+      background: rgba(32, 32, 36, 0.96);
+      backdrop-filter: blur(36px) saturate(190%);
+      -webkit-backdrop-filter: blur(36px) saturate(190%);
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: var(--radius-large);
       max-width: 460px;
       width: 100%;
       padding: 24px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
-      transform: scale(0.95);
-      transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
+      transform: scale(0.96) translateY(8px);
+      transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.28s ease;
     }
 
     .modal-overlay.open .modal-card {
-      transform: scale(1);
+      transform: scale(1) translateY(0);
+    }
+
+    @media (max-width: 600px) {
+      .modal-overlay {
+        align-items: flex-end;
+        padding: 0;
+      }
+      .modal-card {
+        border-radius: 24px 24px 0 0;
+        max-width: 100%;
+        padding: 24px 20px max(24px, env(safe-area-inset-bottom));
+        transform: translateY(100%);
+      }
+      .modal-overlay.open .modal-card {
+        transform: translateY(0);
+      }
     }
 
     .modal-title {
@@ -1397,18 +1420,30 @@ HTML_PAGE = r"""<!DOCTYPE html>
     }
 
     .btn-cancel {
-      padding: 10px 18px;
+      min-height: 44px;
+      padding: 10px 20px;
       background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: var(--radius-medium);
       color: var(--text-main);
       font-size: 14px;
       font-weight: 600;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+    .btn-cancel:hover {
+      background: rgba(255, 255, 255, 0.14);
+    }
+    .btn-cancel:active {
+      transform: scale(0.98);
     }
 
     .btn-confirm {
-      padding: 10px 18px;
+      min-height: 44px;
+      padding: 10px 20px;
       background: var(--accent-blue);
       border: none;
       border-radius: var(--radius-medium);
@@ -1416,10 +1451,64 @@ HTML_PAGE = r"""<!DOCTYPE html>
       font-size: 14px;
       font-weight: 600;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+    .btn-confirm:hover {
+      background: var(--accent-blue-hover);
+    }
+    .btn-confirm:active {
+      transform: scale(0.98);
+    }
+    .btn-confirm:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
     }
 
     .btn-confirm.danger {
       background: var(--accent-red);
+    }
+
+    .btn-icon-close {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      min-width: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-icon-close:hover {
+      background: rgba(255, 255, 255, 0.16);
+      color: #FFF;
+    }
+    .btn-icon-close:active {
+      transform: scale(0.94);
+    }
+
+    .btn-eye {
+      background: none;
+      border: none;
+      color: #8E8E93;
+      cursor: pointer;
+      padding: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      transition: all 0.2s;
+    }
+    .btn-eye:hover {
+      color: #FFF;
+      background: rgba(255, 255, 255, 0.08);
     }
 
     /* Apple Toast */
@@ -1595,27 +1684,53 @@ HTML_PAGE = r"""<!DOCTYPE html>
   </div>
 
   <!-- SETTINGS MODAL -->
-  <div id="settings-modal" class="modal-overlay">
+  <div id="settings-modal" class="modal-overlay" onclick="handleModalOverlayClick(event, 'settings-modal')">
     <div class="modal-card">
-      <div class="modal-title">⚙️ Настройки доступа</div>
-      <div class="modal-body" style="text-align:left; font-size:14px; color:#8E8E93;">
-        Смена логина и пароля администратора модуля управления.
-        <div style="margin-top:16px;">
-          <div class="input-row">
-            <label class="input-label">Имя пользователя (Логин)</label>
-            <input id="settings-user" class="apple-input" style="width:100%" placeholder="Логин" required />
-          </div>
-          <div class="input-row" style="margin-top:12px;">
-            <label class="input-label">Новый пароль</label>
-            <input id="settings-pass" type="password" class="apple-input" style="width:100%" placeholder="Минимум 8 символов" required />
-          </div>
-          <div class="input-row" style="margin-top:12px;">
-            <label class="input-label">Повторите новый пароль</label>
-            <input id="settings-pass2" type="password" class="apple-input" style="width:100%" placeholder="Повтор пароля" required />
-          </div>
-          <div id="settings-err" style="color:#FF453A; font-size:13px; margin-top:12px; display:none;"></div>
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:12px;">
+        <div>
+          <div class="modal-title" style="margin-bottom:4px;">⚙️ Учетная запись</div>
+          <div style="font-size:13px; color:var(--text-secondary);">Управление логином и паролем доступа к серверу</div>
         </div>
+        <button type="button" class="btn-icon-close" onclick="closeSettingsModal()" aria-label="Закрыть">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
       </div>
+
+      <div class="modal-body" style="text-align:left; margin-bottom:18px;">
+        <!-- Username Section -->
+        <div class="input-row">
+          <label class="input-label" for="settings-user">Имя пользователя (Логин)</label>
+          <input id="settings-user" class="apple-input" style="width:100%" placeholder="Введите логин" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required />
+          <div style="font-size:12px; color:#8E8E93; margin-top:4px;">Используется для авторизации в модуле конфигурирования.</div>
+        </div>
+
+        <!-- Password Section (Optional) -->
+        <div style="margin-top:16px; padding-top:14px; border-top:1px solid rgba(255,255,255,0.08);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span style="font-size:13px; font-weight:600; color:#FFF;">Смена пароля</span>
+            <span style="font-size:11px; color:#8E8E93; text-transform:uppercase; letter-spacing:0.4px;">Необязательно</span>
+          </div>
+          <div style="font-size:12px; color:#8E8E93; margin-bottom:12px;">Оставьте эти поля пустыми, если хотите сохранить текущий пароль.</div>
+
+          <div class="input-row" style="position:relative;">
+            <label class="input-label" for="settings-pass">Новый пароль</label>
+            <div style="position:relative; display:flex; align-items:center;">
+              <input id="settings-pass" type="password" class="apple-input" style="width:100%; padding-right:42px;" placeholder="Минимум 8 символов" autocomplete="new-password" />
+              <button type="button" class="btn-eye" onclick="togglePassVisibility('settings-pass', this)" aria-label="Показать пароль" style="position:absolute; right:8px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="input-row" style="margin-top:12px;">
+            <label class="input-label" for="settings-pass2">Повторите новый пароль</label>
+            <input id="settings-pass2" type="password" class="apple-input" style="width:100%" placeholder="Повторите новый пароль" autocomplete="new-password" />
+          </div>
+        </div>
+
+        <div id="settings-err" style="color:var(--accent-red); font-size:13px; margin-top:14px; display:none; padding:8px 12px; background:rgba(255,59,48,0.12); border-radius:8px;"></div>
+      </div>
+
       <div class="modal-buttons">
         <button class="btn-cancel" onclick="closeSettingsModal()">Отмена</button>
         <button id="settings-save-btn" class="btn-confirm" onclick="saveSettings()">Сохранить</button>
@@ -1665,14 +1780,58 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       const err = document.getElementById('settings-err');
       err.style.display = 'none';
       document.getElementById('settings-user').value = (serverConfig && serverConfig.auth_user) ? serverConfig.auth_user : '';
-      document.getElementById('settings-pass').value = '';
+      const passInp = document.getElementById('settings-pass');
+      passInp.value = '';
+      passInp.type = 'password';
       document.getElementById('settings-pass2').value = '';
+      document.querySelectorAll('#settings-modal .btn-eye').forEach(b => b.style.color = '#8E8E93');
       document.getElementById('settings-modal').classList.add('open');
     }
 
     function closeSettingsModal() {
       document.getElementById('settings-modal').classList.remove('open');
     }
+
+    function togglePassVisibility(inputId, btn) {
+      const inp = document.getElementById(inputId);
+      if (!inp) return;
+      if (inp.type === 'password') {
+        inp.type = 'text';
+        btn.style.color = '#007AFF';
+      } else {
+        inp.type = 'password';
+        btn.style.color = '#8E8E93';
+      }
+    }
+
+    function handleModalOverlayClick(e, modalId) {
+      if (e.target.id === modalId) {
+        if (modalId === 'settings-modal') closeSettingsModal();
+        if (modalId === 'confirm-modal') closeModal();
+        if (modalId === 'qr-modal') closeQRModal();
+      }
+    }
+
+    // Keyboard support: Escape closes modals, Enter in inputs saves
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeSettingsModal();
+        closeModal();
+        closeQRModal();
+      }
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const modal = document.getElementById('settings-modal');
+      if (modal) {
+        modal.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+            e.preventDefault();
+            saveSettings();
+          }
+        });
+      }
+    });
 
     function saveSettings() {
       const user = document.getElementById('settings-user').value.trim();
@@ -1682,29 +1841,36 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       err.style.display = 'none';
 
       if (!user) {
-        err.innerText = 'Логин не может быть пустым';
-        err.style.display = 'block';
-        return;
-      }
-      if (!p1) {
-        err.innerText = 'Введите новый пароль';
-        err.style.display = 'block';
-        return;
-      }
-      if (p1.length < 8) {
-        err.innerText = 'Пароль должен быть не менее 8 символов';
-        err.style.display = 'block';
-        return;
-      }
-      if (p1 !== p2) {
-        err.innerText = 'Пароли не совпадают';
+        err.innerText = 'Имя пользователя не может быть пустым';
         err.style.display = 'block';
         return;
       }
 
+      // Password change is optional: validate only if entered
+      if (p1 || p2) {
+        if (!p1) {
+          err.innerText = 'Введите новый пароль';
+          err.style.display = 'block';
+          return;
+        }
+        if (p1.length < 8) {
+          err.innerText = 'Пароль должен содержать не менее 8 символов';
+          err.style.display = 'block';
+          return;
+        }
+        if (p1 !== p2) {
+          err.innerText = 'Пароли не совпадают';
+          err.style.display = 'block';
+          return;
+        }
+      }
+
       const btn = document.getElementById('settings-save-btn');
       btn.disabled = true;
-      btn.innerText = 'Сохранение...';
+      btn.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="animation:spin 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>
+        Сохранение...
+      `;
 
       fetch('api/settings/auth', {
         method: 'POST',
@@ -2121,7 +2287,7 @@ LOGIN_PAGE = """<!DOCTYPE html>
     <form id="login-form">
       <div class="input-wrap">
         <label>Имя пользователя</label>
-        <input id="user" type="text" autocomplete="username" required autofocus />
+        <input id="user" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required autofocus />
       </div>
       <div class="input-wrap">
         <label>Пароль</label>
@@ -2388,8 +2554,17 @@ class ServerManagerHandler(BaseHTTPRequestHandler):
                     "url": f"https://{domain}:{services['telemt_panel']['current_port']}"
                 })
 
+            safe_cfg = {
+                "domain": domain,
+                "mgmt_port": cfg.get("mgmt_port"),
+                "mgmt_secret_path": cfg.get("mgmt_secret_path"),
+                "auth_user": cfg.get("auth_user", "admin"),
+                "auto_lock_minutes": cfg.get("auto_lock_minutes", 30),
+                "server_ip": server_ip
+            }
+
             self.send_json({
-                "config": cfg,
+                "config": safe_cfg,
                 "services": services,
                 "status": {
                     "nginx": get_service_status("nginx"),
@@ -2510,17 +2685,25 @@ class ServerManagerHandler(BaseHTTPRequestHandler):
             new_user = req_data.get("user", "").strip()
             new_pass = req_data.get("pass", "")
 
-            if not new_user or not new_pass or len(new_pass) < 8:
-                self.send_json({"success": False, "error": "Некорректный логин или пароль (минимум 8 символов)."}, 400)
+            if not new_user:
+                self.send_json({"success": False, "error": "Имя пользователя не может быть пустым."}, 400)
                 return
 
-            # Compute PBKDF2 hash
-            salt = b"server_manager_salt_3x"
-            new_hash = hashlib.pbkdf2_hmac("sha256", new_pass.encode("utf-8"), salt, 100000).hex()
+            if new_pass and len(new_pass) < 8:
+                self.send_json({"success": False, "error": "Пароль должен содержать минимум 8 символов."}, 400)
+                return
 
             cfg["auth_user"] = new_user
-            cfg["auth_pass_hash"] = new_hash
-            cfg["auth_pass_plain"] = new_pass
+            msg = "Имя пользователя успешно обновлено!"
+
+            if new_pass:
+                # Compute PBKDF2 hash
+                salt = b"server_manager_salt_3x"
+                new_hash = hashlib.pbkdf2_hmac("sha256", new_pass.encode("utf-8"), salt, 100000).hex()
+                cfg["auth_pass_hash"] = new_hash
+                cfg["auth_pass_plain"] = new_pass
+                msg = "Логин и пароль успешно обновлены!"
+
             save_master_config(cfg)
 
             # Update credentials file if present
@@ -2529,13 +2712,14 @@ class ServerManagerHandler(BaseHTTPRequestHandler):
                     with open(CREDENTIALS_FILE, "r") as cf:
                         cred_text = cf.read()
                     cred_text = re.sub(r'(\[0\] МОДУЛЬ[\s\S]*?Логин:\s*)[^\n]+', f'\\g<1>{new_user}', cred_text, count=1)
-                    cred_text = re.sub(r'(\[0\] МОДУЛЬ[\s\S]*?Пароль:\s*)[^\n]+', f'\\g<1>{new_pass}', cred_text, count=1)
+                    if new_pass:
+                        cred_text = re.sub(r'(\[0\] МОДУЛЬ[\s\S]*?Пароль:\s*)[^\n]+', f'\\g<1>{new_pass}', cred_text, count=1)
                     with open(CREDENTIALS_FILE, "w") as cf:
                         cf.write(cred_text)
                 except Exception as e:
                     print(f"[WARN] Failed to update {CREDENTIALS_FILE}: {e}")
 
-            self.send_json({"success": True, "message": "Логин и пароль успешно обновлены!"})
+            self.send_json({"success": True, "message": msg})
             return
 
         self.send_json({"error": "Not Found"}, 404)
@@ -2605,7 +2789,42 @@ if __name__ == "__main__":
                     print("Auto-Lock: active")
             else:
                 print("Auto-Lock: inactive (permanent open or locked)")
+        elif cmd in ("set-user", "set-auth", "passwd"):
+            if len(sys.argv) < 3:
+                print("Использование: server-manager.py set-user <новый_логин> [новый_пароль]")
+                sys.exit(1)
+            new_u = sys.argv[2].strip()
+            new_p = sys.argv[3] if len(sys.argv) > 3 else None
+            if not new_u:
+                print("[!] Ошибка: логин не может быть пустым.")
+                sys.exit(1)
+            cfg = load_master_config()
+            cfg["auth_user"] = new_u
+            if new_p:
+                if len(new_p) < 8:
+                    print("[!] Ошибка: пароль должен содержать не менее 8 символов.")
+                    sys.exit(1)
+                salt = b"server_manager_salt_3x"
+                new_h = hashlib.pbkdf2_hmac("sha256", new_p.encode("utf-8"), salt, 100000).hex()
+                cfg["auth_pass_hash"] = new_h
+                cfg["auth_pass_plain"] = new_p
+            save_master_config(cfg)
+            if os.path.exists(CREDENTIALS_FILE):
+                try:
+                    with open(CREDENTIALS_FILE, "r") as cf:
+                        ct = cf.read()
+                    ct = re.sub(r'(\[0\] МОДУЛЬ[\s\S]*?Логин:\s*)[^\n]+', f'\\g<1>{new_u}', ct, count=1)
+                    if new_p:
+                        ct = re.sub(r'(\[0\] МОДУЛЬ[\s\S]*?Пароль:\s*)[^\n]+', f'\\g<1>{new_p}', ct, count=1)
+                    with open(CREDENTIALS_FILE, "w") as cf:
+                        cf.write(ct)
+                except Exception as e:
+                    print(f"[!] Предупреждение при обновлении {CREDENTIALS_FILE}: {e}")
+            if new_p:
+                print(f"[✓] Логин изменен на '{new_u}', пароль обновлен.")
+            else:
+                print(f"[✓] Логин успешно изменен на '{new_u}' (пароль сохранен прежним).")
         else:
-            print("Usage: server-manager.py [run|open <minutes>|close|status]")
+            print("Usage: server-manager.py [run|open <minutes>|close|status|set-user <username> [password]]")
     else:
         run_server()

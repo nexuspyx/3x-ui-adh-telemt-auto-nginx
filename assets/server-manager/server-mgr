@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build Timestamp: 19:40.28.10.2026
+# Build Timestamp: 12:35.31.10.2026
 # ==============================================================================
 # «КОНФИГУРИРОВАНИЕ СЕРВЕРА» (SERVER-MGR CLI TOOL)
 # ==============================================================================
@@ -110,36 +110,39 @@ cmd_status() {
     echo
 }
 
-cmd_reset_pass() {
+cmd_change_auth() {
+    local cur_user
+    cur_user=$(get_conf_val "auth_user")
     echo
-    echo -e "${C_BOLD}Смена пароля администратора модуля «Конфигурирование сервера»:${C_RESET}"
-    read -rsp "-> Введите новый пароль: " NEW_PASS
-    echo
-    read -rsp "-> Повторите новый пароль: " NEW_PASS2
-    echo
+    echo -e "${C_BOLD}Управление учетной записью администратора «Конфигурирование сервера»:${C_RESET}"
+    read -rp "-> Новое имя пользователя (логин) [Enter для сохранения '${cur_user}']: " NEW_USER
+    NEW_USER="${NEW_USER:-$cur_user}"
+    NEW_USER=$(echo "$NEW_USER" | tr -d '[:space:]')
+    [[ -z "$NEW_USER" ]] && NEW_USER="$cur_user"
 
-    if [[ "$NEW_PASS" != "$NEW_PASS2" ]]; then
-        msg_err "Пароли не совпадают!"
-        exit 1
+    read -rsp "-> Новый пароль [Enter чтобы не изменять]: " NEW_PASS
+    echo
+    local pass_arg=""
+    if [[ -n "$NEW_PASS" ]]; then
+        read -rsp "-> Повторите новый пароль: " NEW_PASS2
+        echo
+        if [[ "$NEW_PASS" != "$NEW_PASS2" ]]; then
+            msg_err "Пароли не совпадают!"
+            exit 1
+        fi
+        if (( ${#NEW_PASS} < 8 )); then
+            msg_err "Пароль должен содержать не менее 8 символов!"
+            exit 1
+        fi
+        pass_arg="$NEW_PASS"
     fi
 
-    if [[ -z "$NEW_PASS" ]]; then
-        msg_err "Пароль не может быть пустым!"
-        exit 1
+    if [[ -n "$pass_arg" ]]; then
+        python3 "$PY_SCRIPT" set-user "$NEW_USER" "$pass_arg"
+    else
+        python3 "$PY_SCRIPT" set-user "$NEW_USER"
     fi
 
-    python3 -c "
-import json, hashlib, secrets
-salt = b'server_manager_salt_3x'
-h = hashlib.pbkdf2_hmac('sha256', '$NEW_PASS'.encode('utf-8'), salt, 100000).hex()
-with open('$CONFIG_FILE', 'r') as f:
-    d = json.load(f)
-d['auth_pass_hash'] = h
-d['auth_pass_plain'] = '$NEW_PASS'
-with open('$CONFIG_FILE', 'w') as f:
-    json.dump(d, f, indent=2, ensure_ascii=False)
-"
-    msg_ok "Пароль успешно обновлен! Служба перезапускается..."
     systemctl restart server-manager 2>/dev/null || true
 }
 
@@ -159,7 +162,7 @@ EOF
     echo "2 - Заблокировать порт модуля в UFW (закрыть всё кроме 22 и 443)"
     echo "3 - Показать ссылки для подключения (/root/server_credentials.txt)"
     echo "4 - Перезапустить службу модуля управления"
-    echo "5 - Сменить пароль администратора модуля"
+    echo "5 - Сменить логин или пароль администратора модуля"
     echo "0 - Выход"
     echo
     read -rp "Ваш выбор [0-5]: " CHOICE
@@ -185,7 +188,7 @@ EOF
             msg_ok "Служба server-manager перезапущена."
             ;;
         5)
-            cmd_reset_pass
+            cmd_change_auth
             ;;
         0)
             exit 0
@@ -210,14 +213,23 @@ case "${1:-}" in
         systemctl restart server-manager
         msg_ok "Служба перезапущена."
         ;;
-    reset-pass)
-        cmd_reset_pass
+    set-user|set-auth|passwd|reset-pass)
+        if [[ -n "${2:-}" ]]; then
+            if [[ -n "${3:-}" ]]; then
+                python3 "$PY_SCRIPT" set-user "$2" "$3"
+            else
+                python3 "$PY_SCRIPT" set-user "$2"
+            fi
+            systemctl restart server-manager 2>/dev/null || true
+        else
+            cmd_change_auth
+        fi
         ;;
     "")
         show_menu
         ;;
     *)
-        echo "Использование: server-mgr [open <минуты>|close|status|restart|reset-pass]"
+        echo "Использование: server-mgr [open <минуты>|close|status|restart|set-user <логин> [пароль]]"
         exit 1
         ;;
 esac
