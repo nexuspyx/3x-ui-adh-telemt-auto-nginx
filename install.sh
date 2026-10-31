@@ -342,14 +342,21 @@ if [[ "$PATH_CHOICE" == "2" ]]; then
     echo -e "${C_BOLD}Ручная настройка (нажимайте Enter на каждом шаге для значения по умолчанию):${C_RESET}"
     msg_inf "Все клиентские приложения (Happ, Sing-box, V2Box) получают эти параметры автоматически из подписки."
     read_prompt "${C_CYAN}->${C_RESET} Путь к веб-панели управления 3X-UI [/xui/]: " USER_PANEL_PATH
+    while true; do
+        read_prompt "${C_CYAN}->${C_RESET} Внутренний порт панели управления 3X-UI [по умолчанию: 2053]: " USER_PANEL_PORT
+        USER_PANEL_PORT="${USER_PANEL_PORT:-2053}"
+        if [[ "$USER_PANEL_PORT" =~ ^[0-9]+$ ]] && (( USER_PANEL_PORT >= 1024 && USER_PANEL_PORT <= 65535 )); then
+            PANEL_PORT="$USER_PANEL_PORT"
+            break
+        fi
+        msg_warn "Ошибка: порт должен быть числом от 1024 до 65535."
+    done
     read_prompt "${C_CYAN}->${C_RESET} Путь для обычной Base64 подписки [/sub/]: " USER_SUB_PATH
     read_prompt "${C_CYAN}->${C_RESET} Путь для JSON подписки (Sing-box / Happ) [/sub-json/]: " USER_SUB_JSON_PATH
     read_prompt "${C_CYAN}->${C_RESET} Путь для Telegram Web Proxy (Telemt) [${TG_PATH:-/tg}]: " USER_TG_PATH
     read_prompt "${C_CYAN}->${C_RESET} Путь для AdGuard Home DoH DNS [${ADH_DOH_PATH:-/dns-query}]: " USER_ADH_DOH_PATH
     read_prompt "${C_CYAN}->${C_RESET} Путь для VLESS WebSocket [/vless-ws]: " USER_WS_PATH
     read_prompt "${C_CYAN}->${C_RESET} Путь для VLESS XHTTP [/vless-xhttp]: " USER_XHTTP_PATH
-    read_prompt "${C_CYAN}->${C_RESET} ServiceName (внутреннее имя канала) для VLESS gRPC [vless-grpc]: " USER_GRPC_PATH
-    read_prompt "${C_CYAN}->${C_RESET} ServiceName (внутреннее имя канала) для Trojan gRPC [trojan-grpc]: " USER_TROJAN_PATH
     
     PANEL_PATH="${USER_PANEL_PATH:-/xui/}"
     SUB_PATH="${USER_SUB_PATH:-/sub/}"
@@ -358,9 +365,10 @@ if [[ "$PATH_CHOICE" == "2" ]]; then
     ADH_DOH_PATH="${USER_ADH_DOH_PATH:-${ADH_DOH_PATH:-/dns-query}}"
     WS_PATH="${USER_WS_PATH:-/vless-ws}"
     XHTTP_PATH="${USER_XHTTP_PATH:-/vless-xhttp}"
-    GRPC_PATH="${USER_GRPC_PATH:-vless-grpc}"
-    TROJAN_PATH="${USER_TROJAN_PATH:-/trojan-grpc}"
-    msg_ok "Пользовательские пути сохранены."
+    # Для максимальной скрытности (Stealth) gRPC ServiceNames генерируются случайными
+    GRPC_PATH="vless-$(gen_random_string 8)"
+    TROJAN_PATH="trojan-$(gen_random_string 8)"
+    msg_ok "Пользовательские пути сохранены. gRPC ServiceNames сгенерированы со случайными стойкими идентификаторами для защиты от зондирования ТСПУ."
 else
     # Генерация случайных путей
     PANEL_PATH="${PANEL_PATH:-/$(gen_random_string 10)/}"
@@ -370,8 +378,8 @@ else
     ADH_DOH_PATH="${ADH_DOH_PATH:-${USER_ADH_DOH_PATH:-/dns-query}}"
     WS_PATH="${WS_PATH:-/$(gen_random_string 10)}"
     XHTTP_PATH="${XHTTP_PATH:-/$(gen_random_string 10)}"
-    GRPC_PATH="${GRPC_PATH:-vless-grpc}"
-    TROJAN_PATH="${TROJAN_PATH:-/$(gen_random_string 10)}"
+    GRPC_PATH="vless-$(gen_random_string 8)"
+    TROJAN_PATH="trojan-$(gen_random_string 8)"
     msg_ok "Сгенерированы случайные стойкие пути для защиты от ТСПУ."
 fi
 
@@ -382,9 +390,9 @@ msg_inf "Веб-интерфейс для изменения путей, пор�
 msg_inf "Работает на скрытом порту и защищен файрволом UFW."
 
 if [[ -z "$MGMT_CHOICE" ]]; then
-    echo -e "   ${C_BOLD}[1]${C_RESET} Случайный защищенный порт (${C_GREEN}Рекомендуется${C_RESET} — порт скрыт от сканеров)"
-    echo -e "   ${C_BOLD}[2]${C_RESET} Задать свой порт вручную"
-    read_prompt "${C_GREEN}?${C_RESET} Выберите вариант порта [1/2] (по умолчанию: 1): " MGMT_CHOICE
+    echo -e "   ${C_BOLD}[1]${C_RESET} Автоматический защищенный режим (${C_GREEN}Рекомендуется${C_RESET} — случайный порт и путь)"
+    echo -e "   ${C_BOLD}[2]${C_RESET} Задать порт и секретный веб-путь вручную"
+    read_prompt "${C_GREEN}?${C_RESET} Выберите вариант [1/2] (по умолчанию: 1): " MGMT_CHOICE
     MGMT_CHOICE="${MGMT_CHOICE:-1}"
 fi
 
@@ -398,13 +406,17 @@ if [[ "$MGMT_CHOICE" == "2" ]]; then
         fi
         msg_warn "Ошибка: порт должен быть числом от 1024 до 65535."
     done
-    msg_ok "Выбран порт модуля управления: ${MGMT_PORT}"
+    read_prompt "${C_CYAN}->${C_RESET} Введите секретный веб-путь модуля управления [по умолчанию: cfg-admin]: " USER_MGMT_PATH
+    MGMT_SECRET_PATH="${USER_MGMT_PATH:-cfg-admin}"
+    MGMT_SECRET_PATH=$(echo "$MGMT_SECRET_PATH" | tr -d '/[:space:]')
+    [[ -z "$MGMT_SECRET_PATH" ]] && MGMT_SECRET_PATH="cfg-admin"
+    msg_ok "Выбран порт: ${MGMT_PORT}, секретный путь: /${MGMT_SECRET_PATH}/"
 else
     MGMT_PORT=$(get_free_port)
-    msg_ok "Сгенерирован случайный скрытый порт: ${MGMT_PORT}"
+    MGMT_SECRET_PATH="cfg-$(gen_random_string 8)"
+    msg_ok "Сгенерирован случайный скрытый порт (${MGMT_PORT}) и защищенный путь (/${MGMT_SECRET_PATH}/)."
 fi
 
-MGMT_SECRET_PATH="cfg-$(gen_random_string 8)"
 MGMT_USER="admin_$(gen_random_string 4)"
 MGMT_PASS="$(gen_random_string 16)"
 
@@ -416,8 +428,9 @@ echo -e "${C_CYAN}╚═══════════════════�
 printf "  • Доменное имя сервера:        %b%s%b\n" "$C_BOLD" "$DOMAIN" "$C_RESET"
 printf "  • Внешний IP сервера:          %b%s%b\n" "$C_BOLD" "$SERVER_IP" "$C_RESET"
 printf "  • Выпуск Cloudflare SSL:       %s\n" "Cloudflare API Token"
+printf "  • Панель 3X-UI:                %s (внутренний порт %s)\n" "$PANEL_PATH" "${PANEL_PORT:-[будет назначен]}"
 printf "  • Режим путей (Locations):     %s\n" "$([[ "$PATH_CHOICE" == "2" ]] && echo "Пользовательские пути" || echo "Случайные скрытые пути")"
-printf "  • Порт Stealth Dashboard:      %s\n" "$([[ "$MGMT_CHOICE" == "2" ]] && echo "$MGMT_PORT (задан вручную)" || echo "$MGMT_PORT (случайный защищенный)")"
+printf "  • Порт Stealth Dashboard:      %s (путь: /%s/)\n" "$MGMT_PORT" "$MGMT_SECRET_PATH"
 echo -e "${C_CYAN}────────────────────────────────────────────────────────────────────────────────────${C_RESET}"
 msg_ok "Все параметры приняты. Переходим к автоматической установке компонентов..."
 echo
@@ -432,6 +445,8 @@ echo
 [[ "$TG_PATH" != /* ]] && TG_PATH="/$TG_PATH"
 [[ "$ADH_DOH_PATH" != /* ]] && ADH_DOH_PATH="/$ADH_DOH_PATH"
 
+PANEL_PATH_NO_SLASH="${PANEL_PATH#/}"
+PANEL_PATH_NO_SLASH="${PANEL_PATH_NO_SLASH%/}"
 TG_PATH_NO_SLASH="${TG_PATH#/}"
 TG_PATH_NO_SLASH="${TG_PATH_NO_SLASH%/}"
 ADH_DOH_PATH_NO_SLASH="${ADH_DOH_PATH#/}"
@@ -441,13 +456,14 @@ XHTTP_PATH_NO_SLASH="${XHTTP_PATH#/}"
 TROJAN_PATH_NO_SLASH="${TROJAN_PATH#/}"
 GRPC_PATH_NO_SLASH="${GRPC_PATH#/}"
 
+PANEL_PATH_NO_SLASH_LEADING="/${PANEL_PATH_NO_SLASH}"
 WS_PATH_LEADING="/${WS_PATH_NO_SLASH}"
 XHTTP_PATH_LEADING="/${XHTTP_PATH_NO_SLASH}"
 TROJAN_PATH_LEADING="/${TROJAN_PATH_NO_SLASH}"
 GRPC_PATH_LEADING="/${GRPC_PATH_NO_SLASH}"
 
 # Внутренние порты
-PANEL_PORT=$(get_free_port)
+PANEL_PORT="${PANEL_PORT:-$(get_free_port)}"
 SUB_PORT=$(get_free_port)
 WS_PORT=$(get_free_port)
 GRPC_PORT="43935"
@@ -457,8 +473,8 @@ TG_DECOY_PORT="18082"
 TG_PANEL_INTERNAL_PORT="8080"
 TG_PANEL_PORT="65001"
 ADH_DNS_PORT="57998"
-ADH_DOH_PORT="${ADH_WEB_PORT:-3000}"
 ADH_WEB_PORT="3000"
+ADH_DOH_PORT="${ADH_WEB_PORT}"
 
 # Генерация учетных записей
 PANEL_USER="admin_$(gen_random_string 6)"
@@ -547,6 +563,8 @@ if ! certbot certonly \
 fi
 
 mkdir -p "/root/cert/${DOMAIN}"
+chmod 755 /root /root/cert "/root/cert/${DOMAIN}" 2>/dev/null || true
+chmod 644 "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" 2>/dev/null || true
 ln -sf "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" "/root/cert/${DOMAIN}/fullchain.pem"
 ln -sf "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" "/root/cert/${DOMAIN}/privkey.pem"
 
@@ -618,18 +636,38 @@ mkdir -p /etc/systemd/system/x-ui.service.d
 echo -e "[Unit]\nStartLimitIntervalSec=0" > /etc/systemd/system/x-ui.service.d/20-restart-limits.conf
 
 # Генерация ключей для Reality
-XRAY_BIN="/usr/local/x-ui/bin/xray-linux-${AGH_ARCH}"
-if [[ ! -x "$XRAY_BIN" ]]; then
-    XRAY_BIN=$(find /usr/local/x-ui/bin/ -name "xray*" -type f -perm /111 | head -n1)
-fi
+detect_xray_bin() {
+    local arch
+    case "$(uname -m)" in
+        x86_64|x64|amd64)           arch='amd64' ;;
+        i*86|x86)                   arch='386'   ;;
+        armv8*|arm64|aarch64)       arch='arm64' ;;
+        armv7*)                     arch='armv7' ;;
+        armv6*)                     arch='armv6' ;;
+        armv5*)                     arch='armv5' ;;
+        s390x)                      arch='s390x' ;;
+        *)                          arch='amd64' ;;
+    esac
+    if [[ -x "/usr/local/x-ui/bin/xray-linux-${arch}" ]]; then
+        echo "/usr/local/x-ui/bin/xray-linux-${arch}"
+    elif [[ -x "/usr/local/x-ui/bin/xray-linux-arm32" ]]; then
+        echo "/usr/local/x-ui/bin/xray-linux-arm32"
+    else
+        find /usr/local/x-ui/bin/ -name "xray*" -type f -perm /111 2>/dev/null | head -n1
+    fi
+}
+XRAY_BIN=$(detect_xray_bin)
+[[ -n "$XRAY_BIN" && -x "$XRAY_BIN" ]] || { msg_err "Исполняемый файл Xray не найден в /usr/local/x-ui/bin/"; exit 1; }
 
-REALITY_KEYS=$("$XRAY_BIN" x25519 2>/dev/null || echo "Private key: iHdT9omhO7_J7btChCGwboMNr6UUUWtTrMZ9w97wUX0\nPublic key: rwiO94EBPsv4M--KzrFxLuC4vdyByhndJULbfGJ-XEU")
-REALITY_PRIV=$(echo -e "$REALITY_KEYS" | grep -i "Private" | awk '{print $NF}')
-REALITY_PUB=$(echo -e "$REALITY_KEYS" | grep -i "Public" | awk '{print $NF}')
+REALITY_KEYS=$("$XRAY_BIN" x25519 2>/dev/null) || { msg_err "Не удалось сгенерировать Reality ключи с помощью Xray x25519"; exit 1; }
+REALITY_PRIV=$(printf '%s\n' "$REALITY_KEYS" | grep -i "Private" | awk '{print $NF}')
+REALITY_PUB=$(printf '%s\n' "$REALITY_KEYS" | grep -i "Public" | awk '{print $NF}')
+[[ -n "$REALITY_PRIV" && -n "$REALITY_PUB" ]] || { msg_err "Не удалось извлечь криптографические ключи Reality."; exit 1; }
 REALITY_SHORTID=$(openssl rand -hex 8)
 
 # Наполнение базы данных 3x-ui SQLite
 sqlite3 /etc/x-ui/x-ui.db << EOF
+BEGIN TRANSACTION;
 -- Обновление настроек панели и подписок (удаление старых и вставка актуальных)
 DELETE FROM settings WHERE key IN (
     'webPort', 'webBasePath', 'webDomain', 'webCertFile', 'webKeyFile',
@@ -640,9 +678,9 @@ DELETE FROM settings WHERE key IN (
 INSERT INTO settings (key, value) VALUES
     ('webPort', '${PANEL_PORT}'),
     ('webBasePath', '${PANEL_PATH}'),
-    ('webDomain', '${DOMAIN}'),
-    ('webCertFile', ''),
-    ('webKeyFile', ''),
+    ('webDomain', ''),
+    ('webCertFile', '/root/cert/${DOMAIN}/fullchain.pem'),
+    ('webKeyFile', '/root/cert/${DOMAIN}/privkey.pem'),
     ('subPort', '${SUB_PORT}'),
     ('subPath', '${SUB_PATH}'),
     ('subURI', 'https://${DOMAIN}${SUB_PATH}'),
@@ -803,7 +841,13 @@ VALUES
     ((SELECT id FROM inbounds WHERE tag='inbound-${TROJAN_PORT}'), '$(openssl rand -hex 8)', 0, 'trojan', '${DOMAIN}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-${GRPC_PORT}'), '$(openssl rand -hex 8)', 0, 'vless-grpc', '${DOMAIN}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-443-udp'), '$(openssl rand -hex 8)', 0, 'hysteria2', '${DOMAIN}', 443, 'same', '', '[]');
+COMMIT;
 EOF
+
+# Регистрация SSL сертификатов через CLI 3x-ui
+/usr/local/x-ui/x-ui cert \
+    -webCert "/root/cert/${DOMAIN}/fullchain.pem" \
+    -webCertKey "/root/cert/${DOMAIN}/privkey.pem" >/dev/null 2>&1 || true
 
 # Синхронизация DNS AdGuard Home с шаблоном Xray в SQLite 3x-ui
 msg_inf "Конфигурирование DNS AdGuard Home (порт ${ADH_DNS_PORT}) в шаблоне Xray..."
@@ -815,7 +859,12 @@ fi
 
 systemctl daemon-reload
 systemctl restart x-ui
-msg_ok "Все 7 inbounds, оба типа подписок и параметры 3X-UI записаны в базу данных."
+sleep 1
+if ! systemctl is-active --quiet x-ui; then
+    sleep 2
+fi
+systemctl is-active --quiet x-ui || { msg_err "Служба 3X-UI (x-ui) не запустилась после обновления базы данных. Проверьте: journalctl -u x-ui -n 30"; exit 1; }
+msg_ok "Все 7 inbounds, оба типа подписок и параметры 3X-UI записаны в базу данных и запущены."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # [6] TELEMT & TELEMT-PANEL SETUP (TELEGRAM PROXY)
@@ -1075,6 +1124,7 @@ ln -sf /etc/nginx/sites-available/telemt-panel.conf /etc/nginx/sites-enabled/tel
 # Настройка главного VHost 9443
 curl -sSL "${GITHUB_RAW}/assets/nginx/vhost.conf.template" -o "$WORKDIR/vhost.conf.template" || cp "assets/nginx/vhost.conf.template" "$WORKDIR/vhost.conf.template" 2>/dev/null || true
 sed -e "s|__DOMAIN__|${DOMAIN}|g" \
+    -e "s|__PANEL_PATH_NO_SLASH__|${PANEL_PATH_NO_SLASH_LEADING}|g" \
     -e "s|__PANEL_PATH__|${PANEL_PATH}|g" \
     -e "s|__PANEL_PORT__|${PANEL_PORT}|g" \
     -e "s|__SUB_PATH__|${SUB_PATH}|g" \
@@ -1097,8 +1147,8 @@ sed -e "s|__DOMAIN__|${DOMAIN}|g" \
 ln -sf "/etc/nginx/sites-available/${DOMAIN}.conf" "/etc/nginx/sites-enabled/${DOMAIN}.conf"
 rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default 2>/dev/null || true
 
-nginx -t
-systemctl restart nginx
+nginx -t || { msg_err "Конфигурация Nginx содержит ошибки (nginx -t вернул ненулевой код)."; exit 1; }
+systemctl restart nginx || { msg_err "Не удалось перезапустить службу Nginx."; exit 1; }
 systemctl enable nginx 2>/dev/null || true
 msg_ok "Nginx проверен и запущен. Anti-Bot защита и маршрутизация 443 активны."
 
@@ -1208,6 +1258,7 @@ cat << EOF > /root/server_credentials.txt
     Логин:            ${MGMT_USER}
     Пароль:           ${MGMT_PASS}
     Внутренний порт:  ${MGMT_PORT}
+    Секретный путь:   /${MGMT_SECRET_PATH}/
     Статус в UFW:     ЗАКРЫТ (Режим невидимки)
 
     КАК ОТКРЫТЬ ДОСТУП ПРИ НЕОБХОДИМОСТИ:
@@ -1224,6 +1275,7 @@ cat << EOF > /root/server_credentials.txt
     Логин:            ${PANEL_USER}
     Пароль:           ${PANEL_PASS}
     Внутренний порт:  ${PANEL_PORT} (доступен только через HTTPS :443)
+    SSL сертификат:   УСТАНОВЛЕН (/root/cert/${DOMAIN}/fullchain.pem)
 
 [2] ПОДПИСКИ ДЛЯ КЛИЕНТОВ (2 ТИПА):
     Обычная (Base64): https://${DOMAIN}${SUB_PATH}
