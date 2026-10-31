@@ -349,7 +349,7 @@ if [[ "$PATH_CHOICE" == "2" ]]; then
     read_prompt "${C_CYAN}->${C_RESET} Путь для VLESS WebSocket [/vless-ws]: " USER_WS_PATH
     read_prompt "${C_CYAN}->${C_RESET} Путь для VLESS XHTTP [/vless-xhttp]: " USER_XHTTP_PATH
     read_prompt "${C_CYAN}->${C_RESET} ServiceName (внутреннее имя канала) для VLESS gRPC [vless-grpc]: " USER_GRPC_PATH
-    read_prompt "${C_CYAN}->${C_RESET} ServiceName (внутреннее имя канала) для Trojan gRPC [/trojan-grpc]: " USER_TROJAN_PATH
+    read_prompt "${C_CYAN}->${C_RESET} ServiceName (внутреннее имя канала) для Trojan gRPC [trojan-grpc]: " USER_TROJAN_PATH
     
     PANEL_PATH="${USER_PANEL_PATH:-/xui/}"
     SUB_PATH="${USER_SUB_PATH:-/sub/}"
