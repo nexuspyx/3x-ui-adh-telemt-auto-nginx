@@ -476,6 +476,8 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
                 with open(nginx_vhost, "r") as f:
                     content = f.read()
                 if new_path and cur_path:
+                    content = content.replace(f"location = {cur_path.rstrip('/')}", f"location = {norm_path.rstrip('/')}")
+                    content = content.replace(f"return 301 {cur_path};", f"return 301 {norm_path};")
                     content = content.replace(f"location ^~ {cur_path}", f"location ^~ {norm_path}")
                 if new_port and cur_port:
                     content = re.sub(r'(# === \[1\] 3X-UI WEB PANEL ===[\s\S]*?proxy_pass\s+http://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', content)
