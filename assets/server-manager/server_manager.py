@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# Build Timestamp: 13:28.31.10.2026
+# Build Timestamp: 12:18.08.11.2026
 """
 ==============================================================================
 «КОНФИГУРИРОВАНИЕ СЕРВЕРА» (SERVER CONFIGURATION MANAGER)
@@ -383,20 +383,20 @@ def detect_live_services(cfg):
             nginx_vhost = f"/etc/nginx/sites-available/{domain}.conf"
             if not os.path.exists(nginx_vhost) and os.path.exists(f"/etc/nginx/sites-available/{domain}"):
                 nginx_vhost = f"/etc/nginx/sites-available/{domain}"
-            doh_path = "/dns-query"
+            doh_path = "/mediagetv2"
             doh_port = web_port
             if os.path.exists(nginx_vhost):
                 with open(nginx_vhost, "r") as f:
                     nc = f.read()
-                doh_path_m = re.search(r'# === \[8\] ADGUARD HOME DoH[\s\S]*?location\s*=\s*([^ \t\n{]+)', nc)
+                doh_path_m = re.search(r'# === \[8\] ADGUARD HOME DoH[\s\S]*?location\s*~\*\s*["\'][\^/]*([^/\"\'(\\\s]+)', nc) or re.search(r'# === \[8\] ADGUARD HOME DoH[\s\S]*?location\s*=\s*([^ \t\n{]+)', nc)
                 if not doh_path_m:
-                    doh_path_m = re.search(r'location\s*~\s*"[\^/]+([^/"]+)/\(\?<doh_client_id>', nc)
+                    doh_path_m = re.search(r'location\s*~\s*["\'][\^/]*([^/\"\'\s]+)/\(\?<doh_client_id>', nc)
                     if doh_path_m:
                         doh_path = "/" + doh_path_m.group(1).lstrip("/")
                 else:
-                    doh_path = doh_path_m.group(1)
+                    doh_path = "/" + doh_path_m.group(1).lstrip("^/")
 
-                port_m = re.search(r'proxy_pass\s+http://127\.0\.0\.1:(\d+)/dns-query', nc)
+                port_m = re.search(r'proxy_pass\s+http://127\.0\.0\.1:(\d+)', nc)
                 if port_m:
                     doh_port = port_m.group(1)
 
@@ -583,6 +583,10 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
                 with open(nginx_vhost, "r") as f:
                     content = f.read()
                 if new_path and cur_path:
+                    p = cur_path.lstrip('/')
+                    content = re.sub(r'location\s*~\*\s*["\']\^/?' + re.escape(p) + r'[^"\'\n]*["\']', 'location ~* "^' + norm_path_leading + r'(/|\{\?dns\})?"', content)
+                    content = re.sub(r'location\s*~\s*["\']\^/?' + re.escape(p) + r'/([^"\'\n]+)["\']', r'location ~ "^' + norm_path_leading + r'/\g<1>"', content)
+                    content = content.replace(f'location ~* "^{cur_path}(/|\\{{\\?dns\\}})?$"', f'location ~* "^{norm_path_leading}(/|\\{{\\?dns\\}})?$"')
                     content = content.replace(f"location = {cur_path}", f"location = {norm_path_leading}")
                     content = content.replace(f'location ~ "^{cur_path}/', f'location ~ "^{norm_path_leading}/')
                 with open(nginx_vhost, "w") as f:
