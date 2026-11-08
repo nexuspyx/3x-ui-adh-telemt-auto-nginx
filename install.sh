@@ -464,12 +464,21 @@ TG_PATH_NO_SLASH="${TG_PATH_NO_SLASH%/}"
 ADH_DOH_PATH_NO_SLASH="${ADH_DOH_PATH#/}"
 ADH_DOH_PATH_NO_SLASH="${ADH_DOH_PATH_NO_SLASH%/}"
 WS_PATH_NO_SLASH="${WS_PATH#/}"
+WS_PATH_NO_SLASH="${WS_PATH_NO_SLASH%/}"
 XHTTP_PATH_NO_SLASH="${XHTTP_PATH#/}"
+XHTTP_PATH_NO_SLASH="${XHTTP_PATH_NO_SLASH%/}"
 TROJAN_PATH_NO_SLASH="${TROJAN_PATH#/}"
+TROJAN_PATH_NO_SLASH="${TROJAN_PATH_NO_SLASH%/}"
 GRPC_PATH_NO_SLASH="${GRPC_PATH#/}"
+GRPC_PATH_NO_SLASH="${GRPC_PATH_NO_SLASH%/}"
 
 PANEL_PATH_NO_SLASH_LEADING="/${PANEL_PATH_NO_SLASH}"
 WS_PATH_LEADING="/${WS_PATH_NO_SLASH}"
+CASCADE_SUFFIX=$(LC_ALL=C tr -dc 'a-zA-Z' < /dev/urandom 2>/dev/null | head -c 5)
+if [[ -z "$CASCADE_SUFFIX" || ${#CASCADE_SUFFIX} -lt 5 ]]; then
+    CASCADE_SUFFIX="$(openssl rand -base64 16 | tr -dc 'a-zA-Z' | head -c 5)"
+fi
+CASCADE_WS_PATH_LEADING="${WS_PATH_LEADING}/${CASCADE_SUFFIX}"
 XHTTP_PATH_LEADING="/${XHTTP_PATH_NO_SLASH}"
 TROJAN_PATH_LEADING="/${TROJAN_PATH_NO_SLASH}"
 GRPC_PATH_LEADING="/${GRPC_PATH_NO_SLASH}"
@@ -478,6 +487,7 @@ GRPC_PATH_LEADING="/${GRPC_PATH_NO_SLASH}"
 PANEL_PORT="${PANEL_PORT:-$(get_free_port)}"
 SUB_PORT=$(get_free_port)
 WS_PORT=$(get_free_port)
+CASCADE_WS_PORT=$(get_free_port)
 GRPC_PORT="43935"
 TROJAN_PORT=$(get_free_port)
 TG_PORT="18080"
@@ -755,6 +765,24 @@ VALUES (
     '{"enabled": true, "destOverride": ["http", "tls", "quic"]}'
 );
 
+-- 2.1. VLESS WebSocket Duplicate (Cascade-to-N, disabled by default)
+INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing)
+VALUES (
+    '1', '0', '0', '0', '⛓️ Cascade-to-N', '0', '0', '127.0.0.1', '${CASCADE_WS_PORT}', 'vless',
+    '{"clients": [], "decryption": "none", "fallbacks": []}',
+    '{
+      "network": "ws",
+      "security": "none",
+      "wsSettings": {
+        "acceptProxyProtocol": false,
+        "path": "${CASCADE_WS_PATH_LEADING}",
+        "host": "${DOMAIN}"
+      }
+    }',
+    'in-${CASCADE_WS_PORT}-tcp',
+    '{"enabled": true, "destOverride": ["http", "tls", "quic"]}'
+);
+
 -- 3. VLESS XHTTP (Unix Domain Socket)
 INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing)
 VALUES (
@@ -849,6 +877,7 @@ INSERT INTO hosts (inbound_id, group_id, sort_order, remark, address, port, secu
 VALUES
     ((SELECT id FROM inbounds WHERE tag='in-8443-tcp'), '$(openssl rand -hex 8)', 0, 'reality', '${DOMAIN}', 443, 'same', '', '[]'),
     ((SELECT id FROM inbounds WHERE tag='in-${WS_PORT}-tcp'), '$(openssl rand -hex 8)', 0, 'ws', '${DOMAIN}', 443, 'tls', 'firefox', '["http/1.1"]'),
+    ((SELECT id FROM inbounds WHERE tag='in-${CASCADE_WS_PORT}-tcp'), '$(openssl rand -hex 8)', 0, 'cascade-to-n', '${DOMAIN}', 443, 'tls', 'firefox', '["http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-/dev/shm/uds2023.sock,0666:0|'), '$(openssl rand -hex 8)', 0, 'xhttp', '${DOMAIN}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-${TROJAN_PORT}'), '$(openssl rand -hex 8)', 0, 'trojan', '${DOMAIN}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-${GRPC_PORT}'), '$(openssl rand -hex 8)', 0, 'vless-grpc', '${DOMAIN}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
@@ -1149,6 +1178,8 @@ sed -e "s|__DOMAIN__|${DOMAIN}|g" \
     -e "s|__ADH_DOH_PORT__|${ADH_DOH_PORT}|g" \
     -e "s|__WS_PATH__|${WS_PATH_LEADING}|g" \
     -e "s|__WS_PORT__|${WS_PORT}|g" \
+    -e "s|__CASCADE_WS_PATH__|${CASCADE_WS_PATH_LEADING}|g" \
+    -e "s|__CASCADE_WS_PORT__|${CASCADE_WS_PORT}|g" \
     -e "s|__XHTTP_PATH__|${XHTTP_PATH_LEADING}|g" \
     -e "s|__TROJAN_PATH__|${TROJAN_PATH_LEADING}|g" \
     -e "s|__TROJAN_PORT__|${TROJAN_PORT}|g" \
@@ -1323,6 +1354,7 @@ cat << EOF > /root/server_credentials.txt
 [5] СПИСОК РАЗВЕРНУТЫХ INBOUNDS В XRAY:
     • Reality TCP:     порт 8443 (fallback -> 9443 xver:1)
     • VLESS WS:        порт ${WS_PORT}, путь ${WS_PATH}
+    • Cascade-to-N:    порт ${CASCADE_WS_PORT}, путь ${CASCADE_WS_PATH_LEADING} (выключен)
     • VLESS XHTTP:     UDS /dev/shm/uds2023.sock, путь ${XHTTP_PATH}
     • Trojan gRPC:     порт ${TROJAN_PORT}, путь ${TROJAN_PATH}
     • VLESS gRPC:      порт ${GRPC_PORT}, serviceName ${GRPC_PATH}
