@@ -2,7 +2,7 @@
 # ==============================================================================
 # 3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (ONE-COMMAND INSTALLER)
 # Repository: https://github.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
-# Generated: 21:32.29.10.2026
+# Generated: 12:18.08.11.2026
 # ==============================================================================
 
 set -eo pipefail
@@ -354,7 +354,8 @@ if [[ "$PATH_CHOICE" == "2" ]]; then
     read_prompt "${C_CYAN}->${C_RESET} Путь для обычной Base64 подписки [/sub/]: " USER_SUB_PATH
     read_prompt "${C_CYAN}->${C_RESET} Путь для JSON подписки (Sing-box / Happ) [/sub-json/]: " USER_SUB_JSON_PATH
     read_prompt "${C_CYAN}->${C_RESET} Путь для Telegram Web Proxy (Telemt) [${TG_PATH:-/tg}]: " USER_TG_PATH
-    read_prompt "${C_CYAN}->${C_RESET} Путь для AdGuard Home DoH DNS [${ADH_DOH_PATH:-/dns-query}]: " USER_ADH_DOH_PATH
+    DEFAULT_ADH_DOH="/mediagetv2"
+    read_prompt "${C_CYAN}->${C_RESET} Секретный путь для AdGuard DoH (защита от ТСПУ) [${ADH_DOH_PATH:-$DEFAULT_ADH_DOH}]: " USER_ADH_DOH_PATH
     read_prompt "${C_CYAN}->${C_RESET} Путь для VLESS WebSocket [/vless-ws]: " USER_WS_PATH
     read_prompt "${C_CYAN}->${C_RESET} Путь для VLESS XHTTP [/vless-xhttp]: " USER_XHTTP_PATH
     
@@ -362,7 +363,7 @@ if [[ "$PATH_CHOICE" == "2" ]]; then
     SUB_PATH="${USER_SUB_PATH:-/sub/}"
     SUB_JSON_PATH="${USER_SUB_JSON_PATH:-/sub-json/}"
     TG_PATH="${USER_TG_PATH:-${TG_PATH:-/tg}}"
-    ADH_DOH_PATH="${USER_ADH_DOH_PATH:-${ADH_DOH_PATH:-/dns-query}}"
+    ADH_DOH_PATH="${USER_ADH_DOH_PATH:-${ADH_DOH_PATH:-$DEFAULT_ADH_DOH}}"
     WS_PATH="${USER_WS_PATH:-/vless-ws}"
     XHTTP_PATH="${USER_XHTTP_PATH:-/vless-xhttp}"
     # Для максимальной скрытности (Stealth) gRPC ServiceNames генерируются случайными
@@ -375,7 +376,7 @@ else
     SUB_PATH="${SUB_PATH:-/$(gen_random_string 10)/}"
     SUB_JSON_PATH="${SUB_JSON_PATH:-/$(gen_random_string 10)/}"
     TG_PATH="${TG_PATH:-${USER_TG_PATH:-/tg}}"
-    ADH_DOH_PATH="${ADH_DOH_PATH:-${USER_ADH_DOH_PATH:-/dns-query}}"
+    ADH_DOH_PATH="${ADH_DOH_PATH:-${USER_ADH_DOH_PATH:-/mediagetv2}}"
     WS_PATH="${WS_PATH:-/$(gen_random_string 10)}"
     XHTTP_PATH="${XHTTP_PATH:-/$(gen_random_string 10)}"
     GRPC_PATH="vless-$(gen_random_string 8)"
@@ -456,6 +457,7 @@ echo
 [[ "$SUB_JSON_PATH" != */ ]] && SUB_JSON_PATH="$SUB_JSON_PATH/"
 [[ "$TG_PATH" != /* ]] && TG_PATH="/$TG_PATH"
 [[ "$ADH_DOH_PATH" != /* ]] && ADH_DOH_PATH="/$ADH_DOH_PATH"
+ADH_DOH_PATH="${ADH_DOH_PATH%/}"
 
 PANEL_PATH_NO_SLASH="${PANEL_PATH#/}"
 PANEL_PATH_NO_SLASH="${PANEL_PATH_NO_SLASH%/}"
@@ -1349,6 +1351,7 @@ cat << EOF > /root/server_credentials.txt
     Логин:            ${ADH_USER}
     Пароль:           ${ADH_PASS}
     DoH (HTTPS):      https://${DOMAIN}${ADH_DOH_PATH}
+                      (поддерживает слэш на конце / и профили устройств: https://${DOMAIN}${ADH_DOH_PATH}/устройство)
     Локальный DNS:    127.0.0.1:${ADH_DNS_PORT} (задействован для Xray Outbound 0 ms)
 
 [5] СПИСОК РАЗВЕРНУТЫХ INBOUNDS В XRAY:

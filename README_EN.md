@@ -26,7 +26,7 @@ curl -sSL https://raw.githubusercontent.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
      - Base64 Subscription path (`SUB_PATH`)
      - JSON Subscription path for Happ / Sing-box / v2rayNG (`SUB_JSON_PATH`)
      - **Telemt Telegram Web Proxy (`TG_PATH`, e.g. `/tg` or `/custom-path`)**
-     - **AdGuard Home DoH (`ADH_DOH_PATH`, e.g. `/dns-query` or `/my-secret-doh`)**
+     - **AdGuard Home DoH (`ADH_DOH_PATH`, e.g. `/mediagetv2` or `/my-secret-doh`)**
      - VLESS WebSocket, XHTTP, gRPC, and Trojan gRPC paths
 2. **Silent SSL (Cloudflare DNS-01 API)**:
    - Automated certificate issuance through Cloudflare API.

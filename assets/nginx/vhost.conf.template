@@ -185,11 +185,38 @@ server {
         grpc_pass             grpc://127.0.0.1:__GRPC_PORT__;
     }
 
-    # === [8] ADGUARD HOME DoH (DNS-OVER-HTTPS WITH CUSTOM PATH SUPPORT) ===
-    # Matches the exact custom DoH path (e.g. /dns-query or /xxxxxbyyh) and forwards to AdGuard DoH backend
-    location = __ADH_DOH_PATH__ {
-        limit_except GET POST { deny all; }
-        proxy_pass http://127.0.0.1:__ADH_DOH_PORT__/dns-query;
+    # === [8] ADGUARD HOME DoH (STEALTH CUSTOM PATH, ZERO-ERROR ENGINE) ===
+    # 1. Base custom path: matches __ADH_DOH_PATH__, __ADH_DOH_PATH__/, and __ADH_DOH_PATH__{?dns}
+    location ~* "^__ADH_DOH_PATH__(/|\{\?dns\})?$" {
+        # Browser preflight & probe support (OPTIONS / HEAD)
+        if ($request_method = OPTIONS) {
+            add_header Content-Type 'text/plain; charset=utf-8' always;
+            add_header Access-Control-Allow-Origin '*' always;
+            add_header Access-Control-Allow-Methods 'GET, POST, OPTIONS, HEAD' always;
+            add_header Access-Control-Allow-Headers 'Content-Type, Accept' always;
+            add_header Content-Length 0;
+            return 204;
+        }
+
+        # Friendly direct browser visit (GET without DNS query parameter)
+        set $doh_direct '';
+        if ($http_accept ~* 'text/html') {
+            set $doh_direct 'H';
+        }
+        if ($arg_dns = '') {
+            set $doh_direct '${doh_direct}N';
+        }
+        if ($request_method = 'GET') {
+            set $doh_direct '${doh_direct}G';
+        }
+        if ($doh_direct = 'HNG') {
+            add_header Content-Type 'application/json; charset=utf-8' always;
+            return 200 '{"status":"active","service":"DNS-over-HTTPS","protection":"stealth"}\n';
+        }
+
+        limit_except GET POST OPTIONS HEAD { deny all; }
+        rewrite ^.*$ /dns-query break;
+        proxy_pass http://127.0.0.1:__ADH_DOH_PORT__;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -200,10 +227,20 @@ server {
         access_log off;
     }
 
-    # Client-ID routing for custom DoH path: __ADH_DOH_PATH__/<client_id>
-    location ~ "^__ADH_DOH_PATH__/(?<doh_client_id>[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)$" {
-        limit_except GET POST { deny all; }
-        proxy_pass http://127.0.0.1:__ADH_DOH_PORT__/dns-query/$doh_client_id;
+    # 2. Client-ID routing: matches __ADH_DOH_PATH__/<client_id> and __ADH_DOH_PATH__/<client_id>/
+    location ~ "^__ADH_DOH_PATH__/(?<doh_client_id>[A-Za-z0-9_-]{1,63})(/)?$" {
+        if ($request_method = OPTIONS) {
+            add_header Content-Type 'text/plain; charset=utf-8' always;
+            add_header Access-Control-Allow-Origin '*' always;
+            add_header Access-Control-Allow-Methods 'GET, POST, OPTIONS, HEAD' always;
+            add_header Access-Control-Allow-Headers 'Content-Type, Accept' always;
+            add_header Content-Length 0;
+            return 204;
+        }
+
+        limit_except GET POST OPTIONS HEAD { deny all; }
+        rewrite ^.*$ /dns-query/$doh_client_id break;
+        proxy_pass http://127.0.0.1:__ADH_DOH_PORT__;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
