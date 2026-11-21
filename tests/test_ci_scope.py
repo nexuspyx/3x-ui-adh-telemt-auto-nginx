@@ -85,7 +85,7 @@ class CIScope(unittest.TestCase):
 
     def test_mixed_and_unknown_files_require_full(self):
         for path in ('x-ui-latest.sh', 'assets/helper.py', 'tests/test_fixture.py',
-                     '.github/workflows/example.yml', 'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md',
+                     '.github/workflows/example.yml', 'DEVELOPMENT.md', 'CONTRIBUTING.md',
                      'SECURITY.md', 'LICENSE', 'unknown.md', 'docs/run.sh', 'docs/data.yaml',
                      'assets/support/logo.svg', 'assets/support/file.bin', 'tests/ci_scope.py'):
             with self.subTest(path=path):
