@@ -2,7 +2,7 @@
 # ==============================================================================
 # 3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (ONE-COMMAND INSTALLER)
 # Repository: https://github.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
-# Generated: 16:12.22.11.2026
+# Generated: 17:16.22.11.2026
 # ==============================================================================
 
 set +x
@@ -804,17 +804,35 @@ net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 net.ipv4.tcp_fastopen = 3
 
-# Оптимизация сетевых буферов
+# Оптимизация сетевых буферов и защита от потерь QUIC/UDP (Hysteria 2)
 net.core.rmem_max = 67108864
 net.core.wmem_max = 67108864
+net.core.rmem_default = 1048576
+net.core.wmem_default = 1048576
 net.ipv4.tcp_rmem = 4096 87380 33554432
 net.ipv4.tcp_wmem = 4096 65536 33554432
+
+# Внутренние очереди ядра (невидимы для ТСПУ, защита от переполнения)
+net.ipv4.tcp_max_syn_backlog = 4096
+net.core.netdev_max_backlog = 8192
+
+# Плавность BBR и защита от задержек после пауз
+net.ipv4.tcp_slow_start_after_idle = 0
+
+# Защита от зависаний при урезанном MTU в туннелях (только при обнаружении дропа)
+net.ipv4.tcp_mtu_probing = 1
+
+# Расширение диапазона исходящих портов (защита от исчерпания сокетов)
+net.ipv4.ip_local_port_range = 10240 65535
+
+# Защита памяти 1 ГБ RAM от избыточного сброса в swap
+vm.swappiness = 10
 EOF
 sysctl --system > /dev/null 2>&1 || true
 sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1 net.ipv6.conf.lo.disable_ipv6=1 \
     net.ipv4.icmp_echo_ignore_all=1 net.ipv4.icmp_echo_ignore_broadcasts=1 net.ipv4.icmp_ignore_bogus_error_responses=1 > /dev/null 2>&1 || true
 
-msg_ok "IPv6 отключен, ICMP ping заглушен, TCP BBR активирован."
+msg_ok "IPv6 отключен, ICMP ping заглушен, профиль Stealth & Safe Mobile sysctl активирован."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # [3] SSL VIA CLOUDFLARE DNS-01 API (PORT 80 NEVER OPENED)
