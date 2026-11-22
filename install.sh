@@ -712,6 +712,7 @@ nginx/vhost.conf.template
 server-manager/server_manager.py
 server-manager/server-mgr
 server-manager/server-manager.service
+sub-template/index.html
 PROJECT_ASSETS
 bash -n "$WORKDIR/assets/install/releases.sh" || fail "Синтаксическая ошибка в подготовке релизов."
 source "$WORKDIR/assets/install/releases.sh"
@@ -963,6 +964,11 @@ panel_user=$(sqlite3 -bail /etc/x-ui/x-ui.db 'SELECT username FROM users ORDER B
     fail "Не удалось прочитать базу 3x-ui."
 [[ "$panel_user" == "$PANEL_USER" ]] || fail "3x-ui не сохранил параметры администратора."
 
+# Развертывание Apple Xray Subscription Template
+install -d -m 0755 /etc/x-ui/sub_templates/apple
+install -m 0644 "$WORKDIR/assets/sub-template/index.html" /etc/x-ui/sub_templates/apple/index.html
+ln -sf /etc/x-ui/sub_templates/apple/index.html /etc/x-ui/sub_templates/apple/sub.html
+
 # Предотвращение блокировки частых перезапусков x-ui в systemd
 mkdir -p /etc/systemd/system/x-ui.service.d
 echo -e "[Unit]\nStartLimitIntervalSec=0" > /etc/systemd/system/x-ui.service.d/20-restart-limits.conf
@@ -1005,7 +1011,7 @@ DELETE FROM settings WHERE key IN (
     'webPort', 'webBasePath', 'webDomain', 'webCertFile', 'webKeyFile', 'webListen', 'subListen',
     'subCertFile', 'subKeyFile',
     'subPort', 'subPath', 'subURI', 'subJsonPath', 'subJsonURI',
-    'subJsonEnable', 'subEnable', 'subUpdates', 'subEncrypt', 'subShowInfo'
+    'subJsonEnable', 'subEnable', 'subUpdates', 'subEncrypt', 'subShowInfo', 'subThemeDir'
 );
 
 INSERT INTO settings (key, value) VALUES
@@ -1027,7 +1033,8 @@ INSERT INTO settings (key, value) VALUES
     ('subEnable', 'true'),
     ('subUpdates', '12'),
     ('subEncrypt', 'true'),
-    ('subShowInfo', 'true');
+    ('subShowInfo', 'true'),
+    ('subThemeDir', '/etc/x-ui/sub_templates/apple');
 
 -- Очистка дефолтных inbounds перед наполнением нашими
 DELETE FROM inbounds;

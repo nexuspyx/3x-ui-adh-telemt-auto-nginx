@@ -38,3 +38,10 @@ class ForkRuntime(unittest.TestCase):
         self.assertIn('proxy_ssl_name __DOMAIN__;', template)
         self.assertIn('proxy_ssl_verify on;', template)
         self.assertIn('proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;', template)
+
+    def test_apple_subscription_template_installed_and_configured_by_default(self):
+        installer = (ROOT / 'install.sh').read_text()
+        self.assertIn('sub-template/index.html', installer)
+        self.assertIn('/etc/x-ui/sub_templates/apple', installer)
+        self.assertIn("('subThemeDir', '/etc/x-ui/sub_templates/apple')", installer)
+        self.assertIn("'subThemeDir'", installer)
