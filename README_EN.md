@@ -138,7 +138,7 @@ The suite includes a dedicated management dashboard built with **Apple Human Int
 ### CLI Quick Commands via SSH:
 ```bash
 server-mgr open        # Open the management port in UFW with 30-min auto-timer
-server-mgr close       # Lock down UFW immediately (keeping only 22 and 443 open)
+server-mgr close       # Close access opened by Server Manager in UFW
 server-mgr status      # Show current status, port, and access URL
 server-mgr reset-pass  # Change admin password
 server-mgr             # Interactive terminal menu (TUI)
@@ -147,7 +147,8 @@ server-mgr             # Interactive terminal menu (TUI)
 You can also access the module via **SSH tunnel** without exposing any port to the public internet:
 ```bash
 ssh -L 8088:127.0.0.1:<MGMT_PORT> root@your-domain
-# then open in your browser: http://localhost:8088/
+# From another terminal, verify HTTPS using the certificate hostname:
+curl --resolve your-domain:8088:127.0.0.1 https://your-domain:8088/
 ```
 
 ---

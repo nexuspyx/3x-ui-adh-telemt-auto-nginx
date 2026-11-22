@@ -14,18 +14,23 @@ import json
 import time
 import re
 import ssl
+import fcntl
+import math
 import shutil
 import socket
 import sqlite3
 import hashlib
 import secrets
 import subprocess
+import tempfile
 import threading
+from contextlib import contextmanager
 from urllib.parse import urlparse, parse_qs
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 CONFIG_FILE = "/etc/server-manager/config.json"
 AUTO_LOCK_FILE = "/etc/server-manager/auto_lock.timer"
+TLS_CERT_ROOT = "/etc/letsencrypt/live"
 VHOST_TEMPLATE_FILE = "/etc/server-manager/vhost.conf.template"
 CREDENTIALS_FILE = "/root/server_credentials.txt"
 XUI_DB_PATH = "/etc/x-ui/x-ui.db"
@@ -35,7 +40,6 @@ ADGUARD_CONF_PATH = "/opt/AdGuardHome/AdGuardHome.yaml"
 # In-memory session store & rate limiting
 SESSIONS = {}  # token -> {"user": user, "expires": timestamp}
 FAILED_ATTEMPTS = {}  # ip -> {"count": int, "blocked_until": timestamp}
-UNLOCK_EXPIRY = 0  # timestamp when firewall should auto-lock (0 = no timer)
 CPU_PREV_TOTAL = 0
 CPU_PREV_IDLE = 0
 
@@ -112,13 +116,13 @@ def get_service_status(service_name):
             text=True,
             timeout=3
         )
-        return res.stdout.strip() == "active"
+        return res.returncode == 0 and res.stdout.strip() == "active"
     except Exception:
         return False
 
 
 def get_ssl_status(domain):
-    cert_path = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
+    cert_path = f"{TLS_CERT_ROOT}/{domain}/fullchain.pem"
     if not os.path.exists(cert_path):
         return {"valid": False, "days_left": 0, "expires": "Сертификат не найден"}
     try:
@@ -149,29 +153,57 @@ def get_ssl_status(domain):
 # ==============================================================================
 
 def load_master_config():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    # Fallback default configuration
-    return {
-        "domain": "example.com",
-        "mgmt_port": 54892,
-        "mgmt_secret_path": "cfg-admin",
-        "auth_user": "admin",
-        "auth_pass_hash": "",
-        "auto_lock_minutes": 30,
-        "server_ip": "127.0.0.1",
-        "services": {}
-    }
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except OSError as e:
+        raise ValueError(f"Не удалось прочитать {CONFIG_FILE}: {e.strerror}") from e
+    except ValueError as e:
+        raise ValueError(f"Некорректный JSON в {CONFIG_FILE}") from e
+
+    if not isinstance(cfg, dict):
+        raise ValueError(f"{CONFIG_FILE}: ожидается объект JSON")
+    domain = cfg.get("domain")
+    if not isinstance(domain, str) or not 1 <= len(domain) <= 253 or any(
+        not re.fullmatch(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", label)
+        for label in domain.split(".")
+    ):
+        raise ValueError(f"{CONFIG_FILE}: некорректный domain")
+    port = cfg.get("mgmt_port")
+    if isinstance(port, str) and re.fullmatch(r"0*[0-9]{1,5}", port):
+        port = int(port.lstrip("0") or "0")
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise ValueError(f"{CONFIG_FILE}: mgmt_port должен быть от 1 до 65535")
+    cfg["mgmt_port"] = port
+    path = cfg.get("mgmt_secret_path")
+    if not isinstance(path, str) or not re.fullmatch(r"[^/\s?#\x00-\x1f\x7f]+", path):
+        raise ValueError(f"{CONFIG_FILE}: некорректный mgmt_secret_path")
+    user = cfg.get("auth_user")
+    if not isinstance(user, str) or not user.strip():
+        raise ValueError(f"{CONFIG_FILE}: отсутствует auth_user")
+    password_hash = cfg.get("auth_pass_hash", "")
+    password = cfg.get("auth_pass_plain", "")
+    if (not isinstance(password_hash, str) or not isinstance(password, str)
+            or (password_hash and not re.fullmatch(r"[0-9a-f]{64}", password_hash))
+            or not (password_hash or password)):
+        raise ValueError(f"{CONFIG_FILE}: некорректные данные для входа")
+    return cfg
+
+
+def write_private_file(path, content):
+    temporary = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=os.path.dirname(path), delete=False)
+    try:
+        with temporary:
+            temporary.write(content)
+        os.replace(temporary.name, path)
+    finally:
+        if os.path.exists(temporary.name):
+            os.unlink(temporary.name)
 
 
 def save_master_config(cfg):
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    write_private_file(CONFIG_FILE, json.dumps(cfg, indent=2, ensure_ascii=False))
 
 
 def detect_live_services(cfg):
@@ -502,7 +534,7 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
                     content = content.replace(f"return 301 {cur_path};", f"return 301 {norm_path};")
                     content = content.replace(f"location ^~ {cur_path}", f"location ^~ {norm_path}")
                 if new_port and cur_port:
-                    content = re.sub(r'(# === \[1\] 3X-UI WEB PANEL ===[\s\S]*?proxy_pass\s+http://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', content)
+                    content = re.sub(r'(# === \[1\] 3X-UI WEB PANEL ===[\s\S]*?proxy_pass\s+https?://127\.0\.0\.1:)\d+', f'\\g<1>{new_port}', content)
                 with open(nginx_vhost, "w") as f:
                     f.write(content)
 
@@ -755,90 +787,105 @@ def apply_service_changes(service_id, new_port, new_path, cfg):
         return False, f"Ошибка при применении (выполнен авто-откат): {str(e)}"
 
 
-def lock_firewall():
-    """
-    Strict lockdown: ensures only ports 22 (SSH) and 443 (TCP/UDP)
-    are allowed in UFW.
-    """
+FIREWALL_COMMENT = "Server Manager"
+
+
+@contextmanager
+def firewall_lock():
+    lock_path = os.path.join(os.path.dirname(AUTO_LOCK_FILE), "firewall.lock")
+    with os.fdopen(os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600), "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        yield
+
+
+def run_ufw(*args):
     try:
-        if os.path.exists(AUTO_LOCK_FILE):
-            try:
-                os.remove(AUTO_LOCK_FILE)
-            except OSError:
-                pass
+        result = subprocess.run(["ufw", *args], capture_output=True, text=True, timeout=10,
+                                env={**os.environ, "LC_ALL": "C"}, check=True)
+    except subprocess.CalledProcessError as e:
+        detail = (e.stderr or e.stdout or "").strip()
+        raise RuntimeError(f"ufw {' '.join(args)}: код {e.returncode}. {detail}") from e
+    return result.stdout
 
-        # Detect SSH port
-        res = subprocess.run(
-            ["ss", "-tlnp"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        ssh_port = "22"
-        for line in res.stdout.splitlines():
-            if "sshd" in line:
-                m = re.search(r':(\d+)\s+', line)
-                if m:
-                    ssh_port = m.group(1)
-                    break
 
-        cfg = load_master_config()
-        mgmt_port = str(cfg.get("mgmt_port", "54892"))
+def management_allows(port):
+    status = run_ufw("status", "numbered")
+    if not status.startswith("Status: active\n"):
+        raise RuntimeError("UFW не активен или его состояние неизвестно")
+    rule = re.compile(rf"\[ *[0-9]+\] +{port}/tcp(?P<v6> \(v6\))? +ALLOW IN +"
+                      r"Anywhere(?(v6) \(v6\))(?: +# (?P<comment>.*))? *")
+    return {
+        "::/0" if match["v6"] else "0.0.0.0/0": (match["comment"] or "").strip()
+        for line in status.splitlines() if (match := rule.fullmatch(line))
+    }
 
-        # Delete management port rule
-        subprocess.run(["ufw", "delete", "allow", f"{mgmt_port}/tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["ufw", "delete", "allow", mgmt_port], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        # Ensure default deny
-        subprocess.run(["ufw", "default", "deny", "incoming"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["ufw", "default", "allow", "outgoing"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def read_timer():
+    try:
+        with open(AUTO_LOCK_FILE, encoding="utf-8") as timer:
+            expiry = float(timer.read().strip())
+        if math.isfinite(expiry):
+            return expiry
+    except FileNotFoundError:
+        return None
+    except ValueError:
+        pass
+    print(f"[FIREWALL ERROR] Некорректный таймер в {AUTO_LOCK_FILE}. Закрываем временный доступ.", file=sys.stderr)
+    return 0
 
-        # Allow core whitelist
-        subprocess.run(["ufw", "allow", f"{ssh_port}/tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["ufw", "allow", "443/tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["ufw", "allow", "443/udp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        subprocess.run(["ufw", "reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print("[FIREWALL] Locked down. Only ports 22, 443 are allowed.")
+def lock_firewall(*, expired_only=False):
+    try:
+        with firewall_lock():
+            expiry = read_timer()
+            if expired_only and (expiry is None or expiry > time.time()):
+                return True
+            port = str(load_master_config()["mgmt_port"])
+            if expiry is None:
+                write_private_file(AUTO_LOCK_FILE, str(time.time()))
+            for address, comment in management_allows(port).items():
+                if comment == FIREWALL_COMMENT:
+                    # Explicit address family avoids deleting the other family's allow.
+                    run_ufw("delete", "allow", "proto", "tcp", "from", address, "to", "any", "port", port)
+            if FIREWALL_COMMENT in management_allows(port).values():
+                raise RuntimeError(f"Временное правило для {port}/tcp осталось в UFW")
+            os.unlink(AUTO_LOCK_FILE)
+        print(f"[FIREWALL] Временный доступ Server Manager к {port}/tcp закрыт.")
         return True
-    except Exception as e:
-        print(f"[FIREWALL ERROR] {e}")
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as e:
+        print(f"[FIREWALL ERROR] {e}", file=sys.stderr)
         return False
 
 
 def unlock_firewall(minutes=30):
     try:
-        cfg = load_master_config()
-        mgmt_port = str(cfg.get("mgmt_port", "54892"))
-        subprocess.run(["ufw", "allow", f"{mgmt_port}/tcp", "comment", "Server Manager"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["ufw", "reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        expiry = time.time() + (int(minutes) * 60)
-        os.makedirs(os.path.dirname(AUTO_LOCK_FILE), exist_ok=True)
-        with open(AUTO_LOCK_FILE, "w") as f:
-            f.write(str(expiry))
-        print(f"[FIREWALL] Port {mgmt_port} opened for {minutes} minutes.")
+        minutes = int(minutes)
+        if minutes <= 0:
+            raise ValueError("Укажите положительное число минут")
+        expiry = time.time() + minutes * 60
+        with firewall_lock():
+            port = str(load_master_config()["mgmt_port"])
+            if not get_service_status("server-manager"):
+                raise RuntimeError("Служба server-manager не активна")
+            if any(comment != FIREWALL_COMMENT for comment in management_allows(port).values()):
+                raise RuntimeError(f"Для {port}/tcp уже есть разрешение UFW, созданное вне Server Manager")
+            if read_timer() is None:
+                # A partial UFW change is scheduled for immediate cleanup.
+                write_private_file(AUTO_LOCK_FILE, str(time.time()))
+            run_ufw("allow", f"{port}/tcp", "comment", FIREWALL_COMMENT)
+            if management_allows(port).get("0.0.0.0/0") != FIREWALL_COMMENT:
+                raise RuntimeError(f"UFW не подтвердил временное правило для {port}/tcp")
+            write_private_file(AUTO_LOCK_FILE, str(expiry))
         return True
-    except Exception as e:
-        print(f"[FIREWALL ERROR] {e}")
+    except (OSError, ValueError, OverflowError, RuntimeError, subprocess.TimeoutExpired) as e:
+        print(f"[FIREWALL ERROR] {e}", file=sys.stderr)
         return False
 
 
 def firewall_monitor_thread():
     while True:
-        try:
-            if os.path.exists(AUTO_LOCK_FILE):
-                try:
-                    with open(AUTO_LOCK_FILE, "r") as f:
-                        content = f.read().strip()
-                    if content:
-                        expiry = float(content)
-                        if time.time() >= expiry:
-                            print("[FIREWALL] Auto-lock timer expired. Locking down firewall...")
-                            lock_firewall()
-                except Exception:
-                    pass
-        except Exception as e:
-            print(f"[FIREWALL MONITOR ERROR] {e}")
+        if os.path.exists(AUTO_LOCK_FILE):
+            lock_firewall(expired_only=True)
         time.sleep(5)
 
 
@@ -2615,7 +2662,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     function confirmLogout() {
       document.getElementById('modal-title').innerText = 'Выход из модуля';
       document.getElementById('modal-body').innerHTML =
-        'При выходе порт модуля будет <b>ЗАБЛОКИРОВАН в файрволе UFW</b>.<br>Открытыми останутся только порты 22 и 443.<br><br>Для повторного входа откройте порт через консоль (<code>server-mgr open</code>) или используйте SSH-туннель.';
+        'При выходе Server Manager удалит своё временное разрешение в UFW.<br><br>Для повторного входа откройте порт через консоль (<code>server-mgr open</code>) или используйте SSH-туннель.';
       const btn = document.getElementById('modal-confirm-btn');
       btn.className = 'btn-confirm danger';
       btn.innerText = 'Выйти и заблокировать порт';
@@ -2623,14 +2670,26 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       document.getElementById('confirm-modal').classList.add('open');
     }
 
-    function executeLogout() {
+    async function executeLogout() {
       closeModal();
+      let message;
+      try {
+        const response = await fetch('api/logout', { method: 'POST' });
+        const result = await response.json();
+        if (!result.success && !result.logged_out) throw new Error();
+        message = result.success
+          ? 'Временный доступ Server Manager закрыт в UFW.'
+          : 'UFW не подтвердил закрытие временного доступа. Проверьте статус через SSH.';
+      } catch {
+        showToast('Не удалось подтвердить выход. Проверьте статус через SSH.');
+        return;
+      }
       document.body.innerHTML = `
         <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; background:#000; color:#FFF; font-family:-apple-system,BlinkMacSystemFont,sans-serif;">
           <div style="background:rgba(28,28,30,0.8); border:1px solid rgba(255,255,255,0.1); border-radius:22px; padding:36px 30px; width:100%; max-width:380px; text-align:center;">
             <div style="font-size:40px; margin-bottom:12px;">🔒</div>
             <h1 style="font-size:20px; font-weight:700; margin-bottom:8px;">Сессия завершена</h1>
-            <p style="font-size:13px; color:#8E8E93; margin-bottom:20px;">Порт модуля закрыт в файрволе UFW. Открытыми на сервере остались только порты <b>22</b> и <b>443</b>.</p>
+            <p style="font-size:13px; color:#8E8E93; margin-bottom:20px;">${message}</p>
             <div style="background:rgba(0,0,0,0.5); padding:12px; border-radius:10px; font-family:monospace; font-size:13px; color:#30D158; margin-bottom:20px;">
               # Для повторного открытия выполните в SSH:<br>server-mgr open
             </div>
@@ -2638,7 +2697,6 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
           </div>
         </div>
       `;
-      fetch('api/logout', { method: 'POST' }).catch(() => {});
     }
 
     // Page visibility event to pause metric queries
@@ -2984,9 +3042,19 @@ class ServerManagerHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    def request_config(self):
+        try:
+            return load_master_config()
+        except ValueError as e:
+            print(f"[CONFIG ERROR] {e}", file=sys.stderr)
+            self.send_json({"success": False, "error": "Конфигурация Server Manager недоступна."}, code=503)
+            return None
+
     def do_GET(self):
-        cfg = load_master_config()
-        secret_path = cfg.get("mgmt_secret_path", "cfg-admin")
+        cfg = self.request_config()
+        if cfg is None:
+            return
+        secret_path = cfg["mgmt_secret_path"]
         parsed = urlparse(self.path)
         path = parsed.path
         expected_prefix = f"/{secret_path}/"
@@ -3162,8 +3230,10 @@ class ServerManagerHandler(BaseHTTPRequestHandler):
         self.send_html(HTML_PAGE)
 
     def do_POST(self):
-        cfg = load_master_config()
-        secret_path = cfg.get("mgmt_secret_path", "cfg-admin")
+        cfg = self.request_config()
+        if cfg is None:
+            return
+        secret_path = cfg["mgmt_secret_path"]
         parsed = urlparse(self.path)
         path = parsed.path
         expected_prefix = f"/{secret_path}/"
@@ -3193,8 +3263,9 @@ class ServerManagerHandler(BaseHTTPRequestHandler):
             user = req_data.get("user", "")
             password = req_data.get("pass", "")
 
-            expected_user = cfg.get("auth_user", "admin")
+            expected_user = cfg["auth_user"]
             expected_hash = cfg.get("auth_pass_hash", "")
+            expected_password = cfg.get("auth_pass_plain", "")
 
             # Verify password using PBKDF2 or direct compare
             salt = b"server_manager_salt_3x"
@@ -3202,7 +3273,7 @@ class ServerManagerHandler(BaseHTTPRequestHandler):
 
             is_valid = (user == expected_user) and (
                 secrets.compare_digest(input_hash, expected_hash) or
-                secrets.compare_digest(password, cfg.get("auth_pass_plain", ""))
+                (expected_password and secrets.compare_digest(password.encode("utf-8"), expected_password.encode("utf-8")))
             )
 
             if is_valid:
@@ -3245,14 +3316,12 @@ class ServerManagerHandler(BaseHTTPRequestHandler):
         # 4. API: Logout & Lock Firewall
         if rel_path == "api/logout":
             token = self.get_cookie("mgmt_session")
-            if token and token in SESSIONS:
-                del SESSIONS[token]
-            def delayed_lock():
-                time.sleep(1.5)
-                lock_firewall()
-            t = threading.Thread(target=delayed_lock, daemon=True)
-            t.start()
-            self.send_json({"success": True})
+            SESSIONS.pop(token, None)
+            if lock_firewall():
+                self.send_json({"success": True})
+            else:
+                self.send_json({"success": False, "logged_out": True,
+                                "error": "UFW не подтвердил закрытие временного доступа."}, code=503)
             return
 
         # 5. API: Change Auth Credentials
@@ -3305,49 +3374,54 @@ class ServerManagerHandler(BaseHTTPRequestHandler):
 # ==============================================================================
 
 def run_server():
-    cfg = load_master_config()
-    port = int(cfg.get("mgmt_port", 54892))
-    domain = cfg.get("domain", "example.com")
-
-    # Start firewall monitor thread
-    t = threading.Thread(target=firewall_monitor_thread, daemon=True)
-    t.start()
-
-    server_address = ("0.0.0.0", port)
-    httpd = ThreadingHTTPServer(server_address, ServerManagerHandler)
-    httpd.daemon_threads = True
-
-    cert_file = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
-    key_file = f"/etc/letsencrypt/live/{domain}/privkey.pem"
-
-    # HTTPS SSL wrapping
-    if os.path.exists(cert_file) and os.path.exists(key_file):
-        try:
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ctx.load_cert_chain(certfile=cert_file, keyfile=key_file)
-            httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
-            print(f"[✓] Server Manager HTTPS active on port {port}")
-        except Exception as e:
-            print(f"[!] Warning: SSL wrapping failed: {e}. Running on HTTP.")
-    else:
-        print(f"[!] SSL certs not found at {cert_file}. Running on plain HTTP.")
+    try:
+        cfg = load_master_config()
+    except ValueError as e:
+        print(f"[CONFIG ERROR] {e}", file=sys.stderr)
+        return 1
+    port = cfg["mgmt_port"]
+    cert_dir = f"{TLS_CERT_ROOT}/{cfg['domain']}"
+    try:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(certfile=f"{cert_dir}/fullchain.pem", keyfile=f"{cert_dir}/privkey.pem")
+    except (OSError, ValueError) as e:
+        print(f"[TLS ERROR] Не удалось загрузить сертификат или ключ из {cert_dir}: {e}", file=sys.stderr)
+        return 1
 
     try:
-        httpd.serve_forever()
+        with ThreadingHTTPServer(("0.0.0.0", port), ServerManagerHandler) as httpd:
+            httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+            threading.Thread(target=firewall_monitor_thread, daemon=True).start()
+            print(f"[✓] Server Manager HTTPS active on port {port}", flush=True)
+            httpd.serve_forever()
     except KeyboardInterrupt:
         pass
-    finally:
-        httpd.server_close()
+    except OSError as e:
+        print(f"[TLS ERROR] Не удалось запустить HTTPS на порту {port}: {e}", file=sys.stderr)
+        return 1
+    return 0
 
 
-if __name__ == "__main__":
+def main():
     if len(sys.argv) > 1:
         cmd = sys.argv[1].lower()
         if cmd == "open":
-            mins = int(sys.argv[2]) if len(sys.argv) > 2 else 30
-            unlock_firewall(mins)
+            mins = sys.argv[2] if len(sys.argv) > 2 else 30
+            return 0 if unlock_firewall(mins) else 1
         elif cmd == "close":
-            lock_firewall()
+            return 0 if lock_firewall() else 1
+        elif cmd == "firewall-status":
+            with firewall_lock():
+                port = load_master_config()["mgmt_port"]
+                if FIREWALL_COMMENT not in management_allows(port).values():
+                    print("ЗАКРЫТ")
+                else:
+                    expiry = read_timer()
+                    if expiry is None:
+                        print("ОТКРЫТ (таймер отсутствует)")
+                    else:
+                        remaining = max(0, int(expiry - time.time()))
+                        print(f"ОТКРЫТ (таймер: {remaining // 60} мин. {remaining % 60} сек.)")
         elif cmd == "status":
             cfg = load_master_config()
             print(f"Domain: {cfg.get('domain')}")
@@ -3370,6 +3444,14 @@ if __name__ == "__main__":
                 sys.exit(1)
             new_u = sys.argv[2].strip()
             new_p = sys.argv[3] if len(sys.argv) > 3 else None
+            if new_p == "--password-stdin":
+                if sys.stdin.isatty():
+                    print("Для --password-stdin передайте пароль через stdin.", file=sys.stderr)
+                    sys.exit(1)
+                new_p = sys.stdin.readline().removesuffix("\n")
+                if not new_p:
+                    print("Не удалось прочитать пароль из stdin.", file=sys.stderr)
+                    sys.exit(1)
             if not new_u:
                 print("[!] Ошибка: логин не может быть пустым.")
                 sys.exit(1)
@@ -3402,4 +3484,11 @@ if __name__ == "__main__":
         else:
             print("Usage: server-manager.py [run|open <minutes>|close|status|set-user <username> [password]]")
     else:
-        run_server()
+        return run_server()
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as e:
+        sys.exit(str(e))

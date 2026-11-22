@@ -14,6 +14,10 @@ SUITES = {
     'nonroot': (
         'test_release_asset.ReleaseAsset',
         'test_installer_compatibility.InstallerCompatibility',
+        'test_fork_install.ForkInstallerTest',
+        'test_fork_releases.ForkReleasesTest',
+        'test_fork_runtime.ForkRuntime',
+        'test_fork_server_manager.ForkServerManager',
         'test_ci_scope.CIScope',
         'test_recovery_extract.RecoveryExtract',
         'test_git_identity.GitIdentity',

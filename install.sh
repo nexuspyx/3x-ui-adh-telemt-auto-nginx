@@ -5,7 +5,38 @@
 # Generated: 12:18.08.11.2026
 # ==============================================================================
 
+set +x
 set -eo pipefail
+
+if [[ "${1:-}" == "--help" ]]; then
+    cat <<'EOF'
+Установка на чистый VPS с Ubuntu 24.04/26.04 или Debian 13 (amd64/arm64).
+Интерактивный запуск: bash install.sh
+Запуск с автоматически выбранными путями и портами:
+    INSTALL_NONINTERACTIVE=1 DOMAIN=vps.example.com \
+        CF_TOKEN_FILE=/root/cloudflare-token bash install.sh
+В CF_TOKEN_FILE укажите одну строку с API Token Cloudflare. Файл должен
+принадлежать запускающему скрипт пользователю и иметь режим 0600 или 0400.
+Для совместимости поддерживаются CF_TOKEN/CF_KEY из окружения.
+Используйте шаблон Edit zone DNS для нужной зоны. Для своего токена
+задайте Zone:Zone:Read и Zone:DNS:Edit. Проверка API читает зону и DNS.
+Для Global API Key дополнительно задайте CF_EMAIL.
+Для автоматического выбора можно переопределить PANEL_PORT, PANEL_PATH,
+SUB_PATH, SUB_JSON_PATH, TG_PATH, ADH_DOH_PATH, WS_PATH и XHTTP_PATH.
+До запуска нужны systemd, Python 3, curl, OpenSSL, iproute2 и ca-certificates.
+EOF
+    exit 0
+fi
+if (( $# )); then
+    printf 'Неизвестные аргументы. Используйте bash install.sh --help.\n' >&2
+    exit 1
+fi
+
+# Legacy credentials are imported before any external command inherits them.
+CF_CREDENTIAL="${CF_KEY:-${CF_TOKEN:-}}"
+CF_ACCOUNT_EMAIL="${CF_EMAIL:-}"
+unset CF_KEY CF_TOKEN CF_EMAIL
+export -n CF_CREDENTIAL CF_ACCOUNT_EMAIL
 
 [[ $EUID -ne 0 ]] && { echo -e "\e[1;31m[ERROR] Скрипт должен быть запущен с правами root (sudo bash $0)\e[0m"; exit 1; }
 
@@ -28,102 +59,224 @@ REPO_NAME="3x-ui-adh-telemt-auto-nginx"
 BRANCH="${INSTALL_BRANCH:-main}"
 GITHUB_RAW="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}"
 
-# Script working directory
-WORKDIR="/tmp/3x-ui-setup"
-mkdir -p "$WORKDIR"
-
-# Helper for random strings
-gen_random_string() {
-    LC_ALL=C tr -dc 'a-zA-Z0-9' < /dev/urandom 2>/dev/null | head -c "$1" || openssl rand -hex "$1" | head -c "$1"
+fail() {
+    msg_err "$1" >&2
+    exit 1
 }
 
-# Helper to find a free TCP port
-get_free_port() {
-    local port
-    while true; do
-        port=$((RANDOM % 30000 + 20000))
-        if ! ss -tuln | grep -q ":${port} "; then
-            echo "$port"
+gen_random_string() {
+    local length="$1" alphabet="${2:-a-zA-Z0-9}" chunk letters="" attempt
+    # Consume each finite batch completely so pipefail cannot turn a good sample into SIGPIPE.
+    for ((attempt=0; attempt<16; attempt++)); do
+        chunk=$(head -c "$((length * 2 + 32))" /dev/urandom | LC_ALL=C tr -dc "$alphabet") || return 1
+        letters+=$chunk
+        if (( ${#letters} >= length )); then
+            printf '%s' "${letters:0:length}"
             return 0
         fi
     done
+    msg_err "Не удалось получить случайные данные нужной длины." >&2
+    return 1
 }
 
-# Helper for interactive prompts (всегда выводит текст подсказки через printf, исключая подавление вывода)
 read_prompt() {
-    local prompt_msg="$1"
-    local var_name="$2"
-    local is_secret="${3:-0}"
-    local input_val=""
-
-    printf "%b" "$prompt_msg"
-    if [[ ! -t 0 ]] && [[ -r /dev/tty ]]; then
-        if [[ "$is_secret" -eq 1 ]]; then
-            read -rs input_val < /dev/tty || true
-            echo
-        else
-            read -r input_val < /dev/tty || true
-        fi
+    local message="$1" setting="$2" answer status=0
+    local -a options=(-r)
+    [[ "${3:-0}" == 1 ]] && options+=(-s)
+    printf '%b' "$message"
+    if [[ ! -t 0 ]] && { : </dev/tty; } 2>/dev/null; then
+        IFS= read "${options[@]}" answer < /dev/tty || status=$?
     else
-        if [[ "$is_secret" -eq 1 ]]; then
-            read -rs input_val 2>/dev/null || true
-            echo
-        else
-            read -r input_val 2>/dev/null || true
-        fi
+        IFS= read "${options[@]}" answer || status=$?
     fi
-    printf -v "$var_name" '%s' "$input_val"
+    [[ "${3:-0}" == 1 ]] && printf '\n'
+    (( status == 0 )) || fail "Ввод закончился (EOF). Для автоматического запуска смотрите bash install.sh --help."
+    printf -v "$setting" '%s' "$answer"
 }
 
-# Функция нормализации доменного имени:
-# - Очистка от пробелов, неразрывных пробелов (NBSP), невидимых unicode-символов
-# - Удаление http://, https://, портов (:443) и путей (/...)
-# - Автоматическая конвертация IDN / кириллических доменов в Punycode (xn--...) для исключения ошибок Certbot
+# Trim form input as UTF-8, including the formatting characters often copied at its edges.
+trim_input() {
+    printf '%s' "$1" | python3 -c '
+import sys
+import unicodedata
+
+def padding(char):
+    return char.isspace() or unicodedata.category(char) == "Cf"
+
+def strip_outer(value):
+    first = 0
+    last = len(value)
+    while first < last and padding(value[first]):
+        first += 1
+    while last > first and padding(value[last - 1]):
+        last -= 1
+    return value[first:last]
+
+value = strip_outer(sys.stdin.buffer.read().decode("utf-8"))
+if sys.argv[1] and len(value) >= 2 and value[0] in (chr(34), chr(39)) and value[-1] == value[0]:
+    value = strip_outer(value[1:-1])
+sys.stdout.buffer.write(value.encode("utf-8"))
+' "${2:+unquote}" 2>/dev/null
+}
+
 normalize_domain() {
-    local raw="$1"
-    if command -v python3 >/dev/null 2>&1; then
-        python3 -c "
-import sys, re
-raw = sys.argv[1].strip()
-if '://' in raw:
-    raw = raw.split('://', 1)[1]
-raw = raw.split('/', 1)[0]
-if ':' in raw:
-    raw = raw.split(':', 1)[0]
-raw = re.sub(r'[\s\u00a0\u1680\u2000-\u200b\u202f\u205f\u3000\ufeff\u200e\u200f\x00-\x1f\x7f]+', '', raw)
-if not raw:
-    sys.exit(0)
+    printf '%s' "$1" | python3 -c '
+import re
+import sys
+import unicodedata
+from urllib.parse import urlsplit
+
 try:
-    puny = raw.encode('idna').decode('ascii').lower()
-except Exception:
-    sys.exit(0)
-if re.match(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$', puny):
-    print(puny)
-" "$raw" 2>/dev/null
+    raw = sys.stdin.buffer.read().decode("utf-8")
+    if any(char.isspace() or unicodedata.category(char) in {"Cc", "Cf"} for char in raw):
+        raise ValueError
+    if raw.startswith("//") or "\\" in raw:
+        raise ValueError
+    parsed = urlsplit(raw if "://" in raw else "//" + raw)
+    if parsed.scheme not in {"", "http", "https"} or parsed.username is not None:
+        raise ValueError
+    if not parsed.hostname or parsed.netloc.endswith(":") or parsed.port == 0:
+        raise ValueError
+    domain = parsed.hostname.encode("idna").decode("ascii").lower().removesuffix(".")
+    label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    if len(domain) > 253 or not re.fullmatch(rf"(?:{label}\.)+{label}", domain):
+        raise ValueError
+    if domain.rsplit(".", 1)[1].isdigit():
+        raise ValueError
+except (UnicodeError, ValueError):
+    sys.exit(1)
+print(domain)
+'
+}
+
+read_choice() {
+    local setting="$1" selection="${!1}"
+    if [[ -n "$selection" ]] || [[ "$INSTALL_NONINTERACTIVE" == 1 ]]; then
+        selection=$(trim_input "$selection") || fail "Ошибка кодировки параметра $setting."
+        selection="${selection:-1}"
+        [[ "$selection" == 1 || "$selection" == 2 ]] || fail "Параметр $setting должен быть 1 или 2."
+        [[ "$INSTALL_NONINTERACTIVE" != 1 || "$selection" == 1 ]] ||
+            fail "В режиме INSTALL_NONINTERACTIVE доступен вариант 1."
     else
-        # Fallback на случай отсутствия python3: базовая очистка в ASCII
-        local d
-        d=$(echo "$raw" | sed -e 's|^https\?://||' -e 's|/.*$||' -e 's|:.*$||' | LC_ALL=C tr -d '[:space:]\r\n\t\000-\037\177-\377' | tr '[:upper:]' '[:lower:]')
-        if [[ "$d" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; then
-            echo "$d"
-        fi
+        while true; do
+            read_prompt "${C_GREEN}?${C_RESET} Выберите вариант [1/2] (по умолчанию: 1): " selection
+            if selection=$(trim_input "$selection"); then
+                selection="${selection:-1}"
+                [[ "$selection" == 1 || "$selection" == 2 ]] && break
+            fi
+            msg_warn "Введите 1 или 2."
+        done
+    fi
+    printf -v "$setting" '%s' "$selection"
+}
+
+normalize_port() {
+    local number
+    number=$(trim_input "$1") || return 1
+    [[ "$number" =~ ^[0123456789]+$ ]] || return 1
+    number="${number#"${number%%[!0]*}"}"
+    [[ -n "$number" && ${#number} -le 5 ]] || return 1
+    (( number >= 1024 && number <= 65535 )) || return 1
+    printf '%s' "$number"
+}
+
+reserve_port() {
+    local port="$1" protocols="${2:-tcp}" protocol
+    [[ " $reserved_ports " != *" $port "* ]] || return 1
+    for protocol in $protocols; do
+        [[ " $occupied_ports " != *" $protocol:$port "* ]] || return 1
+    done
+    reserved_ports+=" $port"
+}
+
+set_port() {
+    local setting="$1" description="$2" default_port="$3" manual="$4" entered normalized attempt
+    if [[ "$manual" == 1 ]]; then
+        while true; do
+            read_prompt "${C_CYAN}->${C_RESET} $description [$default_port]: " entered
+            if entered=$(trim_input "$entered") && normalized=$(normalize_port "${entered:-$default_port}") &&
+                reserve_port "$normalized"; then
+                break
+            fi
+            msg_warn "Выберите свободный порт от 1024 до 65535 без конфликта с другими службами."
+        done
+    elif [[ -n "${!setting}" ]]; then
+        normalized=$(normalize_port "${!setting}") && reserve_port "$normalized" ||
+            fail "Параметр $setting задаёт недопустимый или занятый порт."
+    else
+        for ((attempt=0; attempt<30000; attempt++)); do
+            normalized=$(( (RANDOM + attempt) % 30000 + 20000 ))
+            if reserve_port "$normalized"; then
+                break
+            fi
+        done
+        (( attempt < 30000 )) || fail "Не удалось подобрать свободный порт для $description."
+    fi
+    printf -v "$setting" '%s' "$normalized"
+}
+
+normalize_path() {
+    local path="$1" LC_ALL=C
+    path="${path#/}"
+    path="${path%/}"
+    [[ "$path" =~ ^[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$ ]] || return 1
+    printf '/%s' "$path"
+}
+
+reserve_path() {
+    local path candidate mode="$2" i
+    path=$(printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z')
+    case "$path" in
+        /assets*|/wp-admin*|/wp-login*|/xmlrpc*|/phpmyadmin*|/pma*|/adminer*|/actuator*|/solr*|/shell*|/eval*)
+            return 1 ;;
+    esac
+    for i in "${!paths[@]}"; do
+        candidate="${paths[i]}"
+        [[ "$path" != "$candidate" && "$path" != "$candidate/"* && "$candidate" != "$path/"* ]] || return 1
+        [[ "$mode" != prefix || "$candidate" != "$path"* ]] || return 1
+        [[ "${path_modes[i]}" != prefix || "$path" != "$candidate"* ]] || return 1
+    done
+    paths+=("$path")
+    path_modes+=("$mode")
+}
+
+validate_path() {
+    local path="$1" mode="$2"
+    if [[ "$mode" == management ]]; then
+        [[ "${path#/}" != */* ]]
+    else
+        reserve_path "$path" "$mode"
     fi
 }
 
-# Очистка учетных данных Cloudflare от кавычек, пробелов и невидимых символов
-clean_cf_credential() {
-    local raw="$1"
-    if command -v python3 >/dev/null 2>&1; then
-        python3 -c "
-import sys, re
-val = sys.argv[1].strip()
-val = re.sub(r'^[\"\'\s]+|[\"\'\s]+$', '', val)
-val = re.sub(r'[\s\u00a0\u1680\u2000-\u200b\u202f\u205f\u3000\ufeff\u200e\u200f\r\n\t]+', '', val)
-print(val)
-" "$raw" 2>/dev/null
+set_path() {
+    local setting="$1" description="$2" default_path="$3" mode="$4" manual="$5" entered path
+    if [[ "$manual" == 1 ]]; then
+        while true; do
+            read_prompt "${C_CYAN}->${C_RESET} $description [$default_path]: " entered
+            if entered=$(trim_input "$entered") && path=$(normalize_path "${entered:-$default_path}") &&
+                validate_path "$path" "$mode"; then
+                break
+            fi
+            msg_warn "Введите свободный путь из латинских букв, цифр, дефисов и знаков подчёркивания."
+        done
     else
-        echo "$raw" | LC_ALL=C tr -d '[:space:]\"'\'' '
+        entered=$(trim_input "${!setting}") || fail "Ошибка кодировки параметра $setting."
+        if [[ -n "$entered" || -n "$default_path" ]]; then
+            path=$(normalize_path "${entered:-$default_path}") && validate_path "$path" "$mode" ||
+                fail "Параметр $setting задаёт недопустимый или занятый путь."
+        else
+            while true; do
+                path="/$(gen_random_string 10)"
+                validate_path "$path" "$mode" && break
+            done
+        fi
     fi
+    case "$mode" in
+        directory) path+=/ ;;
+        management) path="${path#/}" ;;
+    esac
+    printf -v "$setting" '%s' "$path"
 }
 
 echo
@@ -137,370 +290,332 @@ echo
 # [0] OS CHECK & NETWORK DETECTION
 # ─────────────────────────────────────────────────────────────────────────────
 msg_inf "Проверка совместимости операционной системы..."
-if [[ -f /etc/os-release ]]; then
-    . /etc/os-release
-    case "$ID" in
-        ubuntu|debian)
-            msg_ok "Операционная система поддерживается: ${PRETTY_NAME}"
-            ;;
-        *)
-            msg_err "Неподдерживаемая ОС: ${ID}. Требуется Ubuntu 24.04/26.04 или Debian 13."
-            exit 1
-            ;;
-    esac
-else
-    msg_err "Не удалось определить операционную систему."
-    exit 1
-fi
+[[ -r /etc/os-release ]] || fail "Не удалось определить операционную систему."
+. /etc/os-release
+case "$ID:$VERSION_ID" in
+    ubuntu:24.04|ubuntu:26.04|debian:13) ;;
+    *) fail "Неподдерживаемая ОС: ${PRETTY_NAME:-$ID}. Требуется Ubuntu 24.04/26.04 или Debian 13." ;;
+esac
+case "$(uname -m)" in
+    x86_64|aarch64|arm64) ;;
+    *) fail "Поддерживаются архитектуры amd64 и arm64." ;;
+esac
+for command_name in python3 curl openssl ss systemctl; do
+    command -v "$command_name" >/dev/null ||
+        fail "До запуска установщика нужна утилита $command_name. Смотрите bash install.sh --help."
+done
+systemctl show --property=Version --value >/dev/null 2>&1 ||
+    fail "Не удалось подключиться к системному менеджеру systemd."
+case "${INSTALL_NONINTERACTIVE:-0}" in
+    0|1) ;;
+    *) fail "INSTALL_NONINTERACTIVE должен быть 0 или 1." ;;
+esac
+msg_ok "Операционная система поддерживается: ${PRETTY_NAME:-$ID}"
 
-msg_inf "Определение внешнего IP-адреса сервера..."
-SERVER_IP=$(curl -s4 --connect-timeout 2 --max-time 4 icanhazip.com || curl -s4 --connect-timeout 2 --max-time 4 ifconfig.me || echo "127.0.0.1")
-msg_ok "Внешний IP-адрес сервера: ${C_BOLD}${SERVER_IP}${C_RESET}"
+PANEL_PORT="${PANEL_PORT:-}"
+GRPC_PORT=43935
+TG_PORT=18080
+TG_DECOY_PORT=18082
+TG_PANEL_INTERNAL_PORT=8080
+TG_PANEL_PORT=65001
+ADH_DNS_PORT=57998
+ADH_WEB_PORT=3000
+ADH_DOH_PORT="$ADH_WEB_PORT"
+
+# Snapshot the existing listeners before allocating or changing any port.
+listeners=$(ss -H -lntu) || fail "Не удалось проверить занятые порты."
+occupied_ports=""
+reserved_ports=""
+while read -r protocol _ _ _ address _; do
+    case "$protocol" in
+        tcp|udp) occupied_ports+=" $protocol:${address##*:}" ;;
+    esac
+done <<< "$listeners"
+for port in 80 9091 9443 "$GRPC_PORT" "$TG_PORT" "$TG_DECOY_PORT" "$TG_PANEL_INTERNAL_PORT" "$TG_PANEL_PORT" "$ADH_WEB_PORT"; do
+    reserve_port "$port" || fail "Фиксированный порт $port/TCP занят."
+done
+for port in 443 8443 "$ADH_DNS_PORT"; do
+    reserve_port "$port" "tcp udp" || fail "Фиксированный порт $port (TCP/UDP) занят."
+done
+
+detect_public_ipv4() {
+    curl -q -fsS4 --connect-timeout 2 --max-time 4 "$1" 2>/dev/null | python3 -c '
+import ipaddress
+import sys
+try:
+    ip = ipaddress.IPv4Address(sys.stdin.read().strip())
+    if not ip.is_global or ip.is_multicast:
+        sys.exit(1)
+except ValueError:
+    sys.exit(1)
+print(ip)
+' 2>/dev/null
+}
+msg_inf "Определение внешнего IPv4-адреса сервера..."
+SERVER_IP=$(detect_public_ipv4 https://icanhazip.com) ||
+    SERVER_IP=$(detect_public_ipv4 https://ifconfig.me) ||
+    fail "Не удалось определить публичный IPv4. Проверьте DNS и исходящие HTTPS-соединения."
+msg_ok "Внешний IPv4-адрес сервера: $SERVER_IP"
+
+print_banner() {
+    printf "\n"
+    printf "  \e[38;5;51m   ______      __                   _____                                \e[0m\n"
+    printf "  \e[38;5;45m  / ____/_  __/ /___  __________   / ___/___  ______   _____  _____        \e[0m\n"
+    printf "  \e[38;5;39m / /_  / / / / __/ / / / ___/ _ \  \__ \/ _ \/ ___/ | / / _ \/ ___/        \e[0m\n"
+    printf "  \e[38;5;33m/ __/ / /_/ / /_/ /_/ / /  /  __/ ___/ /  __/ /   | |/ /  __/ /            \e[0m\n"
+    printf "  \e[38;5;27m/_/    \__,_/\__/\__,_/_/   \___/ /____/\___/_/    |___/\___/_/             \e[0m\n"
+    printf "\n"
+    printf "  \e[1;37m• Stealth VPN & Multi-Proxy Core Architecture\e[0m  \e[38;5;45m[ Ubuntu / Debian ]\e[0m\n"
+    printf "  \e[38;5;244m• Reality • XHTTP • Hysteria 2 • gRPC • AdGuard DoH • Telemt • Server Mgr\e[0m\n"
+    printf "  ─────────────────────────────────────────────────────────────────────────────\n\n"
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # [1] INTERACTIVE WIZARD
 # ─────────────────────────────────────────────────────────────────────────────
-echo
-echo -e "${C_BOLD}=== ШАГ [1/9]: ИНТЕРАКТИВНЫЙ МАСТЕР НАСТРОЙКИ СЕРВЕРА ===${C_RESET}"
-echo -e "Ответьте на несколько простых вопросов. Все подсказки снабжены примерами."
-echo
+print_banner
+printf '%b=== ШАГ [1/9]: МАСТЕР НАСТРОЙКИ СЕРВЕРА ===%b\n\n' "$C_BOLD" "$C_RESET"
 
-# 1.1 Доменное имя сервера
-echo -e "${C_BOLD}1. Доменное имя сервера:${C_RESET}"
-msg_inf "Для работы веб-панели, прокси-протоколов и выпуска SSL-сертификата требуется домен (или поддомен)."
-msg_inf "Убедитесь, что A-запись домена направлена на IP вашего сервера: ${C_BOLD}${SERVER_IP}${C_RESET}"
-
-if [[ -z "$DOMAIN" ]]; then
-    while true; do
-        read_prompt "${C_GREEN}?${C_RESET} Введите доменное имя сервера (например, vps.example.com): " USER_INPUT_DOMAIN
-        if [[ -z "$USER_INPUT_DOMAIN" ]]; then
-            msg_warn "Ошибка: доменное имя не может быть пустым. Пожалуйста, введите ваш домен."
-            continue
-        fi
-
-        DOMAIN=$(normalize_domain "$USER_INPUT_DOMAIN")
-        if [[ -z "$DOMAIN" ]]; then
-            msg_warn "Ошибка: '${USER_INPUT_DOMAIN}' не является корректным доменным именем."
-            msg_warn "Убедитесь, что домен не содержит пробелов или спецсимволов (например: vps.example.com или мой-сервер.рф)."
-            continue
-        fi
-
-        if [[ "$USER_INPUT_DOMAIN" != "$DOMAIN" ]]; then
-            if [[ "$DOMAIN" == *"xn--"* ]]; then
-                msg_inf "Обнаружен кириллический / IDN домен. Автоматически сконвертирован в Punycode: ${C_BOLD}${DOMAIN}${C_RESET}"
-            else
-                msg_inf "Доменное имя очищено от лишних символов/пробелов: ${C_BOLD}${DOMAIN}${C_RESET}"
-            fi
-        fi
-        break
-    done
-    msg_ok "Доменное имя сервера: ${C_BOLD}${DOMAIN}${C_RESET}"
+msg_inf "Для выпуска сертификата укажите домен с A-записью на $SERVER_IP."
+domain_input="${DOMAIN:-}"
+if [[ -n "$domain_input" || "$INSTALL_NONINTERACTIVE" == 1 ]]; then
+    domain_input=$(trim_input "$domain_input") && DOMAIN=$(normalize_domain "$domain_input") ||
+        fail "Укажите корректное доменное имя в DOMAIN."
 else
-    RAW_DOMAIN="$DOMAIN"
-    DOMAIN=$(normalize_domain "$RAW_DOMAIN")
-    if [[ -z "$DOMAIN" ]]; then
-        msg_err "Ошибка: некорректное доменное имя в переменной окружения DOMAIN='${RAW_DOMAIN}'."
-        exit 1
-    fi
-    if [[ "$RAW_DOMAIN" != "$DOMAIN" ]]; then
-        if [[ "$DOMAIN" == *"xn--"* ]]; then
-            msg_inf "Домен из окружения сконвертирован в Punycode: ${C_BOLD}${DOMAIN}${C_RESET}"
-        else
-            msg_inf "Домен из окружения нормализован: ${C_BOLD}${DOMAIN}${C_RESET}"
+    while true; do
+        read_prompt "${C_GREEN}?${C_RESET} Введите доменное имя сервера (например, vps.example.com): " domain_input
+        if domain_input=$(trim_input "$domain_input") && DOMAIN=$(normalize_domain "$domain_input"); then
+            break
         fi
-    fi
-    msg_ok "Используется доменное имя из переменной окружения: ${C_BOLD}${DOMAIN}${C_RESET}"
+        msg_warn "Введите корректное доменное имя без внутренних пробелов."
+    done
 fi
+msg_ok "Доменное имя сервера: $DOMAIN"
 
-# 1.2 Cloudflare API Token
-echo
-echo -e "${C_BOLD}2. Выпуск SSL-сертификата (Cloudflare DNS-01 API):${C_RESET}"
-msg_inf "Сертификат выпускается через DNS-01 API без открытия 80-го порта в файрволе."
-
-CF_KEY="${CF_KEY:-$CF_TOKEN}"
-
-validate_cf_credentials() {
-    local key="$1"
-    local email="$2"
-
-    if [[ -n "$email" ]]; then
-        # Проверка Global API Key
-        local check_res
-        check_res=$(curl -s --connect-timeout 6 --max-time 12 -X GET "https://api.cloudflare.com/client/v4/user" \
-            -H "X-Auth-Key: ${key}" \
-            -H "X-Auth-Email: ${email}" 2>/dev/null || echo "")
-        if [[ "$check_res" == *'"success":true'* ]]; then
-            return 0
-        else
-            return 1
-        fi
-    else
-        # Проверка API Token
-        local check_res
-        check_res=$(curl -s --connect-timeout 6 --max-time 12 -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
-            -H "Authorization: Bearer ${key}" 2>/dev/null || echo "")
-        if [[ "$check_res" == *'"status":"active"'* || "$check_res" == *'"code":10000'* ]]; then
-            return 0
-        elif [[ "$check_res" == *'"code":6003'* || "$check_res" == *"Invalid request headers"* ]]; then
-            return 2
-        elif [[ "$check_res" == *'"code":1000'* || "$check_res" == *"Invalid API Token"* ]]; then
-            return 3
-        else
-            # Если проверка недоступна по сети
-            return 4
-        fi
-    fi
+read_cf_file() {
+    python3 -c '
+import os
+import stat
+import sys
+with os.fdopen(os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as source:
+    info = os.fstat(source.fileno())
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) not in (0o400, 0o600)):
+        sys.exit(1)
+    data = source.read(4097).removesuffix(b"\n").removesuffix(b"\r")
+    if len(data) > 4096 or any(char in data for char in (b"\r", b"\n", b"\0")):
+        sys.exit(1)
+    sys.stdout.buffer.write(data)
+' "$1" 2>/dev/null
 }
 
-if [[ -z "$CF_KEY" ]]; then
-    while true; do
-        read_prompt "${C_GREEN}?${C_RESET} Введите Cloudflare API Token: " CF_KEY
-        CF_KEY=$(clean_cf_credential "$CF_KEY")
-        if [[ -z "$CF_KEY" ]]; then
-            msg_warn "Ошибка: Cloudflare API Token не может быть пустым!"
-            continue
-        fi
-
-        # Проверка на Zone ID / Account ID (32 hex-символа)
-        if [[ ${#CF_KEY} -eq 32 && "$CF_KEY" =~ ^[0-9a-fA-F]{32}$ ]]; then
-            msg_warn "Внимание: вы ввели Zone ID или Account ID (32 символа), а не API Token!"
-            echo -e "   Zone ID находится на странице домена, но для выпуска SSL нужен именно ${C_BOLD}API Token${C_RESET}."
-            echo -e "   Как создать правильный API Token в Cloudflare:"
-            echo -e "   1. В Cloudflare нажмите на аватар (вверху справа) -> ${C_BOLD}My Profile${C_RESET} -> ${C_BOLD}API Tokens${C_RESET}"
-            echo -e "   2. Нажмите ${C_BOLD}Create Token${C_RESET} -> шаблон ${C_BOLD}Edit zone DNS${C_RESET} -> ${C_BOLD}Use template${C_RESET}"
-            echo -e "   3. В секции Zone Resources выберите ${C_BOLD}All zones${C_RESET} (или зону с вашим доменом)"
-            echo -e "   4. Нажмите ${C_BOLD}Continue to summary${C_RESET} -> ${C_BOLD}Create Token${C_RESET} и скопируйте 40-значный токен."
-            echo
-            continue
-        fi
-
-        # Проверка на Global API Key (37 hex-символов)
-        if [[ ${#CF_KEY} -eq 37 && "$CF_KEY" =~ ^[0-9a-fA-F]{37}$ ]]; then
-            msg_inf "Обнаружен Cloudflare Global API Key (37 символов)."
-            echo -e "   Для работы Global API Key требуется Email аккаунта Cloudflare."
-            while true; do
-                read_prompt "${C_GREEN}?${C_RESET} Введите Email аккаунта Cloudflare: " CF_EMAIL
-                CF_EMAIL=$(echo "$CF_EMAIL" | tr -d '[:space:]')
-                if [[ "$CF_EMAIL" == *@*.* ]]; then
-                    break
-                fi
-                msg_warn "Введите корректный Email (например, user@example.com)."
-            done
-        fi
-
-        msg_inf "Проверка учетных данных в Cloudflare API..."
-        status=0
-        validate_cf_credentials "$CF_KEY" "$CF_EMAIL" || status=$?
-
-        if (( status == 0 )); then
-            if [[ -n "$CF_EMAIL" ]]; then
-                msg_ok "Cloudflare Global API Key и Email успешно проверены!"
-            else
-                msg_ok "Cloudflare API Token успешно проверен (статус: активен)!"
-            fi
-            break
-        elif (( status == 1 )); then
-            msg_warn "Ошибка: неверный Global API Key или Email. Проверьте данные и попробуйте снова."
-            CF_EMAIL=""
-            continue
-        elif (( status == 2 )); then
-            msg_warn "Ошибка Cloudflare 6003 (Invalid request headers)."
-            echo -e "   Токен имеет неверный формат. Проверьте, что скопировали токен целиком без лишних символов."
-            echo -e "   Для выпуска SSL нужен API Token с шаблоном 'Edit zone DNS' (длина 40 символов)."
-            continue
-        elif (( status == 3 )); then
-            msg_warn "Ошибка Cloudflare: Токен не найден или был отозван (Invalid API Token)."
-            echo -e "   Проверьте правильность токена и попробуйте снова."
-            continue
+cf_request() {
+    local endpoint="$1" expectation="$2" zone="${3:-}" response
+    if ! response=$(
+        if [[ -n "$CF_ACCOUNT_EMAIL" ]]; then
+            printf 'X-Auth-Key: %s\nX-Auth-Email: %s\n' "$CF_CREDENTIAL" "$CF_ACCOUNT_EMAIL"
         else
-            # status == 4: таймаут сети при проверке
-            msg_ok "Cloudflare API Token принят (проверка через сеть пропущена)."
-            break
+            printf 'Authorization: Bearer %s\n' "$CF_CREDENTIAL"
+        fi | curl -q -sS --proto '=https' --connect-timeout 6 --max-time 12 \
+            --header @- --write-out '\n%{http_code}' \
+            "https://api.cloudflare.com/client/v4/$endpoint" 2>/dev/null
+    ); then
+        msg_err "Ошибка Cloudflare: API недоступен. Проверьте DNS и HTTPS." >&2
+        return 1
+    fi
+    printf '%s' "$response" | python3 -c '
+import json
+import re
+import sys
+
+expectation, zone = sys.argv[1:]
+raw, _, http_status = sys.stdin.read().rpartition("\n")
+
+def error(message):
+    print(f"Ошибка Cloudflare: {message}", file=sys.stderr)
+    sys.exit(1)
+
+if not re.fullmatch(r"[0-9]{3}", http_status):
+    error("не удалось прочитать HTTP-статус.")
+if http_status != "200":
+    error(f"HTTP {http_status}. Проверьте учетные данные, права и доступ к зоне.")
+try:
+    data = json.loads(raw)
+    if not isinstance(data, dict) or data.get("success") is not True or "result" not in data:
+        error("API отклонил запрос. Проверьте учетные данные, права и доступ к зоне.")
+    result = data["result"]
+    if expectation == "active" and (not isinstance(result, dict) or result.get("status") != "active"):
+        error("токен не активен.")
+    if expectation == "user" and not isinstance(result, dict):
+        error("некорректный ответ проверки Global API Key.")
+    if expectation in {"zone", "dns"} and not isinstance(result, list):
+        error("некорректный ответ для зоны или DNS-записей.")
+    if expectation == "zone":
+        for item in result:
+            if isinstance(item, dict) and item.get("name") == zone:
+                zone_id = item.get("id")
+                if isinstance(zone_id, str) and re.fullmatch(r"[0-9a-fA-F]{32}", zone_id):
+                    print(zone_id)
+                    break
+except (UnicodeError, ValueError):
+    error("не удалось разобрать ответ JSON.")
+' "$expectation" "$zone"
+}
+
+validate_cf_credentials() {
+    local candidate="$DOMAIN" zone_id
+    local LC_ALL=C
+    if [[ "$CF_CREDENTIAL" =~ ^[0-9a-fA-F]{37}$ ]]; then
+        if [[ ! "$CF_ACCOUNT_EMAIL" =~ ^[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alnum:]]+$ ]]; then
+            msg_err "Ошибка Cloudflare: для Global API Key обязателен корректный CF_EMAIL." >&2
+            return 1
         fi
+        cf_request user user || return 1
+    else
+        if [[ ! "$CF_CREDENTIAL" =~ ^[a-zA-Z0-9_-]{40}$ || -n "$CF_ACCOUNT_EMAIL" ]]; then
+            msg_err "Ошибка Cloudflare: нужен API Token из 40 символов или Global API Key с email." >&2
+            return 1
+        fi
+        cf_request user/tokens/verify active || return 1
+    fi
+
+    # Certbot can use a parent zone when the requested hostname is a subdomain.
+    while [[ "$candidate" == *.* ]]; do
+        zone_id=$(cf_request "zones?name=$candidate" zone "$candidate") || return 1
+        if [[ -n "$zone_id" ]]; then
+            cf_request "zones/$zone_id/dns_records?per_page=1" dns
+            return $?
+        fi
+        candidate="${candidate#*.}"
     done
+    msg_err "Ошибка Cloudflare: зона для $DOMAIN недоступна по указанным учетным данным." >&2
+    return 1
+}
+
+msg_inf "Для SSL через DNS-01 используйте шаблон Cloudflare Edit zone DNS для нужной зоны."
+if [[ -n "${CF_TOKEN_FILE:-}" ]]; then
+    [[ -z "$CF_CREDENTIAL" ]] || fail "Укажите CF_TOKEN_FILE или CF_TOKEN/CF_KEY."
+    CF_CREDENTIAL=$(read_cf_file "$CF_TOKEN_FILE") ||
+        fail "Не удалось прочитать CF_TOKEN_FILE. Нужен обычный файл владельца с режимом 0600 или 0400."
+fi
+if [[ -n "${CF_TOKEN_FILE:-}" || -n "$CF_CREDENTIAL" || "$INSTALL_NONINTERACTIVE" == 1 ]]; then
+    CF_CREDENTIAL=$(trim_input "$CF_CREDENTIAL" unquote) &&
+        CF_ACCOUNT_EMAIL=$(trim_input "$CF_ACCOUNT_EMAIL" unquote) ||
+        fail "Ошибка Cloudflare: учетные данные должны быть в UTF-8."
+    validate_cf_credentials || exit 1
 else
-    CF_KEY=$(clean_cf_credential "$CF_KEY")
-    msg_ok "Используется Cloudflare API Token из переменной окружения."
-fi
-
-# 1.3 Кастомизация путей и портов
-echo
-echo -e "${C_BOLD}3. Маскировка путей (Locations) и внутренних портов:${C_RESET}"
-msg_inf "Все сервисы (3X-UI, Telemt, AdGuard DoH, VLESS, Trojan) работают через единый HTTPS-порт 443."
-msg_inf "Каждый сервис скрывается за собственным веб-путем (Location)."
-
-if [[ -z "$PATH_CHOICE" ]]; then
-    echo -e "   ${C_BOLD}[1]${C_RESET} Автоматический режим (${C_GREEN}Рекомендуется — нажмите Enter${C_RESET})"
-    echo -e "       Скрипт всё настроит сам с максимальной защитой от ТСПУ. В клиентах всё заработает по подписке."
-    echo -e "   ${C_BOLD}[2]${C_RESET} Ручная настройка путей (только для экспертов, кому нужны конкретные URL-адреса)"
-    read_prompt "${C_GREEN}?${C_RESET} Выберите вариант [1/2] (по умолчанию: 1): " PATH_CHOICE
-    PATH_CHOICE="${PATH_CHOICE:-1}"
-fi
-
-if [[ "$PATH_CHOICE" == "2" ]]; then
-    echo
-    echo -e "${C_BOLD}Ручная настройка (нажимайте Enter на каждом шаге для значения по умолчанию):${C_RESET}"
-    msg_inf "Все клиентские приложения (Happ, Sing-box, V2Box) получают эти параметры автоматически из подписки."
-    read_prompt "${C_CYAN}->${C_RESET} Путь к веб-панели управления 3X-UI [/xui/]: " USER_PANEL_PATH
     while true; do
-        read_prompt "${C_CYAN}->${C_RESET} Внутренний порт панели управления 3X-UI [по умолчанию: 2053]: " USER_PANEL_PORT
-        USER_PANEL_PORT="${USER_PANEL_PORT:-2053}"
-        if [[ "$USER_PANEL_PORT" =~ ^[0-9]+$ ]] && (( USER_PANEL_PORT >= 1024 && USER_PANEL_PORT <= 65535 )); then
-            PANEL_PORT="$USER_PANEL_PORT"
-            break
+        read_prompt "${C_GREEN}?${C_RESET} Введите Cloudflare API Token: " CF_CREDENTIAL 1
+        CF_ACCOUNT_EMAIL=""
+        if ! CF_CREDENTIAL=$(trim_input "$CF_CREDENTIAL" unquote); then
+            msg_warn "Ошибка Cloudflare: учетные данные должны быть в UTF-8."
+            continue
         fi
-        msg_warn "Ошибка: порт должен быть числом от 1024 до 65535."
+        if [[ "$CF_CREDENTIAL" =~ ^[0-9a-fA-F]{37}$ ]]; then
+            read_prompt "${C_GREEN}?${C_RESET} Введите email Cloudflare для Global API Key: " CF_ACCOUNT_EMAIL
+            if ! CF_ACCOUNT_EMAIL=$(trim_input "$CF_ACCOUNT_EMAIL" unquote); then
+                msg_warn "Ошибка Cloudflare: email должен быть в UTF-8."
+                continue
+            fi
+        fi
+        validate_cf_credentials && break
     done
-    read_prompt "${C_CYAN}->${C_RESET} Путь для обычной Base64 подписки [/sub/]: " USER_SUB_PATH
-    read_prompt "${C_CYAN}->${C_RESET} Путь для JSON подписки (Sing-box / Happ) [/sub-json/]: " USER_SUB_JSON_PATH
-    read_prompt "${C_CYAN}->${C_RESET} Путь для Telegram Web Proxy (Telemt) [${TG_PATH:-/tg}]: " USER_TG_PATH
-    DEFAULT_ADH_DOH="/mediagetv2"
-    read_prompt "${C_CYAN}->${C_RESET} Секретный путь для AdGuard DoH (защита от ТСПУ) [${ADH_DOH_PATH:-$DEFAULT_ADH_DOH}]: " USER_ADH_DOH_PATH
-    read_prompt "${C_CYAN}->${C_RESET} Путь для VLESS WebSocket [/vless-ws]: " USER_WS_PATH
-    read_prompt "${C_CYAN}->${C_RESET} Путь для VLESS XHTTP [/vless-xhttp]: " USER_XHTTP_PATH
-    
-    PANEL_PATH="${USER_PANEL_PATH:-/xui/}"
-    SUB_PATH="${USER_SUB_PATH:-/sub/}"
-    SUB_JSON_PATH="${USER_SUB_JSON_PATH:-/sub-json/}"
-    TG_PATH="${USER_TG_PATH:-${TG_PATH:-/tg}}"
-    ADH_DOH_PATH="${USER_ADH_DOH_PATH:-${ADH_DOH_PATH:-$DEFAULT_ADH_DOH}}"
-    WS_PATH="${USER_WS_PATH:-/vless-ws}"
-    XHTTP_PATH="${USER_XHTTP_PATH:-/vless-xhttp}"
-    # Для максимальной скрытности (Stealth) gRPC ServiceNames генерируются случайными
-    GRPC_PATH="vless-$(gen_random_string 8)"
-    TROJAN_PATH="trojan-$(gen_random_string 8)"
-    msg_ok "Пользовательские пути сохранены. gRPC ServiceNames сгенерированы со случайными стойкими идентификаторами для защиты от зондирования ТСПУ."
+fi
+msg_ok "Учетные данные Cloudflare проверены. Доступ к чтению зоны и DNS-записей подтверждён."
+
+printf '\n%bНастройка путей и портов%b\n' "$C_BOLD" "$C_RESET"
+msg_inf "1 — автоматический выбор. 2 — ручная настройка путей и порта 3X-UI."
+read_choice PATH_CHOICE
+paths=()
+path_modes=()
+if [[ "$PATH_CHOICE" == 2 ]]; then
+    set_path PANEL_PATH "Путь к веб-панели 3X-UI" "/xui/" directory 1
+    set_port PANEL_PORT "Внутренний порт панели управления 3X-UI" 2053 1
+    set_path SUB_PATH "Путь для обычной подписки" "/sub/" directory 1
+    set_path SUB_JSON_PATH "Путь для JSON подписки" "/sub-json/" directory 1
+    set_path TG_PATH "Путь для Telegram Web Proxy" "${TG_PATH:-/tg}" prefix 1
+    set_path ADH_DOH_PATH "Путь для AdGuard DoH" "${ADH_DOH_PATH:-/mediagetv2}" doh 1
+    set_path WS_PATH "Путь для VLESS WebSocket" "/vless-ws" exact 1
+    set_path XHTTP_PATH "Путь для VLESS XHTTP" "/vless-xhttp" prefix 1
 else
-    # Генерация случайных путей
-    PANEL_PATH="${PANEL_PATH:-/$(gen_random_string 10)/}"
-    SUB_PATH="${SUB_PATH:-/$(gen_random_string 10)/}"
-    SUB_JSON_PATH="${SUB_JSON_PATH:-/$(gen_random_string 10)/}"
+    # Register configured paths first so generated ones can avoid collisions with them.
     TG_PATH="${TG_PATH:-${USER_TG_PATH:-/tg}}"
     ADH_DOH_PATH="${ADH_DOH_PATH:-${USER_ADH_DOH_PATH:-/mediagetv2}}"
-    WS_PATH="${WS_PATH:-/$(gen_random_string 10)}"
-    XHTTP_PATH="${XHTTP_PATH:-/$(gen_random_string 10)}"
-    GRPC_PATH="vless-$(gen_random_string 8)"
-    TROJAN_PATH="trojan-$(gen_random_string 8)"
-    msg_ok "Сгенерированы случайные стойкие пути для защиты от ТСПУ."
+    routes=(PANEL_PATH:directory SUB_PATH:directory SUB_JSON_PATH:directory TG_PATH:prefix ADH_DOH_PATH:doh WS_PATH:exact XHTTP_PATH:prefix)
+    for route in "${routes[@]}"; do
+        setting="${route%:*}"
+        if [[ -n "${!setting}" ]]; then
+            set_path "$setting" "$setting" "" "${route#*:}" 0
+        fi
+    done
+    for route in "${routes[@]}"; do
+        setting="${route%:*}"
+        if [[ -z "${!setting}" ]]; then
+            set_path "$setting" "$setting" "" "${route#*:}" 0
+        fi
+    done
+    # An explicit panel port must take precedence over later auto-allocated ports.
+    [[ -z "$PANEL_PORT" ]] || set_port PANEL_PORT "панель 3X-UI" "" 0
 fi
+while true; do
+    GRPC_PATH="vless-$(gen_random_string 8)"
+    reserve_path "/$GRPC_PATH" prefix && break
+done
+while true; do
+    TROJAN_PATH="trojan-$(gen_random_string 8)"
+    reserve_path "/$TROJAN_PATH" prefix && break
+done
 
-# 1.4 Настройка модуля «Конфигурирование сервера»
-echo
-echo -e "${C_BOLD}4. Модуль управления «Конфигурирование сервера» (Stealth Dashboard):${C_RESET}"
-msg_inf "Веб-интерфейс для изменения путей, портов и мониторинга сервера."
-msg_inf "Работает на скрытом порту и защищен файрволом UFW."
-
-if [[ -z "$MGMT_CHOICE" ]]; then
-    echo -e "   ${C_BOLD}[1]${C_RESET} Автоматический защищенный режим (${C_GREEN}Рекомендуется${C_RESET} — случайный порт и путь)"
-    echo -e "   ${C_BOLD}[2]${C_RESET} Задать порт, путь и данные входа вручную"
-    read_prompt "${C_GREEN}?${C_RESET} Выберите вариант [1/2] (по умолчанию: 1): " MGMT_CHOICE
+if [[ "$PATH_CHOICE" == 2 ]]; then
+    printf '\n%bНастройка модуля управления сервером%b\n' "$C_BOLD" "$C_RESET"
+    msg_inf "1 — автоматический выбор. 2 — ручная настройка порта, пути и данных входа."
+    read_choice MGMT_CHOICE
+else
     MGMT_CHOICE="${MGMT_CHOICE:-1}"
 fi
-
-if [[ "$MGMT_CHOICE" == "2" ]]; then
+if [[ "$MGMT_CHOICE" == 2 ]]; then
+    set_port MGMT_PORT "Порт модуля управления" 54892 1
+    set_path MGMT_SECRET_PATH "Секретный путь модуля управления" "cfg-admin" management 1
     while true; do
-        read_prompt "${C_CYAN}->${C_RESET} Введите порт для модуля управления [по умолчанию: 54892]: " USER_MGMT_PORT
-        USER_MGMT_PORT="${USER_MGMT_PORT:-54892}"
-        if [[ "$USER_MGMT_PORT" =~ ^[0-9]+$ ]] && (( USER_MGMT_PORT >= 1024 && USER_MGMT_PORT <= 65535 )); then
-            MGMT_PORT="$USER_MGMT_PORT"
-            break
+        read_prompt "${C_CYAN}->${C_RESET} Логин администратора [admin]: " MGMT_USER
+        if MGMT_USER=$(trim_input "$MGMT_USER"); then
+            MGMT_USER="${MGMT_USER:-admin}"
+            [[ ! "$MGMT_USER" =~ [[:space:][:cntrl:]:] ]] && break
         fi
-        msg_warn "Ошибка: порт должен быть числом от 1024 до 65535."
+        msg_warn "Введите логин без пробелов, управляющих символов и двоеточия."
     done
-    read_prompt "${C_CYAN}->${C_RESET} Введите секретный веб-путь модуля управления [по умолчанию: cfg-admin]: " USER_MGMT_PATH
-    MGMT_SECRET_PATH="${USER_MGMT_PATH:-cfg-admin}"
-    MGMT_SECRET_PATH=$(echo "$MGMT_SECRET_PATH" | tr -d '/[:space:]')
-    [[ -z "$MGMT_SECRET_PATH" ]] && MGMT_SECRET_PATH="cfg-admin"
-    msg_ok "Выбран порт: ${MGMT_PORT}, секретный путь: /${MGMT_SECRET_PATH}/"
-
-    read_prompt "${C_CYAN}->${C_RESET} Введите логин администратора для модуля управления [по умолчанию: admin]: " USER_MGMT_USER
-    MGMT_USER="${USER_MGMT_USER:-admin}"
-    MGMT_USER=$(echo "$MGMT_USER" | tr -d '[:space:]')
-    [[ -z "$MGMT_USER" ]] && MGMT_USER="admin"
-
-    read_prompt "${C_CYAN}->${C_RESET} Введите пароль администратора [Enter для автогенерации]: " USER_MGMT_PASS
-    if [[ -n "$USER_MGMT_PASS" ]]; then
-        MGMT_PASS="$USER_MGMT_PASS"
-    else
-        MGMT_PASS="$(gen_random_string 16)"
-    fi
-    msg_ok "Логин администратора: ${MGMT_USER}"
+    read_prompt "${C_CYAN}->${C_RESET} Пароль администратора [Enter для автогенерации]: " MGMT_PASS 1
+    [[ -n "$MGMT_PASS" ]] || MGMT_PASS="$(gen_random_string 16)"
 else
-    MGMT_PORT=$(get_free_port)
+    MGMT_PORT=""
+    set_port MGMT_PORT "модуль управления" "" 0
     MGMT_SECRET_PATH="cfg-$(gen_random_string 8)"
     MGMT_USER="admin_$(gen_random_string 4)"
     MGMT_PASS="$(gen_random_string 16)"
-    msg_ok "Сгенерирован случайный скрытый порт (${MGMT_PORT}) и защищенный путь (/${MGMT_SECRET_PATH}/)."
 fi
 
-# Сводка параметров перед стартом
-echo
-echo -e "${C_CYAN}╔══════════════════════════════════════════════════════════════════════════════════╗${C_RESET}"
-echo -e "${C_CYAN}║                     СВОДКА ПАРАМЕТРОВ ДЛЯ УСТАНОВКИ                              ║${C_RESET}"
-echo -e "${C_CYAN}╚══════════════════════════════════════════════════════════════════════════════════╝${C_RESET}"
-printf "  • Доменное имя сервера:        %b%s%b\n" "$C_BOLD" "$DOMAIN" "$C_RESET"
-printf "  • Внешний IP сервера:          %b%s%b\n" "$C_BOLD" "$SERVER_IP" "$C_RESET"
-printf "  • Выпуск Cloudflare SSL:       %s\n" "Cloudflare API Token"
-printf "  • Панель 3X-UI:                %s (внутренний порт %s)\n" "$PANEL_PATH" "${PANEL_PORT:-[будет назначен]}"
-printf "  • Режим путей (Locations):     %s\n" "$([[ "$PATH_CHOICE" == "2" ]] && echo "Пользовательские пути" || echo "Случайные скрытые пути")"
-printf "  • Порт Stealth Dashboard:      %s (путь: /%s/)\n" "$MGMT_PORT" "$MGMT_SECRET_PATH"
-echo -e "${C_CYAN}────────────────────────────────────────────────────────────────────────────────────${C_RESET}"
-msg_ok "Все параметры приняты. Переходим к автоматической установке компонентов..."
-echo
-
-# Нормализация слэшей
-[[ "$PANEL_PATH" != /* ]] && PANEL_PATH="/$PANEL_PATH"
-[[ "$PANEL_PATH" != */ ]] && PANEL_PATH="$PANEL_PATH/"
-[[ "$SUB_PATH" != /* ]] && SUB_PATH="/$SUB_PATH"
-[[ "$SUB_PATH" != */ ]] && SUB_PATH="$SUB_PATH/"
-[[ "$SUB_JSON_PATH" != /* ]] && SUB_JSON_PATH="/$SUB_JSON_PATH"
-[[ "$SUB_JSON_PATH" != */ ]] && SUB_JSON_PATH="$SUB_JSON_PATH/"
-[[ "$TG_PATH" != /* ]] && TG_PATH="/$TG_PATH"
-[[ "$ADH_DOH_PATH" != /* ]] && ADH_DOH_PATH="/$ADH_DOH_PATH"
-ADH_DOH_PATH="${ADH_DOH_PATH%/}"
-
+[[ -n "$PANEL_PORT" ]] || set_port PANEL_PORT "панель 3X-UI" "" 0
+for setting in SUB_PORT WS_PORT CASCADE_WS_PORT TROJAN_PORT; do
+    printf -v "$setting" '%s' ""
+    set_port "$setting" "$setting" "" 0
+done
 PANEL_PATH_NO_SLASH="${PANEL_PATH#/}"
 PANEL_PATH_NO_SLASH="${PANEL_PATH_NO_SLASH%/}"
 TG_PATH_NO_SLASH="${TG_PATH#/}"
-TG_PATH_NO_SLASH="${TG_PATH_NO_SLASH%/}"
 ADH_DOH_PATH_NO_SLASH="${ADH_DOH_PATH#/}"
-ADH_DOH_PATH_NO_SLASH="${ADH_DOH_PATH_NO_SLASH%/}"
 WS_PATH_NO_SLASH="${WS_PATH#/}"
-WS_PATH_NO_SLASH="${WS_PATH_NO_SLASH%/}"
 XHTTP_PATH_NO_SLASH="${XHTTP_PATH#/}"
-XHTTP_PATH_NO_SLASH="${XHTTP_PATH_NO_SLASH%/}"
-TROJAN_PATH_NO_SLASH="${TROJAN_PATH#/}"
-TROJAN_PATH_NO_SLASH="${TROJAN_PATH_NO_SLASH%/}"
-GRPC_PATH_NO_SLASH="${GRPC_PATH#/}"
-GRPC_PATH_NO_SLASH="${GRPC_PATH_NO_SLASH%/}"
+TROJAN_PATH_NO_SLASH="$TROJAN_PATH"
+GRPC_PATH_NO_SLASH="$GRPC_PATH"
 
-PANEL_PATH_NO_SLASH_LEADING="/${PANEL_PATH_NO_SLASH}"
-WS_PATH_LEADING="/${WS_PATH_NO_SLASH}"
-CASCADE_SUFFIX=$(LC_ALL=C tr -dc 'a-zA-Z' < /dev/urandom 2>/dev/null | head -c 5)
-if [[ -z "$CASCADE_SUFFIX" || ${#CASCADE_SUFFIX} -lt 5 ]]; then
-    CASCADE_SUFFIX="$(openssl rand -base64 16 | tr -dc 'a-zA-Z' | head -c 5)"
-fi
-CASCADE_WS_PATH_LEADING="${WS_PATH_LEADING}/${CASCADE_SUFFIX}"
-XHTTP_PATH_LEADING="/${XHTTP_PATH_NO_SLASH}"
-TROJAN_PATH_LEADING="/${TROJAN_PATH_NO_SLASH}"
-GRPC_PATH_LEADING="/${GRPC_PATH_NO_SLASH}"
+PANEL_PATH_NO_SLASH_LEADING="/$PANEL_PATH_NO_SLASH"
+WS_PATH_LEADING="$WS_PATH"
+CASCADE_SUFFIX=$(gen_random_string 5 'a-zA-Z')
+CASCADE_WS_PATH_LEADING="$WS_PATH_LEADING/$CASCADE_SUFFIX"
+XHTTP_PATH_LEADING="$XHTTP_PATH"
+TROJAN_PATH_LEADING="/$TROJAN_PATH"
+GRPC_PATH_LEADING="/$GRPC_PATH"
 
-# Внутренние порты
-PANEL_PORT="${PANEL_PORT:-$(get_free_port)}"
-SUB_PORT=$(get_free_port)
-WS_PORT=$(get_free_port)
-CASCADE_WS_PORT=$(get_free_port)
-GRPC_PORT="43935"
-TROJAN_PORT=$(get_free_port)
-TG_PORT="18080"
-TG_DECOY_PORT="18082"
-TG_PANEL_INTERNAL_PORT="8080"
-TG_PANEL_PORT="65001"
-ADH_DNS_PORT="57998"
-ADH_WEB_PORT="3000"
-ADH_DOH_PORT="${ADH_WEB_PORT}"
-
-# Генерация учетных записей
 PANEL_USER="admin_$(gen_random_string 6)"
 PANEL_PASS="$(gen_random_string 14)"
 TG_USER="user_$(gen_random_string 4)"
@@ -509,15 +624,116 @@ TG_PANEL_PASS="$(gen_random_string 14)"
 ADH_USER="adguard_$(gen_random_string 6)"
 ADH_PASS="$(gen_random_string 14)"
 
-msg_ok "Параметры и учетные записи сгенерированы."
+printf '\n  • Домен: %s (%s)\n' "$DOMAIN" "$SERVER_IP"
+printf '  • Панель 3X-UI: %s (внутренний порт %s)\n' "$PANEL_PATH" "$PANEL_PORT"
+printf '  • Модуль управления: /%s/ (порт %s)\n\n' "$MGMT_SECRET_PATH" "$MGMT_PORT"
+msg_ok "Все параметры приняты. Переходим к автоматической установке компонентов..."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # [2] SYSTEM DEPENDENCIES & NETWORK HARDENING
 # ─────────────────────────────────────────────────────────────────────────────
 msg_inf "Шаг [2/9]: Установка зависимостей и тюнинг сетевого стека..."
+if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    read -r _ _ _ SSH_PORT <<< "$SSH_CONNECTION"
+else
+    SSH_PORT=$(/usr/sbin/sshd -T 2>/dev/null | awk '/^port / { if (port && port != $2) exit 1; port=$2 } END { if (port) print port }') ||
+        fail "Не удалось однозначно определить порт SSH. Запустите установку из SSH-сеанса."
+fi
+[[ "$SSH_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && (( SSH_PORT <= 65535 )) ||
+    fail "Не удалось определить порт SSH."
+ss -H -ltn | awk -v port="$SSH_PORT" '$4 ~ (":" port "$") { found=1 } END { exit !found }' ||
+    fail "На определённом порту SSH нет слушателя."
+if command -v ufw >/dev/null 2>&1; then
+    preliminary_ufw=$(LC_ALL=C ufw status) || fail "Не удалось проверить действующий UFW."
+    [[ "$preliminary_ufw" == 'Status: inactive' ]] ||
+        fail "На сервере уже действует UFW. Чистая установка требует исходного состояния без активных правил."
+fi
+for path in /usr/local/x-ui /etc/x-ui/x-ui.db /opt/AdGuardHome /etc/telemt/config.toml \
+    /etc/telemt-panel/config.toml /etc/server-manager/config.json /root/server_credentials.txt; do
+    [[ ! -e "$path" && ! -L "$path" ]] || fail "Обнаружено существующее состояние: $path. Требуется чистый VPS."
+done
+WORKDIR=$(mktemp -d /tmp/future-server-install.XXXXXXXX) ||
+    fail "Не удалось создать приватный рабочий каталог."
+asset_root=
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+    source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+    [[ ! -d "$source_dir/assets" ]] || asset_root="$source_dir/assets"
+fi
+if [[ -z "$asset_root" ]]; then
+    [[ "$BRANCH" =~ ^[A-Za-z0-9._-]+$ ]] || fail "Некорректная ревизия INSTALL_BRANCH."
+    if [[ ! "$BRANCH" =~ ^[a-f0-9]{40}$ ]]; then
+        commit_json=$(curl -q -fsS --connect-timeout 10 --max-time 30 \
+            "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/commits/$BRANCH") ||
+            fail "Не удалось определить ревизию файлов проекта."
+        BRANCH=$(printf '%s' "$commit_json" | python3 -c 'import json, sys; print(json.load(sys.stdin)["sha"])') ||
+            fail "GitHub вернул неизвестный ответ."
+        [[ "$BRANCH" =~ ^[a-f0-9]{40}$ ]] || fail "GitHub вернул некорректную ревизию."
+    fi
+    GITHUB_RAW="https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$BRANCH"
+fi
+while IFS= read -r asset; do
+    destination="$WORKDIR/assets/$asset"
+    mkdir -p -- "$(dirname -- "$destination")"
+    if [[ -n "$asset_root" ]]; then
+        install -m 0600 "$asset_root/$asset" "$destination" || fail "Ресурс проекта недоступен: $asset"
+    else
+        curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 2 --connect-timeout 10 \
+            --max-time 45 "$GITHUB_RAW/assets/$asset" -o "$destination" || fail "Не удалось скачать ресурс: $asset"
+    fi
+    [[ -s "$destination" ]] || fail "Ресурс пуст: $asset"
+done <<'PROJECT_ASSETS'
+install/releases.sh
+adguard/AdGuardHome.yaml.template
+adguard/configure_xui_dns.py
+telemt/telemt.toml.template
+telemt/telemt-panel.toml.template
+telemt/telemt.service
+telemt/telemt-panel.service
+nginx/01-bot-protection.conf
+nginx/stream.conf.template
+nginx/telemt-decoy.conf.template
+nginx/telemt-panel.conf.template
+nginx/vhost.conf.template
+server-manager/server_manager.py
+server-manager/server-mgr
+server-manager/server-manager.service
+PROJECT_ASSETS
+bash -n "$WORKDIR/assets/install/releases.sh" || fail "Синтаксическая ошибка в подготовке релизов."
+source "$WORKDIR/assets/install/releases.sh"
+prepare_fork_releases "$WORKDIR" "$(dpkg --print-architecture)" || fail "Не удалось подготовить проверенные релизы."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q -y
-apt-get install -q -y \
+apt-get install -q -y --no-remove ufw
+ufw_status=$(LC_ALL=C ufw status verbose) || fail "Не удалось определить состояние UFW."
+[[ "$ufw_status" == 'Status: inactive' || "$ufw_status" == 'Status: active'* ]] ||
+    fail "UFW вернул неизвестное состояние."
+if [[ "$ufw_status" == 'Status: active'* && "$ufw_status" != *'Default: deny (incoming)'* ]]; then
+    fail "Действующая политика UFW не запрещает входящие подключения по умолчанию."
+fi
+if [[ "$ufw_status" == 'Status: inactive' ]]; then
+    ufw allow "${SSH_PORT}/tcp" comment 'SSH' > /dev/null
+fi
+ufw allow 443/tcp comment 'Nginx HTTPS & Reality' > /dev/null
+ufw allow 443/udp comment 'Hysteria 2 / QUIC' > /dev/null
+ufw deny 80/tcp comment 'Port 80 Closed' > /dev/null
+if [[ "$ufw_status" == 'Status: inactive' ]]; then
+    ufw default deny incoming > /dev/null
+    ufw default allow outgoing > /dev/null
+    ufw --force enable > /dev/null
+fi
+if [[ -f /etc/default/ufw ]]; then
+    sed -i 's/^IPV6=.*/IPV6=no/' /etc/default/ufw 2>/dev/null || true
+fi
+if [[ -f /etc/ufw/before.rules ]]; then
+    sed -i 's/-A ufw-before-input -p icmp --icmp-type echo-request -j ACCEPT/-A ufw-before-input -p icmp --icmp-type echo-request -j DROP/g' /etc/ufw/before.rules 2>/dev/null || true
+    sed -i 's/-A ufw-before-forward -p icmp --icmp-type echo-request -j ACCEPT/-A ufw-before-forward -p icmp --icmp-type echo-request -j DROP/g' /etc/ufw/before.rules 2>/dev/null || true
+fi
+if [[ -f /etc/ufw/sysctl.conf ]]; then
+    sed -i 's|^#*net/ipv4/icmp_echo_ignore_all=.*|net/ipv4/icmp_echo_ignore_all=1|' /etc/ufw/sysctl.conf 2>/dev/null || true
+fi
+msg_ok "Правила для SSH и 443 TCP/UDP добавлены в UFW (IPv6 отключен, ICMP ping заглушен)."
+
+apt-get install -q -y --no-remove \
     curl wget jq sudo certbot python3-certbot-dns-cloudflare \
     sqlite3 ufw fail2ban python3-systemd nftables nginx-full \
     tar gzip openssl procps iproute2 netcat-openbsd apache2-utils \
@@ -525,13 +741,15 @@ apt-get install -q -y \
 
 # Отключение IPv6, скрытие ICMP Ping и включение BBR
 cat << 'EOF' > /etc/sysctl.d/99-hardened-anti-tspu.conf
-# Полное отключение IPv6 (устраняет 1-3с задержки DNS / Outbound)
+# Полное отключение IPv6 (максимальная скрытность)
 net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
 net.ipv6.conf.lo.disable_ipv6 = 1
 
-# Stealth режим: полный игнор ICMP echo запросов (сервер не пингуется)
+# Stealth режим: полный игнор ICMP echo (Ping) и других ICMP запросов
 net.ipv4.icmp_echo_ignore_all = 1
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
 
 # BBR Congestion Control & TCP Fast Open
 net.core.default_qdisc = fq
@@ -545,10 +763,10 @@ net.ipv4.tcp_rmem = 4096 87380 33554432
 net.ipv4.tcp_wmem = 4096 65536 33554432
 EOF
 sysctl --system > /dev/null 2>&1 || true
+sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1 net.ipv6.conf.lo.disable_ipv6=1 \
+    net.ipv4.icmp_echo_ignore_all=1 net.ipv4.icmp_echo_ignore_broadcasts=1 net.ipv4.icmp_ignore_bogus_error_responses=1 > /dev/null 2>&1 || true
 
-# Отключение IPv6 в UFW
-sed -i 's/^IPV6=.*/IPV6=no/' /etc/default/ufw 2>/dev/null || true
-msg_ok "IPv6 полностью отключен, ICMP ping заглушен, TCP BBR активирован."
+msg_ok "IPv6 отключен, ICMP ping заглушен, TCP BBR активирован."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # [3] SSL VIA CLOUDFLARE DNS-01 API (PORT 80 NEVER OPENED)
@@ -556,17 +774,29 @@ msg_ok "IPv6 полностью отключен, ICMP ping заглушен, TC
 msg_inf "Шаг [3/9]: Выпуск SSL-сертификата через Cloudflare DNS-01 API..."
 mkdir -p /etc/letsencrypt
 
-if [[ -n "$CF_EMAIL" ]]; then
-    cat << EOF > /etc/letsencrypt/cloudflare.ini
-dns_cloudflare_email = ${CF_EMAIL}
-dns_cloudflare_api_key = ${CF_KEY}
-EOF
-else
-    cat << EOF > /etc/letsencrypt/cloudflare.ini
-dns_cloudflare_api_token = ${CF_KEY}
-EOF
-fi
-chmod 0600 /etc/letsencrypt/cloudflare.ini
+write_cf_file() {
+    if [[ -n "$CF_ACCOUNT_EMAIL" ]]; then
+        printf 'dns_cloudflare_email = %s\ndns_cloudflare_api_key = %s\n' "$CF_ACCOUNT_EMAIL" "$CF_CREDENTIAL"
+    else
+        printf 'dns_cloudflare_api_token = %s\n' "$CF_CREDENTIAL"
+    fi | python3 -c '
+import os
+import stat
+import sys
+data = sys.stdin.buffer.read()
+flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK
+with os.fdopen(os.open(sys.argv[1], flags, 0o600), "wb") as target:
+    info = os.fstat(target.fileno())
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1:
+        sys.exit(1)
+    os.fchmod(target.fileno(), 0o600)
+    target.write(data)
+    target.truncate()
+' "$1" 2>/dev/null
+}
+write_cf_file /etc/letsencrypt/cloudflare.ini ||
+    fail "Не удалось безопасно записать /etc/letsencrypt/cloudflare.ini."
+unset CF_CREDENTIAL CF_ACCOUNT_EMAIL
 
 if ! certbot certonly \
     --dns-cloudflare \
@@ -586,9 +816,7 @@ if ! certbot certonly \
     exit 1
 fi
 
-mkdir -p "/root/cert/${DOMAIN}"
-chmod 755 /root /root/cert "/root/cert/${DOMAIN}" 2>/dev/null || true
-chmod 644 "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" 2>/dev/null || true
+install -d -m 0700 /root/cert "/root/cert/${DOMAIN}"
 ln -sf "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" "/root/cert/${DOMAIN}/fullchain.pem"
 ln -sf "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" "/root/cert/${DOMAIN}/privkey.pem"
 
@@ -596,31 +824,32 @@ ln -sf "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" "/root/cert/${DOMAIN}/privk
 mkdir -p /etc/letsencrypt/renewal-hooks/deploy
 cat << 'EOF' > /etc/letsencrypt/renewal-hooks/deploy/hardened-nginx
 #!/usr/bin/env bash
-systemctl reload nginx 2>/dev/null || true
-systemctl restart x-ui 2>/dev/null || true
-systemctl restart telemt 2>/dev/null || true
+set -e
+case "${RENEWED_LINEAGE:-}" in
+    /etc/letsencrypt/live/"DOMAIN_MARKER") ;;
+    *) exit 0 ;;
+esac
+systemctl reload nginx
+systemctl restart x-ui telemt server-manager
 EOF
-chmod +x /etc/letsencrypt/renewal-hooks/deploy/hardened-nginx
+sed -i "s/DOMAIN_MARKER/$DOMAIN/" /etc/letsencrypt/renewal-hooks/deploy/hardened-nginx
+chmod 0700 /etc/letsencrypt/renewal-hooks/deploy/hardened-nginx
 msg_ok "SSL сертификат Cloudflare DNS-01 успешно выпущен. Порт 80 остался закрыт."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # [4] ADGUARD HOME SETUP (0 MS LOCAL DNS & DOH)
 # ─────────────────────────────────────────────────────────────────────────────
 msg_inf "Шаг [4/9]: Установка и настройка AdGuard Home (DNS 0 мс + DoH)..."
-AGH_ARCH="amd64"
-[[ "$(uname -m)" =~ (aarch64|arm64) ]] && AGH_ARCH="arm64"
-
-mkdir -p /opt/AdGuardHome
-curl -sSL "https://static.adguard.com/adguardhome/release/AdGuardHome_linux_${AGH_ARCH}.tar.gz" | tar -xz -C /tmp/
-mv /tmp/AdGuardHome/* /opt/AdGuardHome/ 2>/dev/null || true
-rm -rf /tmp/AdGuardHome
+install -d -m 0755 /opt/AdGuardHome
+install -m 0755 "$WORKDIR/releases/AdGuardHome" /opt/AdGuardHome/AdGuardHome
 
 # Генерация bcrypt хеша для пароля AdGuard
-ADH_HASH=$(htpasswd -bnBC 10 "" "${ADH_PASS}" 2>/dev/null | tr -d ':\n')
-[[ -z "$ADH_HASH" ]] && ADH_HASH=$(python3 -c "import crypt; print(crypt.crypt('${ADH_PASS}', crypt.mksalt(crypt.METHOD_SHA512)))" 2>/dev/null || true)
+ADH_HASH=$(printf '%s\n' "$ADH_PASS" | htpasswd -niBC 10 adguard 2>/dev/null | cut -d: -f2) ||
+    fail "Не удалось создать хеш пароля AdGuard Home."
+[[ -n "$ADH_HASH" ]] || fail "Хеш пароля AdGuard Home пуст."
 
 # Скачивание шаблона AdGuardHome
-curl -sSL "${GITHUB_RAW}/assets/adguard/AdGuardHome.yaml.template" -o "$WORKDIR/AdGuardHome.yaml.template" || cp "assets/adguard/AdGuardHome.yaml.template" "$WORKDIR/AdGuardHome.yaml.template" 2>/dev/null || true
+install -m 0644 "$WORKDIR/assets/adguard/AdGuardHome.yaml.template" "$WORKDIR/AdGuardHome.yaml.template"
 
 sed -e "s|__ADH_WEB_PORT__|${ADH_WEB_PORT}|g" \
     -e "s|__ADH_USER__|${ADH_USER}|g" \
@@ -629,7 +858,11 @@ sed -e "s|__ADH_WEB_PORT__|${ADH_WEB_PORT}|g" \
     -e "s|__ADH_DOH_PORT__|${ADH_DOH_PORT}|g" \
     "$WORKDIR/AdGuardHome.yaml.template" > /opt/AdGuardHome/AdGuardHome.yaml
 
-/opt/AdGuardHome/AdGuardHome -s install > /dev/null 2>&1 || true
+(cd /opt/AdGuardHome && ./AdGuardHome -s install > /dev/null 2>&1) || true
+if [[ -f /etc/systemd/system/AdGuardHome.service ]]; then
+    sed -i 's|^WorkingDirectory=.*|WorkingDirectory=/opt/AdGuardHome|' /etc/systemd/system/AdGuardHome.service 2>/dev/null || true
+    systemctl daemon-reload > /dev/null 2>&1 || true
+fi
 systemctl restart AdGuardHome
 msg_ok "AdGuard Home установлен и запущен на портах ${ADH_WEB_PORT} (Web), ${ADH_DNS_PORT} (Local DNS), ${ADH_DOH_PORT} (DoH)."
 
@@ -637,23 +870,17 @@ msg_ok "AdGuard Home установлен и запущен на портах ${
 # [5] 3X-UI PANEL & ALL 7 INBOUNDS CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 msg_inf "Шаг [5/9]: Установка 3X-UI и конфигурирование базы SQLite со всеми 7 inbounds..."
-export XUI_NONINTERACTIVE=1
-export XUI_USERNAME="${PANEL_USER}"
-export XUI_PASSWORD="${PANEL_PASS}"
-export XUI_PANEL_PORT="${PANEL_PORT}"
-export XUI_WEB_BASE_PATH="${PANEL_PATH}"
-export XUI_SSL_MODE="none"
-export XUI_DB_TYPE="sqlite"
-export XUI_ENABLE_FAIL2BAN="false"
-
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) << EOF
-y
-${PANEL_PORT}
-${PANEL_USER}
-${PANEL_PASS}
-EOF
-
-systemctl stop x-ui 2>/dev/null || true
+cp -R "$WORKDIR/releases/x-ui" /usr/local/x-ui
+install -m 0755 /usr/local/x-ui/x-ui.sh /usr/bin/x-ui
+install -m 0644 /usr/local/x-ui/x-ui.service.debian /etc/systemd/system/x-ui.service
+install -d -m 0700 /etc/x-ui
+/usr/local/x-ui/x-ui setting -username "$PANEL_USER" -password "$PANEL_PASS" \
+    -port "$PANEL_PORT" -webBasePath "$PANEL_PATH" >/dev/null 2>&1 ||
+    fail "Не удалось задать начальные параметры 3x-ui."
+/usr/local/x-ui/x-ui migrate >/dev/null 2>&1 || fail "Не удалось подготовить базу 3x-ui."
+panel_user=$(sqlite3 -bail /etc/x-ui/x-ui.db 'SELECT username FROM users ORDER BY id LIMIT 1;') ||
+    fail "Не удалось прочитать базу 3x-ui."
+[[ "$panel_user" == "$PANEL_USER" ]] || fail "3x-ui не сохранил параметры администратора."
 
 # Предотвращение блокировки частых перезапусков x-ui в systemd
 mkdir -p /etc/systemd/system/x-ui.service.d
@@ -690,11 +917,12 @@ REALITY_PUB=$(printf '%s\n' "$REALITY_KEYS" | grep -i "Public" | awk '{print $NF
 REALITY_SHORTID=$(openssl rand -hex 8)
 
 # Наполнение базы данных 3x-ui SQLite
-sqlite3 /etc/x-ui/x-ui.db << EOF
+sqlite3 -bail /etc/x-ui/x-ui.db << EOF
 BEGIN TRANSACTION;
 -- Обновление настроек панели и подписок (удаление старых и вставка актуальных)
 DELETE FROM settings WHERE key IN (
-    'webPort', 'webBasePath', 'webDomain', 'webCertFile', 'webKeyFile',
+    'webPort', 'webBasePath', 'webDomain', 'webCertFile', 'webKeyFile', 'webListen', 'subListen',
+    'subCertFile', 'subKeyFile',
     'subPort', 'subPath', 'subURI', 'subJsonPath', 'subJsonURI',
     'subJsonEnable', 'subEnable', 'subUpdates', 'subEncrypt', 'subShowInfo'
 );
@@ -705,6 +933,10 @@ INSERT INTO settings (key, value) VALUES
     ('webDomain', ''),
     ('webCertFile', '/root/cert/${DOMAIN}/fullchain.pem'),
     ('webKeyFile', '/root/cert/${DOMAIN}/privkey.pem'),
+    ('webListen', '127.0.0.1'),
+    ('subListen', '127.0.0.1'),
+    ('subCertFile', '/root/cert/${DOMAIN}/fullchain.pem'),
+    ('subKeyFile', '/root/cert/${DOMAIN}/privkey.pem'),
     ('subPort', '${SUB_PORT}'),
     ('subPath', '${SUB_PATH}'),
     ('subURI', 'https://${DOMAIN}${SUB_PATH}'),
@@ -894,14 +1126,14 @@ EOF
 
 # Синхронизация DNS AdGuard Home с шаблоном Xray в SQLite 3x-ui
 msg_inf "Конфигурирование DNS AdGuard Home (порт ${ADH_DNS_PORT}) в шаблоне Xray..."
-curl -fsSL --connect-timeout 5 --max-time 15 "${GITHUB_RAW}/assets/adguard/configure_xui_dns.py" -o "$WORKDIR/configure_xui_dns.py" || cp "assets/adguard/configure_xui_dns.py" "$WORKDIR/configure_xui_dns.py" 2>/dev/null || true
+install -m 0644 "$WORKDIR/assets/adguard/configure_xui_dns.py" "$WORKDIR/configure_xui_dns.py"
 if [[ -f "$WORKDIR/configure_xui_dns.py" ]]; then
     python3 "$WORKDIR/configure_xui_dns.py" "/etc/x-ui/x-ui.db" "${ADH_DNS_PORT}" || msg_warn "Предупреждение: авто-патчинг DNS шаблона вернул ошибку, продолжаем установку..."
     install -o root -g root -m 0755 "$WORKDIR/configure_xui_dns.py" /usr/local/bin/x-ui-dns-sync 2>/dev/null || true
 fi
 
 systemctl daemon-reload
-systemctl restart x-ui
+systemctl enable --now x-ui
 sleep 1
 if ! systemctl is-active --quiet x-ui; then
     sleep 2
@@ -913,58 +1145,46 @@ msg_ok "Все 7 inbounds, оба типа подписок и параметр�
 # [6] TELEMT & TELEMT-PANEL SETUP (TELEGRAM PROXY)
 # ─────────────────────────────────────────────────────────────────────────────
 msg_inf "Шаг [6/9]: Установка Telemt Web Proxy и панели управления..."
-ARCH_SUFFIX="x86_64"
-[[ "$(uname -m)" =~ (aarch64|arm64) ]] && ARCH_SUFFIX="aarch64"
-
-# Динамическое получение актуальных официальных версий с GitHub релизов разработчиков
-TELEMT_TAG=$(curl -sSL https://api.github.com/repos/telemt/telemt/releases/latest | jq -r .tag_name 2>/dev/null || echo "3.5.14")
-[[ -z "$TELEMT_TAG" || "$TELEMT_TAG" == "null" ]] && TELEMT_TAG="3.5.14"
-
-TELEMT_PANEL_TAG=$(curl -sSL https://api.github.com/repos/amirotin/telemt_panel/releases | jq -r '.[0].tag_name' 2>/dev/null || echo "v1.0.0-rc.3")
-[[ -z "$TELEMT_PANEL_TAG" || "$TELEMT_PANEL_TAG" == "null" ]] && TELEMT_PANEL_TAG="v1.0.0-rc.3"
-
-msg_inf "Загрузка актуальных версий: Telemt (${TELEMT_TAG}) и Telemt Panel (${TELEMT_PANEL_TAG})..."
-curl -sSL "https://github.com/telemt/telemt/releases/download/${TELEMT_TAG}/telemt-${ARCH_SUFFIX}-linux-musl.tar.gz" -o "$WORKDIR/telemt.tar.gz" 2>/dev/null || true
-if [[ -f "$WORKDIR/telemt.tar.gz" ]]; then
-    tar -xzf "$WORKDIR/telemt.tar.gz" -C /usr/local/bin/
-    chmod +x /usr/local/bin/telemt 2>/dev/null || true
-fi
-
-curl -sSL "https://github.com/amirotin/telemt_panel/releases/download/${TELEMT_PANEL_TAG}/telemt-panel-${ARCH_SUFFIX}-linux-musl.tar.gz" -o "$WORKDIR/telemt-panel.tar.gz" 2>/dev/null || true
-if [[ -f "$WORKDIR/telemt-panel.tar.gz" ]]; then
-    tar -xzf "$WORKDIR/telemt-panel.tar.gz" -C /usr/local/bin/
-    chmod +x /usr/local/bin/telemt-panel 2>/dev/null || true
-fi
+install -m 0755 "$WORKDIR/releases/telemt" /usr/local/bin/telemt
+install -m 0755 "$WORKDIR/releases/telemt-panel" /usr/local/bin/telemt-panel
 
 mkdir -p /etc/telemt /etc/telemt-panel /var/lib/telemt-panel
 
 # Скачивание шаблонов Telemt
-curl -sSL "${GITHUB_RAW}/assets/telemt/telemt.toml.template" -o "$WORKDIR/telemt.toml.template" || cp "assets/telemt/telemt.toml.template" "$WORKDIR/telemt.toml.template" 2>/dev/null || true
+install -m 0600 /dev/null /etc/telemt/config.toml
+install -m 0600 /dev/null /etc/telemt-panel/config.toml
+install -m 0644 "$WORKDIR/assets/telemt/telemt.toml.template" "$WORKDIR/telemt.toml.template"
 sed -e "s|__TG_PORT__|${TG_PORT}|g" \
     -e "s|__TG_PATH_NO_SLASH__|${TG_PATH_NO_SLASH}|g" \
     -e "s|__DOMAIN__|${DOMAIN}|g" \
     -e "s|__SERVER_IP__|${SERVER_IP}|g" \
     -e "s|__TG_DECOY_PORT__|${TG_DECOY_PORT}|g" \
     -e "s|__TG_USER__|${TG_USER}|g" \
-    -e "s|__TG_SECRET__|${TG_SECRET}|g" \
-    "$WORKDIR/telemt.toml.template" > /etc/telemt/config.toml
+    "$WORKDIR/telemt.toml.template" > "$WORKDIR/telemt-rendered.toml"
+printf '%s' "$TG_SECRET" | python3 -c '
+from pathlib import Path
+import sys
+sys.stdout.write(Path(sys.argv[1]).read_text().replace("__TG_SECRET__", sys.stdin.read()))
+' "$WORKDIR/telemt-rendered.toml" > /etc/telemt/config.toml
 
 # Генерация хеша пароля для Telemt-Panel
-TG_PANEL_HASH=$(htpasswd -bnBC 10 "" "${TG_PANEL_PASS}" 2>/dev/null | tr -d ':\n')
-[[ -z "$TG_PANEL_HASH" ]] && TG_PANEL_HASH=$(python3 -c "import crypt; print(crypt.crypt('${TG_PANEL_PASS}', crypt.mksalt(crypt.METHOD_SHA512)))" 2>/dev/null || true)
+TG_PANEL_HASH=$(printf '%s\n' "$TG_PANEL_PASS" | htpasswd -niBC 10 admin 2>/dev/null | cut -d: -f2) ||
+    fail "Не удалось создать хеш пароля Telemt Panel."
+[[ -n "$TG_PANEL_HASH" ]] || fail "Хеш пароля Telemt Panel пуст."
 
-curl -sSL "${GITHUB_RAW}/assets/telemt/telemt-panel.toml.template" -o "$WORKDIR/telemt-panel.toml.template" || cp "assets/telemt/telemt-panel.toml.template" "$WORKDIR/telemt-panel.toml.template" 2>/dev/null || true
+install -m 0644 "$WORKDIR/assets/telemt/telemt-panel.toml.template" "$WORKDIR/telemt-panel.toml.template"
 sed -e "s|__TG_PANEL_INTERNAL_PORT__|${TG_PANEL_INTERNAL_PORT}|g" \
     -e "s|__TG_PANEL_PASS_HASH__|${TG_PANEL_HASH}|g" \
     "$WORKDIR/telemt-panel.toml.template" > /etc/telemt-panel/config.toml
 
 # Systemd службы Telemt
-curl -sSL "${GITHUB_RAW}/assets/telemt/telemt.service" -o /etc/systemd/system/telemt.service || cp "assets/telemt/telemt.service" /etc/systemd/system/telemt.service 2>/dev/null || true
-curl -sSL "${GITHUB_RAW}/assets/telemt/telemt-panel.service" -o /etc/systemd/system/telemt-panel.service || cp "assets/telemt/telemt-panel.service" /etc/systemd/system/telemt-panel.service 2>/dev/null || true
+install -m 0644 "$WORKDIR/assets/telemt/telemt.service" /etc/systemd/system/telemt.service
+install -m 0644 "$WORKDIR/assets/telemt/telemt-panel.service" /etc/systemd/system/telemt-panel.service
 
 systemctl daemon-reload
-systemctl enable telemt telemt-panel 2>/dev/null || true
-systemctl restart telemt telemt-panel 2>/dev/null || true
+systemctl enable --now telemt telemt-panel || fail "Не удалось запустить Telemt и Telemt Panel."
+systemctl is-active --quiet telemt && systemctl is-active --quiet telemt-panel ||
+    fail "Службы Telemt не готовы."
 msg_ok "Telemt Web Proxy настроен и запущен с маскировкой 200 OK."
 
 # Автоматическая настройка и загрузка базы GeoIP для Telemt Panel
@@ -976,10 +1196,10 @@ for _ in {1..15}; do
     sleep 1
 done
 
-TG_LOGIN_RESP=$(curl -s -i -X POST \
+TG_LOGIN_RESP=$(printf '{"username":"admin","password":"%s"}' "$TG_PANEL_PASS" | curl -q -fsS -i --max-time 10 -X POST \
     -H "Origin: http://127.0.0.1:${TG_PANEL_INTERNAL_PORT}" \
     -H "Content-Type: application/json" \
-    -d "{\"username\":\"admin\",\"password\":\"${TG_PANEL_PASS}\"}" \
+    --data-binary @- \
     "http://127.0.0.1:${TG_PANEL_INTERNAL_PORT}/api/auth/login" 2>/dev/null || true)
 
 TG_COOKIE=$(echo "$TG_LOGIN_RESP" | grep -i "set-cookie:" | tr -d '\r' | sed -E 's/.*panel_session=([^;]+).*/\1/' || true)
@@ -1140,10 +1360,10 @@ chmod 644 /var/www/html/index.html /var/www/html/robots.txt 2>/dev/null || true
 msg_ok "Страница-заглушка установлена в /var/www/html/"
 
 # Копирование bot-protection
-curl -sSL "${GITHUB_RAW}/assets/nginx/01-bot-protection.conf" -o /etc/nginx/conf.d/01-bot-protection.conf || cp "assets/nginx/01-bot-protection.conf" /etc/nginx/conf.d/01-bot-protection.conf 2>/dev/null || true
+install -m 0644 "$WORKDIR/assets/nginx/01-bot-protection.conf" /etc/nginx/conf.d/01-bot-protection.conf
 
 # Настройка Stream SNI
-curl -sSL "${GITHUB_RAW}/assets/nginx/stream.conf.template" -o "$WORKDIR/stream.conf.template" || cp "assets/nginx/stream.conf.template" "$WORKDIR/stream.conf.template" 2>/dev/null || true
+install -m 0644 "$WORKDIR/assets/nginx/stream.conf.template" "$WORKDIR/stream.conf.template"
 sed "s|__REALITY_DOMAIN__|${DOMAIN}|g" "$WORKDIR/stream.conf.template" > /etc/nginx/stream-enabled/stream.conf
 
 # Включение stream блока в nginx.conf если не включен
@@ -1152,12 +1372,12 @@ if ! grep -q "stream-enabled" /etc/nginx/nginx.conf; then
 fi
 
 # Настройка Decoy сервера 18082
-curl -sSL "${GITHUB_RAW}/assets/nginx/telemt-decoy.conf.template" -o "$WORKDIR/telemt-decoy.conf.template" || cp "assets/nginx/telemt-decoy.conf.template" "$WORKDIR/telemt-decoy.conf.template" 2>/dev/null || true
+install -m 0644 "$WORKDIR/assets/nginx/telemt-decoy.conf.template" "$WORKDIR/telemt-decoy.conf.template"
 sed "s|__TG_DECOY_PORT__|${TG_DECOY_PORT}|g" "$WORKDIR/telemt-decoy.conf.template" > /etc/nginx/sites-available/telemt-decoy.conf
 ln -sf /etc/nginx/sites-available/telemt-decoy.conf /etc/nginx/sites-enabled/telemt-decoy.conf
 
 # Настройка проксирования панели Telemt на порту 65001 с HTTPS
-curl -sSL "${GITHUB_RAW}/assets/nginx/telemt-panel.conf.template" -o "$WORKDIR/telemt-panel.conf.template" || cp "assets/nginx/telemt-panel.conf.template" "$WORKDIR/telemt-panel.conf.template" 2>/dev/null || true
+install -m 0644 "$WORKDIR/assets/nginx/telemt-panel.conf.template" "$WORKDIR/telemt-panel.conf.template"
 sed -e "s|__TG_PANEL_PORT__|${TG_PANEL_PORT}|g" \
     -e "s|__TG_PANEL_INTERNAL_PORT__|${TG_PANEL_INTERNAL_PORT}|g" \
     -e "s|__DOMAIN__|${DOMAIN}|g" \
@@ -1165,7 +1385,7 @@ sed -e "s|__TG_PANEL_PORT__|${TG_PANEL_PORT}|g" \
 ln -sf /etc/nginx/sites-available/telemt-panel.conf /etc/nginx/sites-enabled/telemt-panel.conf
 
 # Настройка главного VHost 9443
-curl -sSL "${GITHUB_RAW}/assets/nginx/vhost.conf.template" -o "$WORKDIR/vhost.conf.template" || cp "assets/nginx/vhost.conf.template" "$WORKDIR/vhost.conf.template" 2>/dev/null || true
+install -m 0644 "$WORKDIR/assets/nginx/vhost.conf.template" "$WORKDIR/vhost.conf.template"
 sed -e "s|__DOMAIN__|${DOMAIN}|g" \
     -e "s|__PANEL_PATH_NO_SLASH__|${PANEL_PATH_NO_SLASH_LEADING}|g" \
     -e "s|__PANEL_PATH__|${PANEL_PATH}|g" \
@@ -1190,7 +1410,6 @@ sed -e "s|__DOMAIN__|${DOMAIN}|g" \
     "$WORKDIR/vhost.conf.template" > "/etc/nginx/sites-available/${DOMAIN}.conf"
 
 ln -sf "/etc/nginx/sites-available/${DOMAIN}.conf" "/etc/nginx/sites-enabled/${DOMAIN}.conf"
-rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default 2>/dev/null || true
 
 nginx -t || { msg_err "Конфигурация Nginx содержит ошибки (nginx -t вернул ненулевой код)."; exit 1; }
 systemctl restart nginx || { msg_err "Не удалось перезапустить службу Nginx."; exit 1; }
@@ -1204,55 +1423,57 @@ msg_inf "Шаг [8/9]: Установка и настройка модуля «�
 mkdir -p /etc/server-manager
 
 # Копирование скриптов модуля
-curl -sSL "${GITHUB_RAW}/assets/server-manager/server_manager.py" -o /usr/local/bin/server-manager.py || cp "assets/server-manager/server_manager.py" /usr/local/bin/server-manager.py 2>/dev/null || true
-curl -sSL "${GITHUB_RAW}/assets/server-manager/server-mgr" -o /usr/local/bin/server-mgr || cp "assets/server-manager/server-mgr" /usr/local/bin/server-mgr 2>/dev/null || true
-curl -sSL "${GITHUB_RAW}/assets/server-manager/server-manager.service" -o /etc/systemd/system/server-manager.service || cp "assets/server-manager/server-manager.service" /etc/systemd/system/server-manager.service 2>/dev/null || true
+install -m 0644 "$WORKDIR/assets/server-manager/server_manager.py" /usr/local/bin/server-manager.py
+install -m 0644 "$WORKDIR/assets/server-manager/server-mgr" /usr/local/bin/server-mgr
+install -m 0644 "$WORKDIR/assets/server-manager/server-manager.service" /etc/systemd/system/server-manager.service
 
 chmod +x /usr/local/bin/server-manager.py /usr/local/bin/server-mgr 2>/dev/null || true
 
 # Сохранение мастер-шаблона Nginx для модуля
 cp "$WORKDIR/vhost.conf.template" /etc/server-manager/vhost.conf.template 2>/dev/null || true
 
-# Генерация PBKDF2 хеша пароля администратора модуля
-MGMT_PASS_HASH=$(python3 -c "import hashlib; print(hashlib.pbkdf2_hmac('sha256', '${MGMT_PASS}'.encode('utf-8'), b'server_manager_salt_3x', 100000).hex())" 2>/dev/null || echo "")
+# Сериализация учетных данных без подстановки пароля в код Python или аргументы.
+printf '%s\0' "$DOMAIN" "$MGMT_PORT" "$MGMT_SECRET_PATH" "$MGMT_USER" "$MGMT_PASS" "$SERVER_IP" | (
+    umask 077
+    python3 -c '
+import hashlib
+import json
+import sys
 
-cat << EOF > /etc/server-manager/config.json
-{
-  "domain": "${DOMAIN}",
-  "mgmt_port": ${MGMT_PORT},
-  "mgmt_secret_path": "${MGMT_SECRET_PATH}",
-  "auth_user": "${MGMT_USER}",
-  "auth_pass_plain": "${MGMT_PASS}",
-  "auth_pass_hash": "${MGMT_PASS_HASH}",
-  "auto_lock_minutes": 30,
-  "server_ip": "${SERVER_IP}"
-}
-EOF
-
+domain, port, path, user, password, server_ip, _ = sys.stdin.buffer.read().decode("utf-8").split("\0")
+json.dump({
+    "domain": domain,
+    "mgmt_port": int(port),
+    "mgmt_secret_path": path,
+    "auth_user": user,
+    "auth_pass_plain": password,
+    "auth_pass_hash": hashlib.pbkdf2_hmac("sha256", password.encode(), b"server_manager_salt_3x", 100000).hex(),
+    "auto_lock_minutes": 30,
+    "server_ip": server_ip,
+}, sys.stdout, indent=2)
+print()
+' > /etc/server-manager/config.json
+)
 chmod 0600 /etc/server-manager/config.json
 
 systemctl daemon-reload
-systemctl enable --now server-manager 2>/dev/null || true
+systemctl enable --now server-manager || fail "Не удалось запустить Server Manager."
+manager_ready=no
+for attempt in {1..15}; do
+    if curl -q -fsS --noproxy '*' --connect-timeout 2 --max-time 3 \
+        --resolve "${DOMAIN}:${MGMT_PORT}:127.0.0.1" "https://${DOMAIN}:${MGMT_PORT}/" >/dev/null 2>&1; then
+        manager_ready=yes
+        break
+    fi
+    sleep 1
+done
+[[ "$manager_ready" == yes ]] || fail "Server Manager не ответил по проверенному HTTPS."
 msg_ok "Модуль «Конфигурирование сервера» установлен и запущен на порту ${MGMT_PORT} (Stealth)."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # [9] FIREWALL & BRUTE-FORCE PROTECTION (UFW & FAIL2BAN)
 # ─────────────────────────────────────────────────────────────────────────────
 msg_inf "Шаг [9/9]: Настройка файрвола UFW и защиты от брутфорса Fail2ban..."
-SSH_PORT=$(ss -tlnp | grep sshd | awk '{print $4}' | awk -F':' '{print $NF}' | head -n1 || echo 22)
-[[ -z "$SSH_PORT" ]] && SSH_PORT=22
-
-# 9.1 Настройка UFW: открытыми остаются ТОЛЬКО порты 22 и 443
-ufw --force reset > /dev/null 2>&1 || true
-ufw default deny incoming > /dev/null
-ufw default allow outgoing > /dev/null
-ufw allow "${SSH_PORT}/tcp" comment 'SSH' > /dev/null
-ufw allow 443/tcp comment 'Nginx HTTPS & Reality' > /dev/null
-ufw allow 443/udp comment 'Hysteria 2 / QUIC' > /dev/null
-ufw deny 80/tcp comment 'Port 80 Closed' > /dev/null
-ufw --force enable > /dev/null
-msg_ok "UFW активирован. Порт 80 ЗАКРЫТ. Открыты ТОЛЬКО порты ${SSH_PORT}/tcp (SSH) и 443 (TCP/UDP). Все остальные порты закрыты."
-
 # 9.2 Настройка Fail2ban: прогрессивный бан и полная блокировка всех портов через nftables
 mkdir -p /etc/fail2ban/jail.d
 
@@ -1285,13 +1506,16 @@ bantime = 3600
 EOF
 
 systemctl daemon-reload > /dev/null 2>&1 || true
-systemctl enable fail2ban > /dev/null 2>&1 || true
-systemctl restart fail2ban > /dev/null 2>&1 || true
+systemctl enable fail2ban || fail "Не удалось включить Fail2ban."
+systemctl restart fail2ban || fail "Не удалось запустить Fail2ban."
 msg_ok "Fail2ban установлен и настроен: прогрессивный бан активен, нарушители блокируются на уровне всех портов сервера."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FINAL SUMMARY REPORT
 # ─────────────────────────────────────────────────────────────────────────────
+(
+umask 077
+set -o noclobber
 cat << EOF > /root/server_credentials.txt
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
 ║                   СЕРВЕР УСПЕШНО НАСТРОЕН И ЗАЩИЩЕН (STEALTH-РЕЖИМ)                  ║
@@ -1365,7 +1589,7 @@ cat << EOF > /root/server_credentials.txt
     • AmneziaWG:       порт 8443/UDP
 
 [6] ПАРАМЕТРЫ ЗАЩИТЫ:
-    [✓] Файрвол UFW:   АКТИВЕН И НАСТРОЕН (Открыты только порты ${SSH_PORT} SSH и 443 TCP/UDP, все остальные порты закрыты)
+    [✓] UFW:           Добавлены разрешения для SSH ${SSH_PORT}/TCP и 443 TCP/UDP
     [✓] Fail2ban:      УСТАНОВЛЕН И НАСТРОЕН (SSH защита, прогрессивный бан, блокировка по ВСЕМ портам через nftables)
     [✓] Порт 80:       НАГЛУХО ЗАКРЫТ (UFW DENY)
     [✓] SSL:           Cloudflare DNS-01 API (тихий выпуск и автопродление)
@@ -1387,9 +1611,7 @@ cat << EOF > /root/server_credentials.txt
 
 Данные доступов сохранены в: /root/server_credentials.txt
 EOF
-
-chmod 0600 /root/server_credentials.txt
-cat /root/server_credentials.txt
+)
 echo
-msg_ok "Установка успешно завершена! Скопируйте данные выше."
+msg_ok "Данные доступа сохранены в закрытом файле /root/server_credentials.txt."
 msg_inf "Каталог на сервере для загрузки вашего сайта: /var/www/html/"
