@@ -14,8 +14,8 @@ HELPER = Path(__file__).resolve().parents[1] / "assets/install/releases.sh"
 GITHUB = "https://github.com/"
 ASSETS = {
     "amd64": (
-        ("MHSanaei/3x-ui/releases/download/v3.10.2/x-ui-linux-amd64.tar.gz",
-         "bfda7921984e7a72555c38d4e861c7a8b67b3686b658608937de99682f1452d0"),
+        ("MHSanaei/3x-ui/releases/download/v3.11.0/x-ui-linux-amd64.tar.gz",
+         "0ddfa4702f595442e2962acd81addc768fdacaa4ff2672c971a0463dae744916"),
         ("AdguardTeam/AdGuardHome/releases/download/v0.107.80/AdGuardHome_linux_amd64.tar.gz",
          "28593bc761d71469abdbc6f39ca42cbed763ec92b63082c729177b037ed51d18"),
         ("telemt/telemt/releases/download/3.5.14/telemt-x86_64-linux-musl.tar.gz",
@@ -24,8 +24,8 @@ ASSETS = {
          "9f195fcf88fe6cfaee92ccaa3616149717fc6aa142a2a6c9e3bb34134e4b9d15"),
     ),
     "arm64": (
-        ("MHSanaei/3x-ui/releases/download/v3.10.2/x-ui-linux-arm64.tar.gz",
-         "a867c65ce52ad49f6504dd4c9c395337dc92ba57ae478da4f1b7ddb624014ed5"),
+        ("MHSanaei/3x-ui/releases/download/v3.11.0/x-ui-linux-arm64.tar.gz",
+         "f50b4c30fd919d018f2f4c3d8db53a4ca027503d581328727770afb116a79d90"),
         ("AdguardTeam/AdGuardHome/releases/download/v0.107.80/AdGuardHome_linux_arm64.tar.gz",
          "d5e17d0d724418ddef8b7723ed8ade7eef4e621ec5b0e43a341859cca71a3d8f"),
         ("telemt/telemt/releases/download/3.5.14/telemt-aarch64-linux-musl.tar.gz",

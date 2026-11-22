@@ -136,8 +136,8 @@ server {
         proxy_pass http://127.0.0.1:__WS_PORT__;
     }
 
-    # === [4.1] VLESS WEBSOCKET DUPLICATE (CASCADE-TO-N) ===
-    location = __CASCADE_WS_PATH__ {
+    # === [4.1] VLESS WEBSOCKET DUPLICATE (CASCADE-TO-N-1) ===
+    location = __CASCADE_1_PATH__ {
         if ($hack = 1) { return 404; }
         client_max_body_size 0;
         client_body_timeout 1d;
@@ -152,7 +152,45 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_pass http://127.0.0.1:__CASCADE_WS_PORT__;
+        proxy_pass http://127.0.0.1:__CASCADE_1_PORT__;
+    }
+
+    # === [4.2] VLESS WEBSOCKET DUPLICATE (CASCADE-TO-N-2) ===
+    location = __CASCADE_2_PATH__ {
+        if ($hack = 1) { return 404; }
+        client_max_body_size 0;
+        client_body_timeout 1d;
+        proxy_read_timeout 1d;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_socket_keepalive on;
+        proxy_intercept_errors off;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_pass http://127.0.0.1:__CASCADE_2_PORT__;
+    }
+
+    # === [4.3] VLESS WEBSOCKET DUPLICATE (CASCADE-TO-N-3) ===
+    location = __CASCADE_3_PATH__ {
+        if ($hack = 1) { return 404; }
+        client_max_body_size 0;
+        client_body_timeout 1d;
+        proxy_read_timeout 1d;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_socket_keepalive on;
+        proxy_intercept_errors off;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_pass http://127.0.0.1:__CASCADE_3_PORT__;
     }
 
     # === [5] VLESS XHTTP (UDS SOCKET) ===

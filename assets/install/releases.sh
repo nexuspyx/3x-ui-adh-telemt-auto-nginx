@@ -1,18 +1,18 @@
 # Sourced by install.sh. Stages pinned upstream release files inside its private directory.
 prepare_fork_releases() (
-    local directory="${1:-}" arch="${2:-}" suffix panel_sha adguard_sha telemt_sha telemt_panel_sha
-    local stage component asset digest archive
+    local directory="${1:-}" arch="${2:-}" panel_version="${3:-}" suffix panel_sha adguard_sha telemt_sha telemt_panel_sha
+    local stage component asset digest archive panel_tag="v3.11.0" dynamic_sha=""
     case "$arch" in
         amd64)
             suffix=x86_64
-            panel_sha=bfda7921984e7a72555c38d4e861c7a8b67b3686b658608937de99682f1452d0
+            panel_sha=0ddfa4702f595442e2962acd81addc768fdacaa4ff2672c971a0463dae744916
             adguard_sha=28593bc761d71469abdbc6f39ca42cbed763ec92b63082c729177b037ed51d18
             telemt_sha=71c1454f79cf755edea0985500629daba553002f9863be754e8e38a418822773
             telemt_panel_sha=9f195fcf88fe6cfaee92ccaa3616149717fc6aa142a2a6c9e3bb34134e4b9d15
             ;;
         arm64)
             suffix=aarch64
-            panel_sha=a867c65ce52ad49f6504dd4c9c395337dc92ba57ae478da4f1b7ddb624014ed5
+            panel_sha=f50b4c30fd919d018f2f4c3d8db53a4ca027503d581328727770afb116a79d90
             adguard_sha=d5e17d0d724418ddef8b7723ed8ade7eef4e621ec5b0e43a341859cca71a3d8f
             telemt_sha=21795430c4165cf964405459714d08eea319edaa5c9027beac4de373c356d84d
             telemt_panel_sha=420a52a67fc60718be0ab18fc6f2f5dcc15e59e21e432461a64af113bed3450d
@@ -43,6 +43,15 @@ PY_STAGE
         return 1
     fi
     stage="$directory/releases"
+
+    if [[ -n "$panel_version" && "$panel_version" =~ ^v[0-9]+\.[0-9]+ ]]; then
+        panel_tag="$panel_version"
+        if dynamic_sha=$(curl -q -fsSL --proto '=https' --proto-redir '=https' \
+            --connect-timeout 4 --max-time 8 \
+            "https://github.com/MHSanaei/3x-ui/releases/download/${panel_tag}/x-ui-linux-${arch}.tar.gz.sha256" 2>/dev/null | awk '{print $1}') && [[ "$dynamic_sha" =~ ^[a-f0-9]{64}$ ]]; then
+            panel_sha="$dynamic_sha"
+        fi
+    fi
 
     while IFS=' ' read -r component asset digest; do
         archive="$stage/$component.tar.gz"
@@ -117,7 +126,7 @@ except (EOFError, OSError, ValueError, tarfile.TarError) as error:
     sys.exit(f"{component} release: archive validation or extraction failed: {error}")
 PY_ARCHIVE
     done <<EOF
-x-ui MHSanaei/3x-ui/releases/download/v3.10.2/x-ui-linux-$arch.tar.gz $panel_sha
+x-ui MHSanaei/3x-ui/releases/download/${panel_tag}/x-ui-linux-$arch.tar.gz $panel_sha
 AdGuardHome AdguardTeam/AdGuardHome/releases/download/v0.107.80/AdGuardHome_linux_$arch.tar.gz $adguard_sha
 telemt telemt/telemt/releases/download/3.5.14/telemt-$suffix-linux-musl.tar.gz $telemt_sha
 telemt-panel amirotin/telemt_panel/releases/download/v1.0.0-rc.3/telemt-panel-$suffix-linux-musl.tar.gz $telemt_panel_sha

@@ -2,7 +2,7 @@
 # ==============================================================================
 # 3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (ONE-COMMAND INSTALLER)
 # Repository: https://github.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
-# Generated: 17:16.22.11.2026
+# Generated: 17:36.22.11.2026
 # ==============================================================================
 
 set +x
@@ -595,10 +595,11 @@ else
 fi
 
 [[ -n "$PANEL_PORT" ]] || set_port PANEL_PORT "панель 3X-UI" "" 0
-for setting in SUB_PORT WS_PORT CASCADE_WS_PORT TROJAN_PORT; do
+for setting in SUB_PORT WS_PORT CASCADE_1_PORT CASCADE_2_PORT CASCADE_3_PORT TROJAN_PORT; do
     printf -v "$setting" '%s' ""
     set_port "$setting" "$setting" "" 0
 done
+CASCADE_WS_PORT="$CASCADE_1_PORT"
 PANEL_PATH_NO_SLASH="${PANEL_PATH#/}"
 PANEL_PATH_NO_SLASH="${PANEL_PATH_NO_SLASH%/}"
 TG_PATH_NO_SLASH="${TG_PATH#/}"
@@ -610,8 +611,14 @@ GRPC_PATH_NO_SLASH="$GRPC_PATH"
 
 PANEL_PATH_NO_SLASH_LEADING="/$PANEL_PATH_NO_SLASH"
 WS_PATH_LEADING="$WS_PATH"
-CASCADE_SUFFIX=$(gen_random_string 5 'a-zA-Z')
-CASCADE_WS_PATH_LEADING="$WS_PATH_LEADING/$CASCADE_SUFFIX"
+CASCADE_1_SUFFIX=$(gen_random_string 5 'a-zA-Z')
+CASCADE_1_PATH="$WS_PATH_LEADING/$CASCADE_1_SUFFIX"
+CASCADE_2_SUFFIX=$(gen_random_string 5 'a-zA-Z')
+CASCADE_2_PATH="$WS_PATH_LEADING/$CASCADE_2_SUFFIX"
+CASCADE_3_SUFFIX=$(gen_random_string 5 'a-zA-Z')
+CASCADE_3_PATH="$WS_PATH_LEADING/$CASCADE_3_SUFFIX"
+CASCADE_SUFFIX="$CASCADE_1_SUFFIX"
+CASCADE_WS_PATH_LEADING="$CASCADE_1_PATH"
 XHTTP_PATH_LEADING="$XHTTP_PATH"
 TROJAN_PATH_LEADING="/$TROJAN_PATH"
 GRPC_PATH_LEADING="/$GRPC_PATH"
@@ -708,7 +715,15 @@ server-manager/server-manager.service
 PROJECT_ASSETS
 bash -n "$WORKDIR/assets/install/releases.sh" || fail "Синтаксическая ошибка в подготовке релизов."
 source "$WORKDIR/assets/install/releases.sh"
-prepare_fork_releases "$WORKDIR" "$(dpkg --print-architecture)" || fail "Не удалось подготовить проверенные релизы."
+XUI_TAG=""
+if XUI_TAG=$(curl -q -fsSL --proto '=https' --proto-redir '=https' \
+    --connect-timeout 4 --max-time 8 \
+    "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" 2>/dev/null | python3 -c 'import json, sys; print(json.load(sys.stdin).get("tag_name", ""))' 2>/dev/null) && [[ "$XUI_TAG" =~ ^v[0-9]+\.[0-9]+ ]]; then
+    :
+else
+    XUI_TAG="v3.11.0"
+fi
+prepare_fork_releases "$WORKDIR" "$(dpkg --print-architecture)" "$XUI_TAG" || fail "Не удалось подготовить проверенные релизы."
 
 setup_swap() {
     local active available fs
@@ -1065,21 +1080,57 @@ VALUES (
     '{"enabled": true, "destOverride": ["http", "tls", "quic"]}'
 );
 
--- 2.1. VLESS WebSocket Duplicate (Cascade-to-N, disabled by default)
+-- 2.1. VLESS WebSocket Duplicate (Cascade-to-N-1, disabled by default)
 INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing)
 VALUES (
-    '1', '0', '0', '0', '⛓️ Cascade-to-N', '0', '0', '127.0.0.1', '${CASCADE_WS_PORT}', 'vless',
+    '1', '0', '0', '0', '⛓️ Cascade-to-N-1', '0', '0', '127.0.0.1', '${CASCADE_1_PORT}', 'vless',
     '{"clients": [], "decryption": "none", "fallbacks": []}',
     '{
       "network": "ws",
       "security": "none",
       "wsSettings": {
         "acceptProxyProtocol": false,
-        "path": "${CASCADE_WS_PATH_LEADING}",
+        "path": "${CASCADE_1_PATH}",
         "host": "${DOMAIN}"
       }
     }',
-    'in-${CASCADE_WS_PORT}-tcp',
+    'in-${CASCADE_1_PORT}-tcp',
+    '{"enabled": true, "destOverride": ["http", "tls", "quic"]}'
+);
+
+-- 2.2. VLESS WebSocket Duplicate (Cascade-to-N-2, disabled by default)
+INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing)
+VALUES (
+    '1', '0', '0', '0', '⛓️ Cascade-to-N-2', '0', '0', '127.0.0.1', '${CASCADE_2_PORT}', 'vless',
+    '{"clients": [], "decryption": "none", "fallbacks": []}',
+    '{
+      "network": "ws",
+      "security": "none",
+      "wsSettings": {
+        "acceptProxyProtocol": false,
+        "path": "${CASCADE_2_PATH}",
+        "host": "${DOMAIN}"
+      }
+    }',
+    'in-${CASCADE_2_PORT}-tcp',
+    '{"enabled": true, "destOverride": ["http", "tls", "quic"]}'
+);
+
+-- 2.3. VLESS WebSocket Duplicate (Cascade-to-N-3, disabled by default)
+INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing)
+VALUES (
+    '1', '0', '0', '0', '⛓️ Cascade-to-N-3', '0', '0', '127.0.0.1', '${CASCADE_3_PORT}', 'vless',
+    '{"clients": [], "decryption": "none", "fallbacks": []}',
+    '{
+      "network": "ws",
+      "security": "none",
+      "wsSettings": {
+        "acceptProxyProtocol": false,
+        "path": "${CASCADE_3_PATH}",
+        "host": "${DOMAIN}"
+      }
+    }',
+    'in-${CASCADE_3_PORT}-tcp',
     '{"enabled": true, "destOverride": ["http", "tls", "quic"]}'
 );
 
@@ -1177,7 +1228,9 @@ INSERT INTO hosts (inbound_id, group_id, sort_order, remark, address, port, secu
 VALUES
     ((SELECT id FROM inbounds WHERE tag='in-8443-tcp'), '$(openssl rand -hex 8)', 0, 'reality', '${DOMAIN}', 443, 'same', '', '[]'),
     ((SELECT id FROM inbounds WHERE tag='in-${WS_PORT}-tcp'), '$(openssl rand -hex 8)', 0, 'ws', '${DOMAIN}', 443, 'tls', 'firefox', '["http/1.1"]'),
-    ((SELECT id FROM inbounds WHERE tag='in-${CASCADE_WS_PORT}-tcp'), '$(openssl rand -hex 8)', 0, 'cascade-to-n', '${DOMAIN}', 443, 'tls', 'firefox', '["http/1.1"]'),
+    ((SELECT id FROM inbounds WHERE tag='in-${CASCADE_1_PORT}-tcp'), '$(openssl rand -hex 8)', 0, 'cascade-to-n-1', '${DOMAIN}', 443, 'tls', 'firefox', '["http/1.1"]'),
+    ((SELECT id FROM inbounds WHERE tag='in-${CASCADE_2_PORT}-tcp'), '$(openssl rand -hex 8)', 0, 'cascade-to-n-2', '${DOMAIN}', 443, 'tls', 'firefox', '["http/1.1"]'),
+    ((SELECT id FROM inbounds WHERE tag='in-${CASCADE_3_PORT}-tcp'), '$(openssl rand -hex 8)', 0, 'cascade-to-n-3', '${DOMAIN}', 443, 'tls', 'firefox', '["http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-/dev/shm/uds2023.sock,0666:0|'), '$(openssl rand -hex 8)', 0, 'xhttp', '${DOMAIN}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-${TROJAN_PORT}'), '$(openssl rand -hex 8)', 0, 'trojan', '${DOMAIN}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
     ((SELECT id FROM inbounds WHERE tag='inbound-${GRPC_PORT}'), '$(openssl rand -hex 8)', 0, 'vless-grpc', '${DOMAIN}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
@@ -1466,8 +1519,14 @@ sed -e "s|__DOMAIN__|${DOMAIN}|g" \
     -e "s|__ADH_DOH_PORT__|${ADH_DOH_PORT}|g" \
     -e "s|__WS_PATH__|${WS_PATH_LEADING}|g" \
     -e "s|__WS_PORT__|${WS_PORT}|g" \
-    -e "s|__CASCADE_WS_PATH__|${CASCADE_WS_PATH_LEADING}|g" \
-    -e "s|__CASCADE_WS_PORT__|${CASCADE_WS_PORT}|g" \
+    -e "s|__CASCADE_WS_PATH__|${CASCADE_1_PATH}|g" \
+    -e "s|__CASCADE_WS_PORT__|${CASCADE_1_PORT}|g" \
+    -e "s|__CASCADE_1_PATH__|${CASCADE_1_PATH}|g" \
+    -e "s|__CASCADE_1_PORT__|${CASCADE_1_PORT}|g" \
+    -e "s|__CASCADE_2_PATH__|${CASCADE_2_PATH}|g" \
+    -e "s|__CASCADE_2_PORT__|${CASCADE_2_PORT}|g" \
+    -e "s|__CASCADE_3_PATH__|${CASCADE_3_PATH}|g" \
+    -e "s|__CASCADE_3_PORT__|${CASCADE_3_PORT}|g" \
     -e "s|__XHTTP_PATH__|${XHTTP_PATH_LEADING}|g" \
     -e "s|__TROJAN_PATH__|${TROJAN_PATH_LEADING}|g" \
     -e "s|__TROJAN_PORT__|${TROJAN_PORT}|g" \
@@ -1653,7 +1712,9 @@ cat << EOF > /root/server_credentials.txt
 [5] СПИСОК РАЗВЕРНУТЫХ INBOUNDS В XRAY:
     • Reality TCP:     порт 8443 (fallback -> 9443 xver:1)
     • VLESS WS:        порт ${WS_PORT}, путь ${WS_PATH}
-    • Cascade-to-N:    порт ${CASCADE_WS_PORT}, путь ${CASCADE_WS_PATH_LEADING} (выключен)
+    • Cascade-to-N-1:  порт ${CASCADE_1_PORT}, путь ${CASCADE_1_PATH} (выключен)
+    • Cascade-to-N-2:  порт ${CASCADE_2_PORT}, путь ${CASCADE_2_PATH} (выключен)
+    • Cascade-to-N-3:  порт ${CASCADE_3_PORT}, путь ${CASCADE_3_PATH} (выключен)
     • VLESS XHTTP:     UDS /dev/shm/uds2023.sock, путь ${XHTTP_PATH}
     • Trojan gRPC:     порт ${TROJAN_PORT}, путь ${TROJAN_PATH}
     • VLESS gRPC:      порт ${GRPC_PORT}, serviceName ${GRPC_PATH}
