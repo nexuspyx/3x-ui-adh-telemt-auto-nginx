@@ -2,7 +2,7 @@
 # ==============================================================================
 # 3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (ONE-COMMAND INSTALLER)
 # Repository: https://github.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
-# Generated: 12:18.08.11.2026
+# Generated: 16:12.22.11.2026
 # ==============================================================================
 
 set +x
@@ -654,6 +654,14 @@ for path in /usr/local/x-ui /etc/x-ui/x-ui.db /opt/AdGuardHome /etc/telemt/confi
 done
 WORKDIR=$(mktemp -d /tmp/future-server-install.XXXXXXXX) ||
     fail "Не удалось создать приватный рабочий каталог."
+cleanup_workdir() {
+    local rc=$?
+    if [[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]]; then
+        rm -rf "$WORKDIR"
+    fi
+    exit "$rc"
+}
+trap cleanup_workdir EXIT INT TERM
 asset_root=
 if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
     source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -701,6 +709,46 @@ PROJECT_ASSETS
 bash -n "$WORKDIR/assets/install/releases.sh" || fail "Синтаксическая ошибка в подготовке релизов."
 source "$WORKDIR/assets/install/releases.sh"
 prepare_fork_releases "$WORKDIR" "$(dpkg --print-architecture)" || fail "Не удалось подготовить проверенные релизы."
+
+setup_swap() {
+    local active available fs
+    msg_inf "Проверка и настройка файла подкачки (Swap)..."
+    if active=$(swapon --show=NAME --noheadings 2>/dev/null) && [[ -n "$active" ]]; then
+        msg_ok "Файл подкачки (swap) уже настроен и активен."
+        return 0
+    fi
+
+    if [[ -e /swapfile || -L /swapfile ]]; then
+        if swapon /swapfile 2>/dev/null; then
+            msg_ok "Существующий /swapfile успешно подключен."
+            return 0
+        fi
+    fi
+
+    available=$(df -Pk / 2>/dev/null | awk 'END {print $4}') || available=0
+    if [[ ! "$available" =~ ^[0-9]+$ ]] || (( available < 3145728 )); then
+        msg_warn "Менее 3 ГБ свободного места на диске. Создание swap пропущено."
+        return 0
+    fi
+
+    fs=$(findmnt -n -o FSTYPE --target / 2>/dev/null) || fs=""
+    if [[ "$fs" != "ext4" && "$fs" != "xfs" ]]; then
+        msg_warn "Файловая система ($fs) не поддерживает fallocate для swap. Пропущено."
+        return 0
+    fi
+
+    if fallocate -l 1G /swapfile 2>/dev/null && chmod 600 /swapfile && mkswap /swapfile >/dev/null 2>&1 && swapon /swapfile 2>/dev/null; then
+        if ! grep -q "^/swapfile" /etc/fstab 2>/dev/null; then
+            printf '\n/swapfile none swap sw 0 0\n' >> /etc/fstab
+        fi
+        msg_ok "Файл подкачки swap 1 ГБ успешно создан и активирован."
+    else
+        rm -f /swapfile 2>/dev/null || true
+        msg_warn "Не удалось автоматически активировать /swapfile."
+    fi
+}
+setup_swap
+
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q -y
 apt-get install -q -y --no-remove ufw
@@ -1509,6 +1557,12 @@ systemctl daemon-reload > /dev/null 2>&1 || true
 systemctl enable fail2ban || fail "Не удалось включить Fail2ban."
 systemctl restart fail2ban || fail "Не удалось запустить Fail2ban."
 msg_ok "Fail2ban установлен и настроен: прогрессивный бан активен, нарушители блокируются на уровне всех портов сервера."
+
+# Освобождение оперативной памяти: очистка временного каталога инсталлятора из tmpfs
+if [[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]]; then
+    rm -rf "$WORKDIR"
+    WORKDIR=""
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FINAL SUMMARY REPORT
