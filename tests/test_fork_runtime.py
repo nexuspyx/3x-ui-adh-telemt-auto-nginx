@@ -45,3 +45,14 @@ class ForkRuntime(unittest.TestCase):
         self.assertIn('/etc/x-ui/sub_templates/apple', installer)
         self.assertIn("('subThemeDir', '/etc/x-ui/sub_templates/apple')", installer)
         self.assertIn("'subThemeDir'", installer)
+
+    def test_zero_bloat_disk_optimization(self):
+        installer = (ROOT / 'install.sh').read_text()
+        self.assertIn('optimize_disk_footprint', installer)
+        self.assertIn('apt-get clean', installer)
+        self.assertIn('/var/cache/apt/archives/*', installer)
+        self.assertIn('/var/lib/apt/lists/*', installer)
+        self.assertIn('rm -f /usr/local/x-ui/bin/*_IR.dat', installer)
+        self.assertNotIn('python3-pip', installer)
+        self.assertNotIn('git ca-certificates', installer)
+

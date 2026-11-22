@@ -2,7 +2,7 @@
 # ==============================================================================
 # 3X-UI + TELEMT + HARDENED NGINX + ADGUARD HOME (ONE-COMMAND INSTALLER)
 # Repository: https://github.com/nexuspyx/3x-ui-adh-telemt-auto-nginx
-# Generated: 17:36.22.11.2026
+# Generated: 19:08.22.11.2026
 # ==============================================================================
 
 set +x
@@ -801,7 +801,7 @@ apt-get install -q -y --no-remove \
     curl wget jq sudo certbot python3-certbot-dns-cloudflare \
     sqlite3 ufw fail2ban python3-systemd nftables nginx-full \
     tar gzip openssl procps iproute2 netcat-openbsd apache2-utils \
-    git ca-certificates python3-pip
+    ca-certificates
 
 # Отключение IPv6, скрытие ICMP Ping и включение BBR
 cat << 'EOF' > /etc/sysctl.d/99-hardened-anti-tspu.conf
@@ -953,6 +953,7 @@ msg_ok "AdGuard Home установлен и запущен на портах ${
 # ─────────────────────────────────────────────────────────────────────────────
 msg_inf "Шаг [5/9]: Установка 3X-UI и конфигурирование базы SQLite со всеми 7 inbounds..."
 cp -R "$WORKDIR/releases/x-ui" /usr/local/x-ui
+rm -f /usr/local/x-ui/bin/*_IR.dat /usr/local/x-ui/bin/mtg-* 2>/dev/null || true
 install -m 0755 /usr/local/x-ui/x-ui.sh /usr/bin/x-ui
 install -m 0644 /usr/local/x-ui/x-ui.service.debian /etc/systemd/system/x-ui.service
 install -d -m 0700 /etc/x-ui
@@ -1647,6 +1648,43 @@ if [[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]]; then
     rm -rf "$WORKDIR"
     WORKDIR=""
 fi
+
+# Оптимизация дискового пространства и удаление неиспользуемого балласта
+optimize_disk_footprint() {
+    msg_inf "Оптимизация дискового пространства и удаление балласта..."
+    local virt
+    virt=$(systemd-detect-virt 2>/dev/null || echo "none")
+    if [[ "$virt" != "none" && "$virt" != "" ]]; then
+        if dpkg -l "linux-firmware*" >/dev/null 2>&1; then
+            DEBIAN_FRONTEND=noninteractive apt-get purge -q -y "linux-firmware*" firmware-sof-signed >/dev/null 2>&1 || true
+            rm -rf /usr/lib/firmware/* 2>/dev/null || true
+        fi
+    fi
+
+    local bloat_pkgs=()
+    for pkg in snapd docker.io containerd docker-compose-v2 modemmanager fwupd upower kdump-tools sos python3-botocore; do
+        if dpkg -s "$pkg" >/dev/null 2>&1; then
+            bloat_pkgs+=("$pkg")
+        fi
+    done
+    if (( ${#bloat_pkgs[@]} > 0 )); then
+        systemctl stop snapd.socket snapd.service docker.socket docker.service containerd.service modemmanager fwupd upower 2>/dev/null || true
+        DEBIAN_FRONTEND=noninteractive apt-get purge -q -y "${bloat_pkgs[@]}" >/dev/null 2>&1 || true
+        rm -rf /var/lib/docker /var/lib/containerd /var/lib/snapd /var/cache/snapd /snap /root/snap /var/lib/kdump 2>/dev/null || true
+    fi
+
+    local rc_pkgs
+    rc_pkgs=$(dpkg -l 2>/dev/null | awk '/^rc/ {print $2}') || rc_pkgs=""
+    if [[ -n "$rc_pkgs" ]]; then
+        DEBIAN_FRONTEND=noninteractive apt-get purge -q -y $rc_pkgs >/dev/null 2>&1 || true
+    fi
+
+    DEBIAN_FRONTEND=noninteractive apt-get autoremove -q -y --purge >/dev/null 2>&1 || true
+    apt-get clean >/dev/null 2>&1 || true
+    rm -rf /var/cache/apt/archives/* /var/lib/apt/lists/* 2>/dev/null || true
+    msg_ok "Оптимизация диска завершена (кэши очищены, балласт удален)."
+}
+optimize_disk_footprint
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FINAL SUMMARY REPORT
